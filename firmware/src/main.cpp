@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "config/Config.h"
+#include "midi/SysEx.h"
 
 static const char* PAD_TYPE_NAMES[] = {
     "piezo",
@@ -35,6 +36,13 @@ void setup() {
     Serial.println("eDrum v0.1 — ready");
     configLoad();
     printConfig();
+
+    // Smoke-test the SysEx dispatcher with a Category 01 Ping
+    // Expected TX: [SysEx TX] F0 00 7D 00 01 02 F7  (Pong)
+    Serial.println("[Test] Dispatching ping...");
+    static const uint8_t testPing[] = { SYSEX_MFR_0, SYSEX_MFR_1, SYSEX_DEV_HEAD,
+                                        SYSEX_CAT_SYS, SYSEX_SYS_PING };
+    sysexParse(testPing, sizeof(testPing));
 }
 
 void loop() {

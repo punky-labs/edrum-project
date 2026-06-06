@@ -13,7 +13,8 @@ static void presetKey(uint8_t id, char* buf) {
 }
 
 static InputConfig defaultInput(uint8_t idx) {
-    InputConfig c;
+    InputConfig c = {};   // zero all fields first
+    c.linkedInput      = 0xFF;    // 0xFF = no link
     c.padType          = 0;       // piezo single zone
     c.threshold        = 512;
     c.velocityCurve    = 0;       // linear
@@ -88,6 +89,24 @@ bool presetSave(uint8_t id, const char* name) {
     prefs.putBytes(key, &p, sizeof(p));
     prefs.end();
     return true;
+}
+
+bool presetRead(uint8_t id, Preset* out) {
+    if (id >= MAX_PRESETS) return false;
+    char key[4];
+    presetKey(id, key);
+
+    Preferences prefs;
+    prefs.begin(PRE_NS, /*readOnly=*/true);
+    size_t stored = prefs.getBytesLength(key);
+    bool ok = false;
+    if (stored == sizeof(Preset)) {
+        prefs.getBytes(key, out, sizeof(Preset));
+        out->name[PRESET_NAME_LEN] = '\0'; // guard against corrupt NVS
+        ok = true;
+    }
+    prefs.end();
+    return ok;
 }
 
 bool presetDelete(uint8_t id) {

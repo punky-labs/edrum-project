@@ -8,9 +8,9 @@
 
 struct __attribute__((packed)) InputConfig {
     uint8_t  padType;
-    uint16_t threshold;
+    uint16_t threshold;      // 0–1023 (ADC range); encode as 2x 7-bit bytes in SysEx
     uint8_t  velocityCurve;
-    uint16_t retriggerTime;
+    uint16_t retriggerTime;  // ms; encode as 2x 7-bit bytes in SysEx
     uint8_t  crosstalkGroup;
     uint8_t  midiNote;
     uint8_t  midiChannel;
@@ -18,6 +18,7 @@ struct __attribute__((packed)) InputConfig {
     uint8_t  zone2MidiChannel;
     uint8_t  ccNumber;
     uint8_t  ccChannel;
+    uint8_t  linkedInput;    // 0xFF = no link, 0x00–0x08 = paired input ID
 };
 
 struct __attribute__((packed)) Preset {
@@ -32,5 +33,6 @@ void configSave();
 void configResetDefaults();
 
 bool presetLoad(uint8_t id);
+bool presetRead(uint8_t id, Preset* out);
 bool presetSave(uint8_t id, const char* name);
 bool presetDelete(uint8_t id);

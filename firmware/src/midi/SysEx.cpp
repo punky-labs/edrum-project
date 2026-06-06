@@ -1,0 +1,333 @@
+#include "SysEx.h"
+#include "../config/Config.h"
+#include <string.h>
+
+// ---- 7-bit encode / decode -------------------------------------------------
+
+static inline uint16_t decode14(uint8_t hi, uint8_t lo) {
+    return ((uint16_t)(hi & 0x7F) << 7) | (lo & 0x7F);
+}
+
+static inline void encode14(uint16_t v, uint8_t* hi, uint8_t* lo) {
+    *hi = (v >> 7) & 0x7F;
+    *lo = v & 0x7F;
+}
+
+// ---- response helpers ------------------------------------------------------
+
+void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
+                       const uint8_t* payload, size_t payloadLen) {
+    // TODO: replace with USB MIDI SysEx send via lathoub/USB-MIDI
+    Serial.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
+    for (size_t i = 0; i < payloadLen; i++) {
+        Serial.printf(" %02X", payload[i]);
+    }
+    Serial.println(" F7");
+}
+
+static void sendAck(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow, uint8_t status) {
+    uint8_t buf[3] = { cmdHigh, cmdLow, status };
+    sysexSendResponse(deviceId, SYSEX_CAT_STATUS, SYSEX_STAT_ACK, buf, 3);
+}
+
+// ---- category 01 — system --------------------------------------------------
+
+static void handleSystem(uint8_t deviceId, uint8_t cmd,
+                         const uint8_t* p, size_t pLen) {
+    (void)pLen;
+    switch (cmd) {
+        case SYSEX_SYS_PING:
+            sysexSendResponse(deviceId, SYSEX_CAT_SYS, SYSEX_SYS_PONG, nullptr, 0);
+            break;
+
+        case SYSEX_SYS_IDENT_REQ: {
+            uint8_t buf[4] = { FW_VER_MAJ, FW_VER_MIN, SYSEX_DEV_HEAD, NUM_INPUTS };
+            sysexSendResponse(deviceId, SYSEX_CAT_SYS, SYSEX_SYS_IDENT_RESP, buf, 4);
+            break;
+        }
+
+        case SYSEX_SYS_RESET:
+            configResetDefaults();
+            sendAck(deviceId, SYSEX_CAT_SYS, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_SYS_SAVE:
+            configSave();
+            sendAck(deviceId, SYSEX_CAT_SYS, cmd, SYSEX_ACK_OK);
+            break;
+
+        default:
+            sendAck(deviceId, SYSEX_CAT_SYS, cmd, SYSEX_ACK_UNKNOWN);
+            break;
+    }
+}
+
+// ---- category 02 — pad config ----------------------------------------------
+
+static void handlePad(uint8_t deviceId, uint8_t cmd,
+                      const uint8_t* p, size_t pLen) {
+    switch (cmd) {
+        case SYSEX_PAD_SET_TYPE:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].padType = p[1];
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_THRESH:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].threshold = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_CURVE:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].velocityCurve = p[1];
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RETRIG:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].retriggerTime = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_XTALK:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].crosstalkGroup = p[1];
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_GET: {
+            if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            const InputConfig& c = g_inputs[p[0]];
+            uint8_t thi, tlo, rhi, rlo;
+            encode14(c.threshold, &thi, &tlo);
+            encode14(c.retriggerTime, &rhi, &rlo);
+            // Response: INPUT_ID PAD_TYPE THRESH_HI THRESH_LO CURVE RETRIG_HI RETRIG_LO XTALK_GROUP
+            uint8_t buf[8] = { p[0], c.padType, thi, tlo, c.velocityCurve, rhi, rlo, c.crosstalkGroup };
+            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP, buf, 8);
+            break;
+        }
+
+        case SYSEX_PAD_LINK:
+            if (pLen < 2 || p[0] >= NUM_INPUTS || p[1] >= NUM_INPUTS || p[0] == p[1]) {
+                sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR);
+                return;
+            }
+            g_inputs[p[0]].linkedInput = p[1];
+            g_inputs[p[1]].linkedInput = p[0];
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_UNLINK: {
+            if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            uint8_t linked = g_inputs[p[0]].linkedInput;
+            if (linked < NUM_INPUTS) g_inputs[linked].linkedInput = 0xFF;
+            g_inputs[p[0]].linkedInput = 0xFF;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+        }
+
+        case SYSEX_PAD_GET_STATUS: {
+            if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            uint8_t id     = p[0];
+            uint8_t linked = g_inputs[id].linkedInput;
+            uint8_t status;
+            // Reserved: this input is the secondary of a hardware dual-zone pair
+            // (the primary holds padType 01 or 06)
+            if (linked < NUM_INPUTS &&
+                (g_inputs[linked].padType == 1 || g_inputs[linked].padType == 6)) {
+                status = SYSEX_INPUT_RESERVED;
+            } else if (g_inputs[id].padType != 0) {
+                status = SYSEX_INPUT_ACTIVE;
+            } else {
+                status = SYSEX_INPUT_AVAIL;
+            }
+            uint8_t buf[2] = { id, status };
+            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_GET_STATUS, buf, 2);
+            break;
+        }
+
+        default:
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_UNKNOWN);
+            break;
+    }
+}
+
+// ---- category 03 — MIDI mapping --------------------------------------------
+
+static void handleMidi(uint8_t deviceId, uint8_t cmd,
+                       const uint8_t* p, size_t pLen) {
+    switch (cmd) {
+        case SYSEX_MIDI_SET_NOTE:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].midiNote    = p[1];
+            g_inputs[p[0]].midiChannel = p[2];
+            sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_MIDI_SET_Z2:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].zone2MidiNote    = p[1];
+            g_inputs[p[0]].zone2MidiChannel = p[2];
+            sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_MIDI_SET_CC:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].ccNumber  = p[1];
+            g_inputs[p[0]].ccChannel = p[2];
+            sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_MIDI_GET: {
+            if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
+            const InputConfig& c = g_inputs[p[0]];
+            // Response: INPUT_ID MIDI_NOTE CH_1 MIDI_NOTE_2 CH_2 CC_NUM CC_CH
+            uint8_t buf[7] = {
+                p[0], c.midiNote, c.midiChannel,
+                c.zone2MidiNote, c.zone2MidiChannel,
+                c.ccNumber, c.ccChannel
+            };
+            sysexSendResponse(deviceId, SYSEX_CAT_MIDI, SYSEX_MIDI_RESP, buf, 7);
+            break;
+        }
+
+        default:
+            sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_UNKNOWN);
+            break;
+    }
+}
+
+// ---- category 04 — preset management --------------------------------------
+
+static void handlePreset(uint8_t deviceId, uint8_t cmd,
+                         const uint8_t* p, size_t pLen) {
+    switch (cmd) {
+        case SYSEX_PRE_LOAD: {
+            if (pLen < 1) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            bool ok = presetLoad(p[0]);
+            sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
+            break;
+        }
+
+        case SYSEX_PRE_SAVE: {
+            if (pLen < 2) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            uint8_t nameLen = p[1];
+            if (pLen < (size_t)(2 + nameLen)) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            char name[PRESET_NAME_LEN + 1];
+            uint8_t n = nameLen < PRESET_NAME_LEN ? nameLen : PRESET_NAME_LEN;
+            memcpy(name, p + 2, n);
+            name[n] = '\0';
+            bool ok = presetSave(p[0], name);
+            sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
+            break;
+        }
+
+        case SYSEX_PRE_LIST: {
+            // Response: COUNT [PRESET_ID NAME_LEN NAME_BYTES...]...
+            // Max payload: 1 + 16*(1+1+16) = 289 bytes
+            uint8_t buf[1 + MAX_PRESETS * (1 + 1 + PRESET_NAME_LEN)];
+            size_t pos = 1; // reserve buf[0] for count
+            uint8_t count = 0;
+            for (uint8_t i = 0; i < MAX_PRESETS; i++) {
+                Preset pr;
+                if (!presetRead(i, &pr)) continue;
+                uint8_t nlen = (uint8_t)strlen(pr.name);
+                buf[pos++] = i;
+                buf[pos++] = nlen;
+                memcpy(buf + pos, pr.name, nlen);
+                pos += nlen;
+                count++;
+            }
+            buf[0] = count;
+            sysexSendResponse(deviceId, SYSEX_CAT_PRESET, SYSEX_PRE_LIST_R, buf, pos);
+            break;
+        }
+
+        case SYSEX_PRE_DELETE: {
+            if (pLen < 1) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            bool ok = presetDelete(p[0]);
+            sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
+            break;
+        }
+
+        case SYSEX_PRE_EXPORT: {
+            if (pLen < 1) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            Preset pr;
+            if (!presetRead(p[0], &pr)) {
+                sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR);
+                return;
+            }
+            // Per-input record (14 bytes):
+            //   PAD_TYPE THRESH_HI THRESH_LO CURVE RETRIG_HI RETRIG_LO XTALK
+            //   MIDI_NOTE MIDI_CH Z2_NOTE Z2_CH CC_NUM CC_CH LINKED(0x7F=none)
+            uint8_t buf[2 + PRESET_NAME_LEN + NUM_INPUTS * 14];
+            uint8_t nlen = (uint8_t)strlen(pr.name);
+            size_t pos = 0;
+            buf[pos++] = p[0]; // preset ID
+            buf[pos++] = nlen;
+            memcpy(buf + pos, pr.name, nlen);
+            pos += nlen;
+            for (uint8_t i = 0; i < NUM_INPUTS; i++) {
+                const InputConfig& c = pr.inputs[i];
+                uint8_t thi, tlo, rhi, rlo;
+                encode14(c.threshold, &thi, &tlo);
+                encode14(c.retriggerTime, &rhi, &rlo);
+                buf[pos++] = c.padType;
+                buf[pos++] = thi;
+                buf[pos++] = tlo;
+                buf[pos++] = c.velocityCurve;
+                buf[pos++] = rhi;
+                buf[pos++] = rlo;
+                buf[pos++] = c.crosstalkGroup;
+                buf[pos++] = c.midiNote;
+                buf[pos++] = c.midiChannel;
+                buf[pos++] = c.zone2MidiNote;
+                buf[pos++] = c.zone2MidiChannel;
+                buf[pos++] = c.ccNumber;
+                buf[pos++] = c.ccChannel;
+                buf[pos++] = (c.linkedInput == 0xFF) ? SYSEX_LINKED_NONE : c.linkedInput;
+            }
+            sysexSendResponse(deviceId, SYSEX_CAT_PRESET, SYSEX_PRE_EXPORT, buf, pos);
+            break;
+        }
+
+        default:
+            sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_UNKNOWN);
+            break;
+    }
+}
+
+// ---- main dispatcher -------------------------------------------------------
+
+void sysexParse(const uint8_t* data, size_t len) {
+    if (len < SYSEX_HEADER_LEN) {
+        Serial.println("[SysEx] Message too short");
+        return;
+    }
+    if (data[0] != SYSEX_MFR_0 || data[1] != SYSEX_MFR_1) {
+        Serial.println("[SysEx] Unknown manufacturer ID");
+        return;
+    }
+    if (data[2] != SYSEX_DEV_HEAD) {
+        Serial.printf("[SysEx] Wrong device ID: %02X\n", data[2]);
+        return;
+    }
+
+    uint8_t        deviceId   = data[2];
+    uint8_t        cmdHigh    = data[3];
+    uint8_t        cmdLow     = data[4];
+    const uint8_t* payload    = data + SYSEX_HEADER_LEN;
+    size_t         payloadLen = len - SYSEX_HEADER_LEN;
+
+    switch (cmdHigh) {
+        case SYSEX_CAT_SYS:    handleSystem(deviceId, cmdLow, payload, payloadLen); break;
+        case SYSEX_CAT_PAD:    handlePad   (deviceId, cmdLow, payload, payloadLen); break;
+        case SYSEX_CAT_MIDI:   handleMidi  (deviceId, cmdLow, payload, payloadLen); break;
+        case SYSEX_CAT_PRESET: handlePreset(deviceId, cmdLow, payload, payloadLen); break;
+        default:
+            sendAck(deviceId, cmdHigh, cmdLow, SYSEX_ACK_UNKNOWN);
+            break;
+    }
+}
