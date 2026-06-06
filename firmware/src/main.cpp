@@ -38,6 +38,6 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("blip...");
-    delay(1000);
+    printConfig();
+    delay(2000);
 }
