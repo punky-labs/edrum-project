@@ -1,4 +1,5 @@
 #include "SysEx.h"
+#include "BleMidi.h"
 #include "../config/Config.h"
 #include <string.h>
 
@@ -17,7 +18,28 @@ static inline void encode14(uint16_t v, uint8_t* hi, uint8_t* lo) {
 
 void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
                        const uint8_t* payload, size_t payloadLen) {
-    // TODO: replace with USB MIDI SysEx send via lathoub/USB-MIDI
+    // Framed message: F0 MFR0 MFR1 DEV CMD_HI CMD_LO [payload] F7
+    // Max payload is the list-presets response: 1 + 16*(1+1+16) = 289 bytes -> 296 total
+    const size_t msgLen = 7 + payloadLen;
+    uint8_t buf[320];
+    if (msgLen > sizeof(buf)) {
+        Serial.printf("[SysEx TX] ERROR: payload too large (%u bytes)\n", (unsigned)payloadLen);
+        return;
+    }
+    buf[0] = 0xF0;
+    buf[1] = SYSEX_MFR_0;
+    buf[2] = SYSEX_MFR_1;
+    buf[3] = deviceId;
+    buf[4] = cmdHigh;
+    buf[5] = cmdLow;
+    if (payloadLen > 0 && payload != nullptr) {
+        memcpy(buf + 6, payload, payloadLen);
+    }
+    buf[6 + payloadLen] = 0xF7;
+
+    bleMidiSendSysEx(buf, msgLen);
+
+    // Debug log (keep alongside USB send for now)
     Serial.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
     for (size_t i = 0; i < payloadLen; i++) {
         Serial.printf(" %02X", payload[i]);

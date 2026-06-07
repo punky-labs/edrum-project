@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "config/Config.h"
 #include "midi/SysEx.h"
+#include "midi/BleMidi.h"
 
 static const char* PAD_TYPE_NAMES[] = {
     "piezo",
@@ -30,12 +31,16 @@ static void printConfig() {
     Serial.println("--------------------");
 }
 
+static bool _bleConnected = false;
+
 void setup() {
     Serial.begin(115200);
     delay(1500);
-    Serial.println("eDrum v0.1 — ready");
+    Serial.println("eDrum v0.1 -- ready");
     configLoad();
     printConfig();
+    bleMidiInit();
+    Serial.println("BLE MIDI: waiting for connection...");
 
     // Smoke-test the SysEx dispatcher with a Category 01 Ping
     // Expected TX: [SysEx TX] F0 00 7D 00 01 02 F7  (Pong)
@@ -46,6 +51,10 @@ void setup() {
 }
 
 void loop() {
-    printConfig();
-    delay(2000);
+    bleMidiPoll();
+    if (!_bleConnected && bleMidiIsConnected()) {
+        _bleConnected = true;
+        Serial.println("BLE MIDI: connected");
+    }
+    delay(1);
 }

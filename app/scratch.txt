@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<string>", line 14, in <module>
+    t.connect('eDrum Bluetooth')
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/Volumes/app/transport/midi.py", line 129, in connect
+    midi_in.ignore_types(sysex=False, miditime=True, activesens=True)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "_rtmidi.pyx", line 900, in _rtmidi.MidiIn.ignore_types
+TypeError: ignore_types() got an unexpected keyword argument 'miditime'
