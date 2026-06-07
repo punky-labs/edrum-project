@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include "config/Config.h"
 #include "midi/SysEx.h"
-#include "midi/BleMidi.h"
+#include "midi/UsbMidi.h"
+#include <BLEMidi.h>  
 
 static const char* PAD_TYPE_NAMES[] = {
     "piezo",
@@ -39,7 +40,7 @@ void setup() {
     Serial.println("eDrum v0.1 -- ready");
     configLoad();
     printConfig();
-    bleMidiInit();
+    usbMidiInit();  // replace bleMidiInit()
     Serial.println("BLE MIDI: waiting for connection...");
 
     // Smoke-test the SysEx dispatcher with a Category 01 Ping
@@ -51,10 +52,8 @@ void setup() {
 }
 
 void loop() {
-    bleMidiPoll();
-    if (!_bleConnected && bleMidiIsConnected()) {
-        _bleConnected = true;
-        Serial.println("BLE MIDI: connected");
-    }
+    usbMidiPoll();  // replace bleMidiPoll()
+
+
     delay(1);
 }

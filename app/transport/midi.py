@@ -186,18 +186,51 @@ class DrumMidiTransport:
         rtmidi receive callback.
 
         Called on rtmidi's background thread — keep it fast and
-        thread-safe.  Filters for SysEx (0xF0), validates the
-        manufacturer ID via parse_message(), and dispatches.
+        thread-safe.  Handles two wire formats:
+
+        - byte 0 == 0xF0: raw SysEx (USB MIDI), passed directly to parse_message.
+        - byte 0 >= 0x80 (not 0xF0): BLE MIDI packet.  The OS BLE MIDI driver
+          prepends a header byte and optional timestamp bytes (all >= 0x80,
+          never 0xF0/0xF7).  Strip them, accumulate the clean SysEx body, then
+          dispatch when 0xF7 is seen — matching the firmware's _parsePacket logic.
         """
         _delta_time, byte_list = message
-        if not byte_list or byte_list[0] != SYSEX_START:
+        if not byte_list:
             return
-        parsed = parse_message(bytes(byte_list))
-        if parsed is None:
-            return
-        cb = self._sysex_callback
-        if cb is not None:
-            cb(parsed)
+
+        first = byte_list[0]
+
+        if first == SYSEX_START:
+            parsed = parse_message(bytes(byte_list))
+            if parsed is None:
+                return
+            cb = self._sysex_callback
+            if cb is not None:
+                cb(parsed)
+
+        elif first >= 0x80:
+            # BLE MIDI: skip byte 0 (header); bytes >= 0x80 that are not 0xF0/0xF7
+            # are timestamp bytes — ignore them.
+            buf: bytearray = bytearray()
+            in_sysex = False
+            for b in byte_list[1:]:
+                if b == 0xF0:
+                    buf = bytearray([0xF0])
+                    in_sysex = True
+                elif b == 0xF7:
+                    if in_sysex:
+                        buf.append(0xF7)
+                        parsed = parse_message(bytes(buf))
+                        if parsed is not None:
+                            cb = self._sysex_callback
+                            if cb is not None:
+                                cb(parsed)
+                    in_sysex = False
+                    buf = bytearray()
+                elif b < 0x80:
+                    if in_sysex:
+                        buf.append(b)
+                # else: timestamp or other status byte — skip
 
     # ------------------------------------------------------------------
     # Context manager

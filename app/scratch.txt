@@ -1,9 +1,20 @@
-Traceback (most recent call last):
-  File "<string>", line 14, in <module>
-    t.connect('eDrum Bluetooth')
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^
-  File "/Volumes/app/transport/midi.py", line 129, in connect
-    midi_in.ignore_types(sysex=False, miditime=True, activesens=True)
-    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "_rtmidi.pyx", line 900, in _rtmidi.MidiIn.ignore_types
-TypeError: ignore_types() got an unexpected keyword argument 'miditime'
+python3 -c "
+import rtmidi, time
+midi_in = rtmidi.MidiIn()
+midi_in.ignore_types(sysex=False, timing=True, active_sense=True)
+def cb(msg, data):
+    delta, bl = msg
+    print(f'Got {len(bl)} bytes: {\" \".join(f\"{b:02X}\" for b in bl)}')
+midi_in.set_callback(cb, None)
+midi_in.open_port(1)
+print('Listening for 15 seconds...')
+time.sleep(15)
+"
+
+python3 -c "
+import rtmidi
+midi_out = rtmidi.MidiOut()
+midi_out.open_port(1)
+midi_out.send_message([0xF0, 0x00, 0x7D, 0x00, 0x01, 0x01, 0xF7])
+print('Sent ping')
+"

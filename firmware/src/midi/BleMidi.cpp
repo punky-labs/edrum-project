@@ -2,6 +2,8 @@
 #include "SysEx.h"
 #include <BLEMidi.h>
 
+
+
 // The max22/ESP32-BLE-MIDI library has no SysEx support — receivePacket() returns
 // "System common message, not implemented yet" on 0xF0. We work around this by
 // replacing the BLE characteristic callback after begin() and parsing raw BLE MIDI
@@ -16,6 +18,9 @@ static NimBLECharacteristic* _pChar = nullptr;
 static uint8_t  _sxBuf[SX_BUF];
 static uint16_t _sxLen    = 0;
 static bool     _sxActive = false;
+
+static QueueHandle_t _sendQueue = nullptr;
+struct SysExPacket { uint8_t data[20]; size_t len; };
 
 // Parse a raw BLE MIDI packet for SysEx only.
 // SysEx body bytes are always 0x00-0x7F; timestamps and other status bytes
@@ -35,10 +40,33 @@ static void _parsePacket(const uint8_t* data, size_t size) {
     }
 }
 
+static void _bleSendTask(void* arg) {
+    SysExPacket pkt;
+    while (true) {
+        if (xQueueReceive(_sendQueue, &pkt, portMAX_DELAY)) {
+            if (_pChar) {
+                _pChar->setValue(pkt.data, pkt.len);
+                _pChar->notify();
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+        }
+    }
+}
+
 class _SysExCb : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* c) override {
         std::string v = c->getValue();
         _parsePacket((const uint8_t*)v.c_str(), v.length());
+    }
+
+    // Fires when the client writes the CCCD — subValue 0=unsub, 1=notify, 2=indicate, 3=both.
+    void onSubscribe(NimBLECharacteristic* c, ble_gap_conn_desc* desc, uint16_t subValue) override {
+        Serial.printf("BLE MIDI: client subscribe event, subValue=%u\n", subValue);
+    }
+
+    // Fires after every notify attempt — tells us whether NimBLE actually sent the packet.
+    void onStatus(NimBLECharacteristic* c, Status s, int code) override {
+        Serial.printf("BLE MIDI: notify status=%d code=%d\n", (int)s, code);
     }
 };
 static _SysExCb _cb;
@@ -63,6 +91,20 @@ void bleMidiInit() {
         }
     }
 
+    // Use the library's own hook points for connection events rather than replacing the
+    // NimBLE server callbacks directly. BLEMidiServerClass::onConnect/onDisconnect are
+    // private and set the `connected` flag that bleMidiIsConnected() reads — replacing
+    // the server callback via setCallbacks() would break that.
+    BLEMidiServer.setOnConnectCallback([]() {
+        Serial.println("BLE MIDI: client connected");
+        // Send a zero-length notify so the Mac sees the characteristic is live.
+        // If onSubscribe fires with subValue=1 shortly after, notifications are working.
+        // if (_pChar) _pChar->notify();
+    });
+    BLEMidiServer.setOnDisconnectCallback([]() {
+        Serial.println("BLE MIDI: client disconnected");
+    });
+
     NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
     if (pAdv) {
         pAdv->start();
@@ -70,6 +112,8 @@ void bleMidiInit() {
     } else {
         Serial.println("BLE MIDI: WARNING - advertising object not found");
     }
+    _sendQueue = xQueueCreate(16, sizeof(SysExPacket));
+    xTaskCreate(_bleSendTask, "ble_send", 4096, nullptr, 5, nullptr);
 }
 
 void bleMidiPoll() {
@@ -81,39 +125,35 @@ bool bleMidiIsConnected() {
 }
 
 void bleMidiSendSysEx(const uint8_t* data, size_t len) {
-    // data = [F0][body...][F7], len includes both framing bytes.
-    // Build BLE MIDI packets: first packet is [H][TS][MIDI...], continuation
-    // packets are [H][MIDI...]. BLE MTU floor = 20 bytes; F0/F7 are embedded
-    // in the data stream and need no special timestamp treatment in practice.
-    if (!BLEMidiServer.isConnected() || !_pChar || len < 2) return;
+    if (!BLEMidiServer.isConnected() || len < 2) return;
 
     const size_t MTU = 20;
-    uint8_t pkt[MTU];
-    size_t  offset = 0;
-    bool    first  = true;
+    size_t offset = 0;
+    bool first = true;
 
     while (offset < len) {
-        auto     t   = millis();
-        size_t   remaining = len - offset;
-        size_t   pktLen;
+        uint32_t t = millis();
+        uint8_t pkt[MTU];
+        size_t remaining = len - offset;
+        size_t pktLen;
 
         if (first) {
-            pkt[0] = (uint8_t)(0x80u | ((t >> 7) & 0x3Fu));   // header
-            pkt[1] = (uint8_t)(0x80u | (t & 0x7Fu));           // timestamp
-            size_t chunk = remaining < (MTU - 2) ? remaining : (MTU - 2);
+            pkt[0] = (uint8_t)(0x80u | ((t >> 7) & 0x3Fu));
+            pkt[1] = (uint8_t)(0x80u | (t & 0x7Fu));
+            size_t chunk = min(remaining, MTU - 2);
             memcpy(pkt + 2, data + offset, chunk);
-            pktLen  = chunk + 2;
+            pktLen = chunk + 2;
             offset += chunk;
-            first   = false;
+            first = false;
         } else {
-            pkt[0] = (uint8_t)(0x80u | ((t >> 7) & 0x3Fu));   // header only
-            size_t chunk = remaining < (MTU - 1) ? remaining : (MTU - 1);
+            pkt[0] = (uint8_t)(0x80u | ((t >> 7) & 0x3Fu));
+            size_t chunk = min(remaining, MTU - 1);
             memcpy(pkt + 1, data + offset, chunk);
-            pktLen  = chunk + 1;
+            pktLen = chunk + 1;
             offset += chunk;
         }
 
-        _pChar->setValue(pkt, pktLen);
-        _pChar->notify();
+        BLEMidiServer.sendPacket(pkt, (uint8_t)pktLen);
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
