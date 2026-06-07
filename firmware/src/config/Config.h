@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <Preferences.h>
+#include <LittleFS.h>
 
 #define NUM_INPUTS      9
 #define MAX_PRESETS     16
@@ -11,6 +11,11 @@ struct __attribute__((packed)) InputConfig {
     uint16_t threshold;      // 0–1023 (ADC range); encode as 2x 7-bit bytes in SysEx
     uint8_t  velocityCurve;
     uint16_t retriggerTime;  // ms; encode as 2x 7-bit bytes in SysEx
+    uint16_t headSensitivity;  // upper ADC bound for velocity scaling; default 1000
+    uint16_t scanTime;         // peak scan window ms; default 10
+    uint16_t maskTime;         // post-hit ignore window ms; default 30
+    uint16_t rimSensitivity;   // rim/zone-2 sensitivity; default 200
+    uint16_t rimThreshold;     // rim/zone-2 threshold; default 30
     uint8_t  crosstalkGroup;
     uint8_t  midiNote;
     uint8_t  midiChannel;

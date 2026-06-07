@@ -63,7 +63,12 @@ PAD_GET        = 0x06
 PAD_RESP       = 0x07
 PAD_LINK       = 0x08
 PAD_UNLINK     = 0x09
-PAD_GET_STATUS = 0x0A
+PAD_GET_STATUS     = 0x0A
+PAD_SET_SENS       = 0x0B
+PAD_SET_SCAN       = 0x0C
+PAD_SET_MASK       = 0x0D
+PAD_SET_RIM_SENS   = 0x0E
+PAD_SET_RIM_THRESH = 0x0F
 
 # Pad type values
 PAD_TYPE_PIEZO      = 0x00
@@ -85,18 +90,20 @@ PAD_TYPE_NAMES: dict[int, str] = {
 }
 
 # Velocity curve values
-CURVE_LINEAR = 0x00
-CURVE_LOG    = 0x01
-CURVE_EXP    = 0x02
-CURVE_SCURVE = 0x03
-CURVE_CUSTOM = 0x04
+CURVE_NATURAL    = 0x00
+CURVE_EXPRESSIVE = 0x01
+CURVE_SENSITIVE  = 0x02
+CURVE_PUNCHY     = 0x03
+CURVE_AGGRESSIVE = 0x04
+CURVE_CUSTOM     = 0x05
 
 CURVE_NAMES: dict[int, str] = {
-    CURVE_LINEAR: "linear",
-    CURVE_LOG:    "logarithmic",
-    CURVE_EXP:    "exponential",
-    CURVE_SCURVE: "s-curve",
-    CURVE_CUSTOM: "custom",
+    CURVE_NATURAL:    "Natural",
+    CURVE_EXPRESSIVE: "Expressive",
+    CURVE_SENSITIVE:  "Sensitive",
+    CURVE_PUNCHY:     "Punchy",
+    CURVE_AGGRESSIVE: "Aggressive",
+    CURVE_CUSTOM:     "Custom",
 }
 
 # Input status values (02 0A response)
@@ -317,6 +324,41 @@ def build_get_input_status(input_id: int, device_id: int = DEV_HEAD) -> bytearra
     return _build(CAT_PAD, PAD_GET_STATUS, [input_id], device_id)
 
 
+def build_set_head_sensitivity(input_id: int, value: int,
+                               device_id: int = DEV_HEAD) -> bytearray:
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_SENS, [input_id, hi, lo], device_id)
+
+
+def build_set_scan_time(input_id: int, ms: int,
+                        device_id: int = DEV_HEAD) -> bytearray:
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(ms)
+    return _build(CAT_PAD, PAD_SET_SCAN, [input_id, hi, lo], device_id)
+
+
+def build_set_mask_time(input_id: int, ms: int,
+                        device_id: int = DEV_HEAD) -> bytearray:
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(ms)
+    return _build(CAT_PAD, PAD_SET_MASK, [input_id, hi, lo], device_id)
+
+
+def build_set_rim_sensitivity(input_id: int, value: int,
+                              device_id: int = DEV_HEAD) -> bytearray:
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_RIM_SENS, [input_id, hi, lo], device_id)
+
+
+def build_set_rim_threshold(input_id: int, value: int,
+                            device_id: int = DEV_HEAD) -> bytearray:
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_RIM_THRESH, [input_id, hi, lo], device_id)
+
+
 # ---------------------------------------------------------------------------
 # Category 03 builders — MIDI mapping
 # ---------------------------------------------------------------------------
@@ -405,18 +447,25 @@ def parse_sys_ack(payload: bytes) -> dict:
 def parse_pad_config_response(payload: bytes) -> dict:
     """
     02 07 -> {input_id, pad_type, pad_type_name, threshold,
-             velocity_curve, curve_name, retrigger_time, crosstalk_group}
+             velocity_curve, curve_name, retrigger_time, crosstalk_group,
+             head_sensitivity, scan_time, mask_time,
+             rim_sensitivity, rim_threshold}
     """
-    _require_len(payload, 8, "pad_config_response")
+    _require_len(payload, 18, "pad_config_response")
     return {
-        "input_id":        payload[0],
-        "pad_type":        payload[1],
-        "pad_type_name":   PAD_TYPE_NAMES.get(payload[1], f"0x{payload[1]:02X}"),
-        "threshold":       decode_14bit(payload[2], payload[3]),
-        "velocity_curve":  payload[4],
-        "curve_name":      CURVE_NAMES.get(payload[4], f"0x{payload[4]:02X}"),
-        "retrigger_time":  decode_14bit(payload[5], payload[6]),
-        "crosstalk_group": payload[7],
+        "input_id":         payload[0],
+        "pad_type":         payload[1],
+        "pad_type_name":    PAD_TYPE_NAMES.get(payload[1], f"0x{payload[1]:02X}"),
+        "threshold":        decode_14bit(payload[2], payload[3]),
+        "velocity_curve":   payload[4],
+        "curve_name":       CURVE_NAMES.get(payload[4], f"0x{payload[4]:02X}"),
+        "retrigger_time":   decode_14bit(payload[5], payload[6]),
+        "crosstalk_group":  payload[7],
+        "head_sensitivity": decode_14bit(payload[8],  payload[9]),
+        "scan_time":        decode_14bit(payload[10], payload[11]),
+        "mask_time":        decode_14bit(payload[12], payload[13]),
+        "rim_sensitivity":  decode_14bit(payload[14], payload[15]),
+        "rim_threshold":    decode_14bit(payload[16], payload[17]),
     }
 
 
@@ -467,29 +516,45 @@ def parse_list_presets_response(payload: bytes) -> dict:
 
 def _parse_input_record(data: bytes, offset: int) -> dict:
     """
-    Parse the 14-byte per-input record used by the export command.
-    Layout: PAD_TYPE THRESH_HI THRESH_LO CURVE RETRIG_HI RETRIG_LO XTALK
-            MIDI_NOTE MIDI_CH Z2_NOTE Z2_CH CC_NUM CC_CH LINKED(0x7F=none)
+    Parse the 24-byte per-input record used by the export command.
+    Layout:
+      PAD_TYPE
+      THRESH_HI THRESH_LO
+      CURVE
+      RETRIG_HI RETRIG_LO
+      XTALK
+      SENS_HI SENS_LO
+      SCAN_HI SCAN_LO
+      MASK_HI MASK_LO
+      RIM_SENS_HI RIM_SENS_LO
+      RIM_THRESH_HI RIM_THRESH_LO
+      MIDI_NOTE MIDI_CH Z2_NOTE Z2_CH CC_NUM CC_CH
+      LINKED (0x7F = none)
     """
-    if offset + 14 > len(data):
+    if offset + 24 > len(data):
         raise ValueError(f"input record at offset {offset}: truncated")
     d = data[offset:]
-    linked_raw = d[13]
+    linked_raw = d[23]
     return {
-        "pad_type":        d[0],
-        "pad_type_name":   PAD_TYPE_NAMES.get(d[0], f"0x{d[0]:02X}"),
-        "threshold":       decode_14bit(d[1], d[2]),
-        "velocity_curve":  d[3],
-        "curve_name":      CURVE_NAMES.get(d[3], f"0x{d[3]:02X}"),
-        "retrigger_time":  decode_14bit(d[4], d[5]),
-        "crosstalk_group": d[6],
-        "midi_note":       d[7],
-        "midi_channel":    d[8],
-        "zone2_note":      d[9],
-        "zone2_channel":   d[10],
-        "cc_number":       d[11],
-        "cc_channel":      d[12],
-        "linked_input":    None if linked_raw == LINKED_NONE else linked_raw,
+        "pad_type":         d[0],
+        "pad_type_name":    PAD_TYPE_NAMES.get(d[0], f"0x{d[0]:02X}"),
+        "threshold":        decode_14bit(d[1], d[2]),
+        "velocity_curve":   d[3],
+        "curve_name":       CURVE_NAMES.get(d[3], f"0x{d[3]:02X}"),
+        "retrigger_time":   decode_14bit(d[4], d[5]),
+        "crosstalk_group":  d[6],
+        "head_sensitivity": decode_14bit(d[7],  d[8]),
+        "scan_time":        decode_14bit(d[9],  d[10]),
+        "mask_time":        decode_14bit(d[11], d[12]),
+        "rim_sensitivity":  decode_14bit(d[13], d[14]),
+        "rim_threshold":    decode_14bit(d[15], d[16]),
+        "midi_note":        d[17],
+        "midi_channel":     d[18],
+        "zone2_note":       d[19],
+        "zone2_channel":    d[20],
+        "cc_number":        d[21],
+        "cc_channel":       d[22],
+        "linked_input":     None if linked_raw == LINKED_NONE else linked_raw,
     }
 
 
@@ -504,10 +569,10 @@ def parse_export_preset_response(payload: bytes) -> dict:
     _require_len(payload, 2, "export_preset_response")
     preset_id = payload[0]
     name_len  = payload[1]
-    _require_len(payload, 2 + name_len + NUM_INPUTS * 14, "export_preset_response")
+    _require_len(payload, 2 + name_len + NUM_INPUTS * 24, "export_preset_response")
     name   = payload[2 : 2 + name_len].decode("ascii", errors="replace")
     offset = 2 + name_len
-    inputs = [_parse_input_record(payload, offset + i * 14) for i in range(NUM_INPUTS)]
+    inputs = [_parse_input_record(payload, offset + i * 24) for i in range(NUM_INPUTS)]
     return {"preset_id": preset_id, "name": name, "inputs": inputs}
 
 
@@ -608,19 +673,31 @@ if __name__ == "__main__":
     _check("14-bit round-trips to 50",   decode_14bit(p[1], p[2]) == 50)
 
     # ── Pad config response parser ────────────────────────────────────────────
-    print("\nPad config response parser (02 07):")
+    print("\nPad config response parser (02 07) — 18 bytes:")
     thi, tlo = encode_14bit(750)
     rhi, rlo = encode_14bit(50)
-    fake = bytes([3, PAD_TYPE_PIEZO_RIM, thi, tlo, CURVE_LOG, rhi, rlo, 1])
+    shi, slo = encode_14bit(1000)
+    sch, scl = encode_14bit(10)
+    mhi, mlo = encode_14bit(30)
+    rshi, rslo = encode_14bit(200)
+    rthi, rtlo = encode_14bit(30)
+    fake = bytes([
+        3, PAD_TYPE_PIEZO_RIM, thi, tlo, CURVE_EXPRESSIVE, rhi, rlo, 1,
+        shi, slo, sch, scl, mhi, mlo, rshi, rslo, rthi, rtlo
+    ])
     result = parse_pad_config_response(fake)
-    _check("input_id == 3",           result["input_id"]        == 3)
-    _check("pad_type == PIEZO_RIM",   result["pad_type"]        == PAD_TYPE_PIEZO_RIM)
-    _check("pad_type_name correct",   result["pad_type_name"]   == "piezo+rim")
-    _check("threshold == 750",        result["threshold"]       == 750)
-    _check("curve == LOG",            result["velocity_curve"]  == CURVE_LOG)
-    _check("curve_name correct",      result["curve_name"]      == "logarithmic")
-    _check("retrigger_time == 50",    result["retrigger_time"]  == 50)
-    _check("crosstalk_group == 1",    result["crosstalk_group"] == 1)
+    _check("input_id == 3",              result["input_id"]         == 3)
+    _check("pad_type == PIEZO_RIM",      result["pad_type"]         == PAD_TYPE_PIEZO_RIM)
+    _check("threshold == 750",           result["threshold"]        == 750)
+    _check("curve == EXPRESSIVE",        result["velocity_curve"]   == CURVE_EXPRESSIVE)
+    _check("curve_name == 'Expressive'", result["curve_name"]       == "Expressive")
+    _check("retrigger_time == 50",       result["retrigger_time"]   == 50)
+    _check("crosstalk_group == 1",       result["crosstalk_group"]  == 1)
+    _check("head_sensitivity == 1000",   result["head_sensitivity"] == 1000)
+    _check("scan_time == 10",            result["scan_time"]        == 10)
+    _check("mask_time == 30",            result["mask_time"]        == 30)
+    _check("rim_sensitivity == 200",     result["rim_sensitivity"]  == 200)
+    _check("rim_threshold == 30",        result["rim_threshold"]    == 30)
 
     # ── Link / unlink ─────────────────────────────────────────────────────────
     print("\nLink inputs (02 08):")

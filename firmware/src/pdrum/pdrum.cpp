@@ -129,33 +129,31 @@ int PDrum::curve(int velocityRaw, int threshold, int sensRaw, byte curveType)
     if (resF > 127){
       resF = 127;
     }
-  //Curve Type 0 : Linear
-  if (curveType == 0){
-    //
+  // Curve 0: Natural (linear) — unchanged
+  if (curveType == 0) {
+    // linear, no transform
   }
-
-  //Curve Type 1 : exp 1
-  else if (curveType == 1){
-    resF = (126 / (pow(1.02, 126) - 1)) * (pow(1.02, resF - 1) - 1) + 1; // 1.02
+  // Curve 1: Expressive (exp base 1.02 — soft bias)
+  else if (curveType == 1) {
+    resF = (126 / (pow(1.02, 126) - 1)) * (pow(1.02, resF - 1) - 1) + 1;
   }
-
-  //Curve Type 2 : exp 2
-  else if (curveType == 2){
-    resF = (126 / (pow(1.05, 126) - 1)) * (pow(1.05, resF - 1) - 1) + 1; // 1.05
+  // Curve 2: Sensitive (exp base 1.05 — stronger soft bias)
+  else if (curveType == 2) {
+    resF = (126 / (pow(1.05, 126) - 1)) * (pow(1.05, resF - 1) - 1) + 1;
   }
-
-  //Curve Type 3 : log 1
-  else if (curveType == 3){
-    resF = (126 / (pow(0.98, 126) - 1)) * (pow(0.98, resF - 1) - 1) + 1; // 0.98
+  // Curve 3: Punchy (log base 0.98 — loud bias)
+  else if (curveType == 3) {
+    resF = (126 / (pow(0.98, 126) - 1)) * (pow(0.98, resF - 1) - 1) + 1;
   }
-
-  //Curve Type 4 : log 2
-  else if (curveType == 4){
-    resF = (126 / (pow(0.95, 126) - 1)) * (pow(0.95, resF - 1) - 1) + 1; // 0.95
+  // Curve 4: Aggressive (log base 0.95 — stronger loud bias)
+  else if (curveType == 4) {
+    resF = (126 / (pow(0.95, 126) - 1)) * (pow(0.95, resF - 1) - 1) + 1;
   }
-
-  else
-  {
+  // Curve 5: Custom (reserved — treat as linear for now)
+  else if (curveType == 5) {
+    // reserved, fall through as linear
+  }
+  else {
     resF = 0;
   }
   byte res;

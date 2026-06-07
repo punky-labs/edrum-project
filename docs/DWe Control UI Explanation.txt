@@ -1,0 +1,145 @@
+1. "HUB" Button: DrumLink Hub Settings Button
+	• The “HUB” Button opens DrumLink Hub settings.
+	• In there, you will see the Device ID, Firmware Revision, the selected RF Channel, MIDI Output, Send Note Off check box, and a Debug Level option.
+	• NOTE: An ”Update” button will be shown if a firmware update is available.
+	• If you ever need to roll back to an older firmware version, a revert button will be available.
+	• Indicates which RF channel is currently selected in the DrumLink hub. There four RF channel options:
+        • 2402 MHz
+        • 2426 MHz
+        • 2451 MHz
+        • 2480 MHz
+	• MIDI Output lets you select whether you want the DrumLink hub to send MIDI to:
+        • Software only
+        • HUB only (MIDI Out jack)
+        • Software + HUB (Software + MIDI Out)
+	• Check the “Send MIDI Note Off” box to send a MIDI note-off message after a strike.
+	• “Debug Level” is a diagnostic tool for customer support to determine hardware and software issues. DrumLink Hub Settings
+
+2. Pairing Button: Pair Button
+	• The ”PAIR" button connects drums and cymbals to the hub by allowing the DrumLink hub to listen and connect to active triggers.
+
+3. Power Button:
+	• The ”Power" button manages the pairing status and auto-population of devices by turning the DrumLink Hub on or off.
+	• If you have drums or cymbals not appearing in the instrument pane, try turning off the DrumLink hub and then turning it on. This wakes up the triggers once the drums and cymbals are struck.
+
+4. Tool Tip Bar:
+	• Provides tooltips when hovering the mouse over a parameter. Power Button Tool Tip Bar
+
+5. MIDI Map: MIDI Map Button
+	• This allows for the selection of what MIDI MAP is currently used for in DWe Control.
+	• MIDI Maps are the MIDI notes assigned to a specific instrument and/or zone.
+	• DWe Control has many MIDI map options available from third party software applications or drum modules. MIDI Maps are available for the following.
+        o DWe
+        o Superior Drummer 3
+        o EZ Drummer 3
+        o Superior Drummer 2
+        o EZ Drummer 2
+        o Addictive Drums 2
+        o Perfect Drums 2
+        o Steven Slate 5.5
+        o Steven Slate 5
+        o Steven Slate 4
+        o Native Instruments Studio Drummer
+        o Native Instruments Abbey Road
+        o Get Good Drums
+        o Mondo Drums
+        o Roland TD50
+        o Roland TD30
+        o Roland TD27
+        o Roland TD20
+        o Roland TD12
+        o Roland TD10
+        o Pearl Mimic MIDI Map Pop-Up Box 10 The products listed are registered trademarks of their respective manufacturers.
+
+6. Autotrack: Autotrack
+	• The ”AUTOTRACK" checkbox enables automatic instrument selection to allow you to you can easily get to trigger settings play simply hitting the instrument to see its trigger settings.
+
+7. Kit Button:
+	• The ”KIT" button enables you to export or import complete trigger settings for all instruments.
+	• A global unpair function lets you put all the paired drums and cymbals in the unpair mode.  In this mode, you can unpair the instruments by striking the drum and/or cymbal.
+	• NOTE: This is useful for duplicating custom trigger settings for multiple kits. 
+    
+8. Battery Level Indicator:
+	• The “Battery Level Indicator” displays how much power is remaining on a selected instrument.
+	• The battery level is measured in real time.
+	• When power level is low, the icon turns red to let you know it’s time to change the battery on the trigger(s). Kit Trigger Setting Export/Import Global Unpair Battery Level Indicator
+
+9. Instrument Pane & Selected Pad: Instrument Pane
+	• The ”Instrument Pane” displays all instruments that are actively paired to the DrumLink hub.
+	• Once an instrument is selected it appears in the selected pad section with a graphic of the instrument.
+
+10. Velocity Control: Velocity Control
+	• The “Velocity Control” section shows the Velocity Curve that is currently used in a selected zone of an instrument.
+	• The selected zone is the striking area on an instrument.
+	• The velocity curves adjust how a drum or cymbal interprets strikes.
+	• Also, there is a visual representation of the incoming MIDI values from 0 to 127 in a bar graph.
+	• This is helpful to see the softest to hardest hits in a selected zone.
+
+11. Hit Log: Hit Log & Clear Button
+	• Displays strike information to help confirm trigger functionality by showing sequential hits in time from 1 to 255 before repeating.
+
+12. Clear Button
+	• The "Clear" button resets the hit log so you can have a clean log to look at incoming hits.
+
+13. Edit Button: Edit & Calibrate Buttons
+	• By clicking “EDIT” button on the Selected Pad, a drop-down menu appears with options for:
+	• Firmware Details
+	• Exporting Trigger Settings
+	• Importing Trigger Settings
+	• Factory Resetting the Trigger
+	• Unpairing Trigger from Hub
+
+14. Calibrate Button:
+	• Click the ”CALIBRATE DRUM" button to adjust the drum trigger to drumhead tension as the trigger is adjusting to the amount of tension applied to it. This is vital for having a smooth triggering response.
+	• There is a “CALIBRATE BOW” option for the cymbals to ensure the zones are responding correctly when struck.
+	• Also, there is a “CALIBRATE PEDAL” option on the hi-hat to calibrate the “open” versus “closed” response on the hi-hat pedal.
+
+15. Velocity Control Selected Zone & Dynamic Range:
+	• The VELOCITY CONTROL section displays available zones on the selected instrument to adjust velocity curves.
+
+16. Velocity Control Dynamic Range:
+	• The DYNAMIC RANGE setting is adjustable per zone on the selected instrument. This determines the usable range from 0 to 127.
+
+17. Trigger Settings: Trigger Settings
+	• There are the following options for trigger settings available for drums and cymbals. SENSITIVITY THRESHOLD RETRIGGER SCAN TIME MASK TIME
+	• These settings are adjustable by zone.
+	• The SENSITIVITY setting determines how sensitive the trigger is to registering a signal, the lower the setting the easier it is to get the trigger to respond.
+	• THRESHOLD determines the strength it takes for the trigger to respond. The higher the setting, the more force is needed to get the trigger to respond. It is like a gate on the trigger.
+	• RETRIGGER is used to prevent double triggering after a strike, the higher the setting, the more likely repetitive hits are not heard.
+	• SCAN TIME is the amount of time it takes a trigger to respond. The lower the time setting, the faster it responds, and the higher the time, the longer it takes to play.
+	• MASK TIME is the amount of time after a hit that the trigger looks to listen for a strike. The higher the setting, the less double triggering, and the lower the time, the easier it is to play faster.
+
+18. Options Tab: Instrument Options
+	• The “OPTIONS” tab displays additional settings based on the selected drum or cymbal.
+	• These have adjustments for different zones such as Rim Zone, Rimshot Zone, and Cross Stick Zone (xStick), and LED On Hit. These are instrumentdependent.
+	• The snare drum has options for Positional Sensing, Throw-off, and Pitch Bend. Positional Sensing and Pitch Bend cannot be used simultaneously.
+	• The toms have the Pitch Bend option on by default.
+	• The Ride and Crash cymbals have an autocalibration option for the trigger, so it plays more evenly while playing, it is on by default. Snare Drum
+
+19. Advanced Tab: Advanced Tab
+	• The “ADVANCED” tab provides more specific adjustments for selected instruments.
+	• Snare Drums have HEAD to RIMSHOT, RIMSHOT to RIM, POSITIONAL SENSING SMOOTHNESS, and POSITIONAL SENSING RANGE controls.
+	• Toms and Bass Drums have Head to Rimshot and Rimshot to Rim controls.
+	• Hi-Hats have BOW to BELL, CC SMOOTHNESS, and CLOSED PEDAL TUNE controls plus a CC bar indicator.
+	• Ride and Crash Cymbals have BOW to BELL control.
+
+20. MIDI Tab: MIDI Tab
+	• This area shows MIDI note assignments per zone, MIDI INSTRUMENT type, and default MIDI CHANNEL for the selected instrument.
+	o Snare Drums will display HEAD, RIM, RIMSHOT, CROSS STICK (xSTICK) zones and the assigned MIDI Note numbers.
+	o The snare also has a secondary MIDI assignment for SNARES OFF—this is the OFF position on the digiMAG snare throw-off. It gives you the option of two sound sets on one drum.
+	o Toms will display HEAD, RIM, AND RIMSHOT zones and the assigned MIDI note numbers.
+	o Bass drums will display the HEAD zone and the assigned MIDI Note number.
+	o Rides and Crash cymbals will display BOW, EDGE, and BELL zones and the assigned MIDI note numbers.
+	o Hi-Hats will display BOW, EDGE, BELL, and PEDAL zones and the assigned MIDI Note numbers.
+	• The MIDI INSTRUMENT and MIDI CHANNEL (116) are re-assignable.
+
+21. Trigger Settings Panel Collapse:
+	• This control will minimize the main panel for quick visibility of active instruments.
+	• This is a useful quick reference to see if the drums and cymbals are all actively paired and working.
+
+
+
+
+
+
+

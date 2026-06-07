@@ -1,6 +1,6 @@
 # eDrum Project — MIDI SysEx Protocol Specification
-**Version:** 0.1  
-**Last updated:** 2026-06-06
+**Version:** 0.2  
+**Last updated:** 2026-06-08
 
 ---
 
@@ -53,10 +53,15 @@ Example: value 1000 (0x03E8) → `07 68`
 | `02 04` | `[INPUT_ID] [RETRIG_HI] [RETRIG_LO]` | Set retrigger time | Time in ms, 14-bit split |
 | `02 05` | `[INPUT_ID] [XTALK_GROUP]` | Set crosstalk group | Inputs in same group suppress each other |
 | `02 06` | `[INPUT_ID]` | Get pad config | Request current config for one input |
-| `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP]` | Pad config response | Full config dump for one input |
+| `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RSENS_HI] [RSENS_LO] [RTHRESH_HI] [RTHRESH_LO]` | Pad config response | Full config dump for one input (18 bytes) |
 | `02 08` | `[INPUT_A] [INPUT_B]` | Link inputs | Pair two inputs as one instrument (e.g. ride body + bell) |
 | `02 09` | `[INPUT_ID]` | Unlink input | Remove input from any linked pair |
 | `02 0A` | `[INPUT_ID]` | Get input status | Query whether input is available, active, or reserved |
+| `02 0B` | `[INPUT_ID] [SENS_HI] [SENS_LO]` | Set head sensitivity | Upper ADC bound for velocity scaling, 14-bit split |
+| `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split |
+| `02 0D` | `[INPUT_ID] [MASK_HI] [MASK_LO]` | Set mask time | Post-hit ignore window in ms, 14-bit split |
+| `02 0E` | `[INPUT_ID] [RSENS_HI] [RSENS_LO]` | Set rim sensitivity | Rim/zone-2 sensitivity, 14-bit split |
+| `02 0F` | `[INPUT_ID] [RTHRESH_HI] [RTHRESH_LO]` | Set rim threshold | Rim/zone-2 threshold, 14-bit split |
 
 ### Input status response values (02 0A)
 00 = available
@@ -85,11 +90,12 @@ grey out any reserved inputs in the UI.
   piezo signals to determine hit zone and velocity
 
 ### Velocity curve type values
-00 = linear
-01 = logarithmic (easier to play softly)
-02 = exponential (harder to play softly)
-03 = S-curve
-04 = custom (reserved for future point-table implementation)
+00 = Natural    — linear response, what you play is what you get
+01 = Expressive — soft bias, easy to play quietly, wide dynamic range
+02 = Sensitive  — stronger soft bias, very touch-responsive
+03 = Punchy     — loud bias, present even on moderate hits
+04 = Aggressive — maximum punch, less dynamic variation
+05 = Custom     — reserved for future point-table implementation
 
 ---
 
@@ -117,7 +123,7 @@ Preset names are ASCII, maximum 16 characters, length-prefixed.
 | `04 03` | none | List presets | Request all saved preset IDs and names |
 | `04 04` | `[COUNT] [PRESET_ID] [NAME_LEN] [NAME_BYTES...]...` | List presets response | Returns all presets |
 | `04 05` | `[PRESET_ID]` | Delete preset | Remove a preset from flash |
-| `04 06` | `[PRESET_ID] [ALL_PAD_CONFIG...]` | Export preset | Full preset data dump for Python-side saving |
+| `04 06` | `[PRESET_ID] [ALL_PAD_CONFIG...]` | Export preset | Full preset data dump for Python-side saving (24 bytes per input) |
 
 ---
 

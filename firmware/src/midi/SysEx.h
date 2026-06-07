@@ -38,6 +38,11 @@
 #define SYSEX_PAD_LINK        0x08
 #define SYSEX_PAD_UNLINK      0x09
 #define SYSEX_PAD_GET_STATUS  0x0A
+#define SYSEX_PAD_SET_SENS        0x0B
+#define SYSEX_PAD_SET_SCAN        0x0C
+#define SYSEX_PAD_SET_MASK        0x0D
+#define SYSEX_PAD_SET_RIM_SENS    0x0E
+#define SYSEX_PAD_SET_RIM_THRESH  0x0F
 
 // Category 03 — MIDI mapping
 #define SYSEX_MIDI_SET_NOTE  0x01

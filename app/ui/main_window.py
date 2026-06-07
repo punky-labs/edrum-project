@@ -154,11 +154,20 @@ class MainWindow(QMainWindow):
             ports = DrumMidiTransport.list_ports()
         except Exception:
             return
-        inputs = ports.get("inputs", [])
+        
+        import re
+        # Strip trailing Windows port numbers and deduplicate, preserving order
+        seen = set()
+        clean_ports = []
+        for name in ports.get("inputs", []):
+            clean = re.sub(r'\s+\d+$', '', name).strip()
+            if clean not in seen:
+                seen.add(clean)
+                clean_ports.append(clean)
 
         current = self._port_combo.currentText()
         self._port_combo.clear()
-        self._port_combo.addItems(inputs)
+        self._port_combo.addItems(clean_ports)
 
         idx = self._port_combo.findText(current)
         if idx >= 0:
@@ -174,8 +183,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No port selected",
                                 "Please select a MIDI port from the drop-down.")
             return
+        
+        # Strip trailing Windows port number (e.g. "eDrum 1" → "eDrum")
+        import re
+        port_search = re.sub(r'\s+\d+$', '', port).strip()
+        
         try:
-            self._transport.connect(port)
+            self._transport.connect(port_search)
         except Exception as exc:
             QMessageBox.critical(self, "Connection failed", str(exc))
             return

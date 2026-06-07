@@ -122,12 +122,30 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
         case SYSEX_PAD_GET: {
             if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             const InputConfig& c = g_inputs[p[0]];
-            uint8_t thi, tlo, rhi, rlo;
-            encode14(c.threshold, &thi, &tlo);
-            encode14(c.retriggerTime, &rhi, &rlo);
-            // Response: INPUT_ID PAD_TYPE THRESH_HI THRESH_LO CURVE RETRIG_HI RETRIG_LO XTALK_GROUP
-            uint8_t buf[8] = { p[0], c.padType, thi, tlo, c.velocityCurve, rhi, rlo, c.crosstalkGroup };
-            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP, buf, 8);
+            uint8_t thresh_hi, thresh_lo, retrig_hi, retrig_lo;
+            uint8_t sens_hi, sens_lo, scan_hi, scan_lo, mask_hi, mask_lo;
+            uint8_t rsens_hi, rsens_lo, rthresh_hi, rthresh_lo;
+            encode14(c.threshold,       &thresh_hi,  &thresh_lo);
+            encode14(c.retriggerTime,   &retrig_hi,  &retrig_lo);
+            encode14(c.headSensitivity, &sens_hi,    &sens_lo);
+            encode14(c.scanTime,        &scan_hi,    &scan_lo);
+            encode14(c.maskTime,        &mask_hi,    &mask_lo);
+            encode14(c.rimSensitivity,  &rsens_hi,   &rsens_lo);
+            encode14(c.rimThreshold,    &rthresh_hi, &rthresh_lo);
+            uint8_t buf[18] = {
+                p[0],
+                c.padType,
+                thresh_hi, thresh_lo,
+                c.velocityCurve,
+                retrig_hi, retrig_lo,
+                c.crosstalkGroup,
+                sens_hi,    sens_lo,
+                scan_hi,    scan_lo,
+                mask_hi,    mask_lo,
+                rsens_hi,   rsens_lo,
+                rthresh_hi, rthresh_lo
+            };
+            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP, buf, 18);
             break;
         }
 
@@ -169,6 +187,36 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
             sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_GET_STATUS, buf, 2);
             break;
         }
+
+        case SYSEX_PAD_SET_SENS:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].headSensitivity = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_SCAN:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].scanTime = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_MASK:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].maskTime = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RIM_SENS:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].rimSensitivity = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RIM_THRESH:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].rimThreshold = decode14(p[1], p[2]);
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
 
         default:
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_UNKNOWN);
@@ -281,10 +329,7 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
                 sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR);
                 return;
             }
-            // Per-input record (14 bytes):
-            //   PAD_TYPE THRESH_HI THRESH_LO CURVE RETRIG_HI RETRIG_LO XTALK
-            //   MIDI_NOTE MIDI_CH Z2_NOTE Z2_CH CC_NUM CC_CH LINKED(0x7F=none)
-            uint8_t buf[2 + PRESET_NAME_LEN + NUM_INPUTS * 14];
+            uint8_t buf[2 + PRESET_NAME_LEN + NUM_INPUTS * 24];
             uint8_t nlen = (uint8_t)strlen(pr.name);
             size_t pos = 0;
             buf[pos++] = p[0]; // preset ID
@@ -293,16 +338,33 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
             pos += nlen;
             for (uint8_t i = 0; i < NUM_INPUTS; i++) {
                 const InputConfig& c = pr.inputs[i];
-                uint8_t thi, tlo, rhi, rlo;
-                encode14(c.threshold, &thi, &tlo);
-                encode14(c.retriggerTime, &rhi, &rlo);
+                uint8_t thresh_hi, thresh_lo, retrig_hi, retrig_lo;
+                uint8_t sens_hi, sens_lo, scan_hi, scan_lo, mask_hi, mask_lo;
+                uint8_t rsens_hi, rsens_lo, rthresh_hi, rthresh_lo;
+                encode14(c.threshold,       &thresh_hi,  &thresh_lo);
+                encode14(c.retriggerTime,   &retrig_hi,  &retrig_lo);
+                encode14(c.headSensitivity, &sens_hi,    &sens_lo);
+                encode14(c.scanTime,        &scan_hi,    &scan_lo);
+                encode14(c.maskTime,        &mask_hi,    &mask_lo);
+                encode14(c.rimSensitivity,  &rsens_hi,   &rsens_lo);
+                encode14(c.rimThreshold,    &rthresh_hi, &rthresh_lo);
                 buf[pos++] = c.padType;
-                buf[pos++] = thi;
-                buf[pos++] = tlo;
+                buf[pos++] = thresh_hi;
+                buf[pos++] = thresh_lo;
                 buf[pos++] = c.velocityCurve;
-                buf[pos++] = rhi;
-                buf[pos++] = rlo;
+                buf[pos++] = retrig_hi;
+                buf[pos++] = retrig_lo;
                 buf[pos++] = c.crosstalkGroup;
+                buf[pos++] = sens_hi;
+                buf[pos++] = sens_lo;
+                buf[pos++] = scan_hi;
+                buf[pos++] = scan_lo;
+                buf[pos++] = mask_hi;
+                buf[pos++] = mask_lo;
+                buf[pos++] = rsens_hi;
+                buf[pos++] = rsens_lo;
+                buf[pos++] = rthresh_hi;
+                buf[pos++] = rthresh_lo;
                 buf[pos++] = c.midiNote;
                 buf[pos++] = c.midiChannel;
                 buf[pos++] = c.zone2MidiNote;
