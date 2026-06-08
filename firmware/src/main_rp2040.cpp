@@ -84,12 +84,15 @@ static const int8_t kRimCh[NUM_INPUTS]  = { 0, 2, 4, 6, -1, -1, -1, -1, -1 };
 static void applyConfig() {
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!drums[i]) continue;
-        drums[i]->noteHead      = g_inputs[i].midiNote;
-        drums[i]->noteRim       = g_inputs[i].zone2MidiNote;
-        drums[i]->headThreshold = g_inputs[i].threshold;
-        drums[i]->rimThreshold  = g_inputs[i].threshold;
-        drums[i]->curvetype     = g_inputs[i].velocityCurve;
-        drums[i]->masktime      = g_inputs[i].retriggerTime;
+        drums[i]->noteHead        = g_inputs[i].midiNote;
+        drums[i]->noteRim         = g_inputs[i].zone2MidiNote;
+        drums[i]->headThreshold   = g_inputs[i].threshold;
+        drums[i]->headSensitivity = g_inputs[i].headSensitivity;
+        drums[i]->scantime        = g_inputs[i].scanTime;
+        drums[i]->masktime        = g_inputs[i].maskTime;
+        drums[i]->rimThreshold    = g_inputs[i].rimThreshold;
+        drums[i]->rimSensitivity  = g_inputs[i].rimSensitivity;
+        drums[i]->curvetype       = g_inputs[i].velocityCurve;
     }
 }
 
@@ -239,13 +242,21 @@ void loop() {
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
             Serial.printf("[HIT] i=%d note=%d vel=%d ch=%d\n", i, note, vel, ch);
+            // 05 03 — hit event debug stream (head zone)
+            uint8_t dbg[3] = { (uint8_t)i, SYSEX_ZONE_HEAD, vel };
+            sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                              SYSEX_STAT_HIT_DEBUG, dbg, 3);
         } else if (drums[i]->hitRim) {
             byte note = drums[i]->noteRim;
-            byte vel  = (byte)constrain(drums[i]->velocity, 0, 127);
+            byte vel  = (byte)constrain(drums[i]->velocityRim, 0, 127);
             byte ch   = g_inputs[i].zone2MidiChannel;
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
             Serial.printf("[RIM] i=%d note=%d vel=%d ch=%d\n", i, note, vel, ch);
+            // 05 03 — hit event debug stream (rim zone)
+            uint8_t dbg[3] = { (uint8_t)i, SYSEX_ZONE_RIM, vel };
+            sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                              SYSEX_STAT_HIT_DEBUG, dbg, 3);
         }
     }
 }

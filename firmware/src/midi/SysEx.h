@@ -77,6 +77,10 @@
 // SysEx-safe sentinel for linkedInput == 0xFF (no link)
 #define SYSEX_LINKED_NONE 0x7F
 
+// Zone values used in 05 03 hit event
+#define SYSEX_ZONE_HEAD 0x00
+#define SYSEX_ZONE_RIM  0x01
+
 // ---------------------------------------------------------------------------
 
 // Receive a raw SysEx payload (without leading F0 and trailing F7) and

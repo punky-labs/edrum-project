@@ -117,6 +117,15 @@ INPUT_STATUS_NAMES: dict[int, str] = {
     INPUT_RESERVED: "reserved",
 }
 
+# Zone values (05 03 hit event)
+ZONE_HEAD = 0x00
+ZONE_RIM  = 0x01
+
+ZONE_NAMES: dict[int, str] = {
+    ZONE_HEAD: "head",
+    ZONE_RIM:  "rim",
+}
+
 # ---------------------------------------------------------------------------
 # Category 03 — MIDI mapping
 # ---------------------------------------------------------------------------
@@ -595,9 +604,15 @@ def parse_input_error(payload: bytes) -> dict:
 
 
 def parse_hit_event(payload: bytes) -> dict:
-    """05 03 -> {input_id, velocity}"""
-    _require_len(payload, 2, "hit_event")
-    return {"input_id": payload[0], "velocity": payload[1]}
+    """05 03 -> {input_id, zone, zone_name, velocity}"""
+    _require_len(payload, 3, "hit_event")
+    zone = payload[1]
+    return {
+        "input_id":  payload[0],
+        "zone":      zone,
+        "zone_name": ZONE_NAMES.get(zone, f"0x{zone:02X}"),
+        "velocity":  payload[2],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -760,9 +775,17 @@ if __name__ == "__main__":
 
     # ── Hit event parser ──────────────────────────────────────────────────────
     print("\nHit event parser (05 03):")
-    result = parse_hit_event(bytes([5, 100]))
-    _check("input_id == 5",   result["input_id"] == 5)
-    _check("velocity == 100", result["velocity"] == 100)
+    result = parse_hit_event(bytes([5, ZONE_HEAD, 100]))
+    _check("input_id == 5",       result["input_id"]  == 5)
+    _check("zone == ZONE_HEAD",   result["zone"]       == ZONE_HEAD)
+    _check("zone_name == 'head'", result["zone_name"]  == "head")
+    _check("velocity == 100",     result["velocity"]   == 100)
+
+    result = parse_hit_event(bytes([3, ZONE_RIM, 64]))
+    _check("rim: input_id == 3",  result["input_id"]  == 3)
+    _check("rim: zone == RIM",    result["zone"]       == ZONE_RIM)
+    _check("rim: zone_name",      result["zone_name"]  == "rim")
+    _check("rim: velocity == 64", result["velocity"]   == 64)
 
     # ── Validation errors ─────────────────────────────────────────────────────
     print("\nValidation errors:")

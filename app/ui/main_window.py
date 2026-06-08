@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent
+from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -20,9 +20,15 @@ from PyQt6.QtWidgets import (
 try:
     from ..transport.midi import DrumMidiTransport, request_identify
     from .connection_widget import ConnectionWidget
+    from .pad_config_tab import PadConfigTab
+    from .debug_tab import DebugTab
+    from .theme import apply_dark_theme
 except ImportError:
     from transport.midi import DrumMidiTransport, request_identify  # type: ignore[no-redef]
-    from ui.connection_widget import ConnectionWidget  # type: ignore[no-redef]
+    from ui.connection_widget import ConnectionWidget               # type: ignore[no-redef]
+    from ui.pad_config_tab import PadConfigTab                     # type: ignore[no-redef]
+    from ui.debug_tab import DebugTab                              # type: ignore[no-redef]
+    from ui.theme import apply_dark_theme                          # type: ignore[no-redef]
 
 
 class _IdentifyWorker(QThread):
@@ -47,13 +53,16 @@ class MainWindow(QMainWindow):
         self._transport            = DrumMidiTransport()
         self._identify_worker: Optional[_IdentifyWorker] = None
 
+        apply_dark_theme(QApplication.instance())
+
         self.setWindowTitle("eDrum Config")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(960, 640)
 
         self._setup_menu_bar()
         self._setup_toolbar()
         self._setup_central()
         self._setup_status_bar()
+        self._setup_shortcuts()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -85,6 +94,13 @@ class MainWindow(QMainWindow):
         self._act_identify.setEnabled(False)
         self._act_identify.triggered.connect(self._on_identify)
         dev_menu.addAction(self._act_identify)
+
+        debug_menu = mb.addMenu("&Debug")
+        self._act_show_debug = QAction("Show &Debug Tab", self)
+        #self._act_show_debug.setShortcut("Ctrl+D")
+        self._act_show_debug.setCheckable(True)
+        self._act_show_debug.triggered.connect(self._toggle_debug_tab)
+        debug_menu.addAction(self._act_show_debug)
 
         help_menu = mb.addMenu("&Help")
         about_act = QAction("&About", self)
@@ -129,21 +145,30 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
 
     def _setup_central(self) -> None:
+        self._pad_config_tab = PadConfigTab(self._transport)
+        self._debug_tab      = DebugTab()
+
         tabs = QTabWidget()
-        for name in ("Pad Config", "MIDI Mapping", "Presets"):
-            placeholder = QWidget()
-            layout = QVBoxLayout(placeholder)
-            layout.addWidget(
-                QLabel(f"{name} — coming soon"),
-                alignment=Qt.AlignmentFlag.AlignCenter,
-            )
-            tabs.addTab(placeholder, name)
+        tabs.addTab(self._pad_config_tab, "Pad Config")
+        tabs.addTab(QWidget(),            "MIDI Mapping")
+        tabs.addTab(QWidget(),            "Presets")
+        tabs.addTab(self._debug_tab,      "Debug")
+
+        tabs.currentChanged.connect(self._on_tab_changed)
+        self._tabs = tabs
         self.setCentralWidget(tabs)
+
+        self._PAD_CONFIG_IDX = 0
+        self._DEBUG_IDX      = 3
 
     def _setup_status_bar(self) -> None:
         self._conn_widget = ConnectionWidget()
         self.statusBar().addPermanentWidget(self._conn_widget)
         self.statusBar().showMessage("Ready")
+
+    def _setup_shortcuts(self) -> None:
+        sc = QShortcut(QKeySequence("Ctrl+D"), self)
+        sc.activated.connect(self._toggle_debug_tab)
 
     # ------------------------------------------------------------------
     # Port management
@@ -154,11 +179,9 @@ class MainWindow(QMainWindow):
             ports = DrumMidiTransport.list_ports()
         except Exception:
             return
-        
+
         import re
-        # Strip trailing Windows port numbers and deduplicate, preserving order
-        seen = set()
-        clean_ports = []
+        seen, clean_ports = set(), []
         for name in ports.get("inputs", []):
             clean = re.sub(r'\s+\d+$', '', name).strip()
             if clean not in seen:
@@ -174,6 +197,28 @@ class MainWindow(QMainWindow):
             self._port_combo.setCurrentIndex(idx)
 
     # ------------------------------------------------------------------
+    # Transport send helper (logs to debug tab)
+    # ------------------------------------------------------------------
+
+    def _send(self, msg: bytearray) -> None:
+        self._transport.send(msg)
+        self._debug_tab.log_tx(msg)
+
+    # ------------------------------------------------------------------
+    # Tab management
+    # ------------------------------------------------------------------
+
+    def _on_tab_changed(self, index: int) -> None:
+        self._pad_config_tab.set_active(index == self._PAD_CONFIG_IDX)
+        self._act_show_debug.setChecked(index == self._DEBUG_IDX)
+
+    def _toggle_debug_tab(self) -> None:
+        if self._tabs.currentIndex() == self._DEBUG_IDX:
+            self._tabs.setCurrentIndex(self._PAD_CONFIG_IDX)
+        else:
+            self._tabs.setCurrentIndex(self._DEBUG_IDX)
+
+    # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
 
@@ -183,11 +228,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No port selected",
                                 "Please select a MIDI port from the drop-down.")
             return
-        
-        # Strip trailing Windows port number (e.g. "eDrum 1" → "eDrum")
+
         import re
         port_search = re.sub(r'\s+\d+$', '', port).strip()
-        
+
         try:
             self._transport.connect(port_search)
         except Exception as exc:
@@ -195,10 +239,35 @@ class MainWindow(QMainWindow):
             return
 
         self._set_connected_ui(self._transport._port_name or port)
+        self._pad_config_tab.on_connected()
+        self._debug_tab.on_connected()
+
+        # Route RX messages to debug tab
+        self._transport.set_sysex_callback(self._on_sysex_rx)
 
     def _on_disconnect(self) -> None:
+        self._transport.set_sysex_callback(None)
         self._transport.disconnect()
         self._set_disconnected_ui()
+        self._pad_config_tab.on_disconnected()
+        self._debug_tab.on_disconnected()
+
+    def _on_sysex_rx(self, parsed: dict) -> None:
+        # Forward to debug tab (reconstructing raw bytes for display)
+        pay = parsed.get("payload", b"")
+        raw = bytes([
+            0xF0, 0x00, 0x7D,
+            parsed.get("device_id", 0),
+            parsed.get("cmd_high",  0),
+            parsed.get("cmd_low",   0),
+            *pay,
+            0xF7,
+        ])
+        self._debug_tab.log_rx(parsed, raw)
+
+        # Also forward to pad config tab if it's active
+        if self._tabs.currentIndex() == self._PAD_CONFIG_IDX:
+            self._pad_config_tab._on_sysex(parsed)
 
     def _set_connected_ui(self, port_name: str) -> None:
         self._btn_connect.setEnabled(False)

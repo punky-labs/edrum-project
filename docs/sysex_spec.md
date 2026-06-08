@@ -135,7 +135,12 @@ These messages are always device → app direction.
 |---|---|---|---|
 | `05 01` | `[CMD_HIGH] [CMD_LOW] [STATUS]` | Command ack | Confirms receipt of any set command — `00`=ok, `01`=error |
 | `05 02` | `[INPUT_ID] [ERROR_CODE]` | Input error | Reports a hardware-level problem on an input |
-| `05 03` | `[INPUT_ID] [VELOCITY]` | Hit event (debug) | Live hit data for Python app velocity visualisation during calibration |
+| `05 03` | `[INPUT_ID] [ZONE] [VELOCITY]` | Hit event (debug) | Live hit data for Python app velocity visualisation. ZONE: 00=head, 01=rim |
+| `05 04` | `[INPUT_ID] [VALUE_HI] [VALUE_LO]` | Raw ADC stream | Reserved — future raw ADC streaming for hardware calibration (not yet implemented) |
+
+### Zone values (05 03)
+00 = head (primary zone)
+01 = rim / zone 2
 
 ---
 
@@ -157,3 +162,7 @@ app-level changes are required for Stage 2 compatibility.
   stream. It allows the Python app to display a live velocity meter per
   pad during threshold calibration without interfering with DAW operation.
 - All multi-byte values use big-endian 7-bit encoding throughout.
+- `05 04` (Raw ADC stream) is reserved for future hardware
+  calibration tooling. It will be enabled/disabled on demand by
+  the app and is intended for dev use only — not required for
+  normal operation.
