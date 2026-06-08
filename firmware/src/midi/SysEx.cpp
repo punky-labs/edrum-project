@@ -386,6 +386,12 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
 // ---- main dispatcher -------------------------------------------------------
 
 void sysexParse(const uint8_t* data, size_t len) {
+    Serial.printf("[SysEx RX] len=%u first bytes: %02X %02X %02X %02X %02X\n",
+        (unsigned)len,
+        len>0?data[0]:0, len>1?data[1]:0,
+        len>2?data[2]:0, len>3?data[3]:0,
+        len>4?data[4]:0);
+    
     if (len < SYSEX_HEADER_LEN) {
         Serial.println("[SysEx] Message too short");
         return;

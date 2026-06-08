@@ -116,7 +116,10 @@ void bleMidiPoll()        {}
 // ---------------------------------------------------------------------------
 
 static void onSysEx(byte* data, unsigned size) {
-    sysexParse(data, (size_t)size);
+    // TinyUSB passes the full framed message including F0/F7
+    // Strip them before passing to sysexParse
+    if (size < 2 || data[0] != 0xF0 || data[size-1] != 0xF7) return;
+    sysexParse(data + 1, size - 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +196,7 @@ void setup() {
     digitalWrite(PIN_PWR, HIGH);
     setLED(ORANGE);
 
+    configInit();
     configLoad();
 
     for (int i = 0; i < NUM_INPUTS; i++) {

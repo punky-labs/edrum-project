@@ -39,13 +39,21 @@ void configResetDefaults() {
     }
 }
 
-void configLoad() {
+void configInit() {
     if (!LittleFS.begin()) {
-        Serial.println("[Config] LittleFS mount failed - using defaults");
-        configResetDefaults();
-        return;
+        Serial.println("[Config] LittleFS mount failed - formatting...");
+        LittleFS.format();
+        if (!LittleFS.begin()) {
+            Serial.println("[Config] LittleFS mount failed after format");
+            return;
+        }
+        Serial.println("[Config] LittleFS formatted and mounted");
+    } else {
+        Serial.println("[Config] LittleFS mounted");
     }
+}
 
+void configLoad() {
     File f = LittleFS.open(CFG_FILE, "r");
     if (!f || f.size() != sizeof(g_inputs)) {
         Serial.println("[Config] No valid config file - using defaults");
@@ -60,11 +68,6 @@ void configLoad() {
 }
 
 void configSave() {
-    if (!LittleFS.begin()) {
-        Serial.println("[Config] LittleFS mount failed - cannot save");
-        return;
-    }
-
     File f = LittleFS.open(CFG_FILE, "w");
     if (!f) {
         Serial.println("[Config] Failed to open config file for writing");
@@ -81,7 +84,6 @@ bool presetLoad(uint8_t id) {
     char path[16];
     presetPath(id, path);
 
-    if (!LittleFS.begin()) return false;
     File f = LittleFS.open(path, "r");
     if (!f || f.size() != sizeof(Preset)) {
         if (f) f.close();
@@ -100,7 +102,6 @@ bool presetRead(uint8_t id, Preset* out) {
     char path[16];
     presetPath(id, path);
 
-    if (!LittleFS.begin()) return false;
     File f = LittleFS.open(path, "r");
     if (!f || f.size() != sizeof(Preset)) {
         if (f) f.close();
@@ -117,8 +118,6 @@ bool presetSave(uint8_t id, const char* name) {
     if (id >= MAX_PRESETS) return false;
     char path[16];
     presetPath(id, path);
-
-    if (!LittleFS.begin()) return false;
 
     Preset p;
     strncpy(p.name, name, PRESET_NAME_LEN);
@@ -137,6 +136,5 @@ bool presetDelete(uint8_t id) {
     char path[16];
     presetPath(id, path);
 
-    if (!LittleFS.begin()) return false;
     return LittleFS.remove(path);
 }

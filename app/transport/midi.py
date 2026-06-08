@@ -59,10 +59,15 @@ class DrumMidiTransport:
     """
 
     def __init__(self) -> None:
-        self._midi_in:         Optional[rtmidi.MidiIn]  = None
-        self._midi_out:        Optional[rtmidi.MidiOut] = None
-        self._sysex_callback:  Optional[Callable[[dict], None]] = None
-        self._port_name:       Optional[str] = None
+        self._midi_in:        Optional[rtmidi.MidiIn]  = None
+        self._midi_out:       Optional[rtmidi.MidiOut] = None
+        self._port_name:      Optional[str] = None
+        self._listeners:      dict[str, Callable[[dict], None]] = {}
+        self._listeners_lock  = threading.Lock()
+        self._poll_thread:    Optional[threading.Thread] = None
+        self._poll_stop:      threading.Event = threading.Event()
+        self._sent_cache:     list[bytes] = []
+        self._sent_lock:      threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Port discovery
@@ -125,21 +130,29 @@ class DrumMidiTransport:
                 f"Available outputs: {out_ports}"
             )
 
+        midi_in.open_port(in_idx)
         # SysEx is ignored by default — must be explicitly enabled.
         midi_in.ignore_types(sysex=False, timing=True, active_sense=True)
-
-        midi_in.set_callback(self._on_message)
-        midi_in.open_port(in_idx)
+        # No set_callback — we poll instead (WinMM drops SysEx in callbacks)
         midi_out.open_port(out_idx)
 
         self._midi_in   = midi_in
         self._midi_out  = midi_out
         self._port_name = in_ports[in_idx]
 
+        self._poll_stop.clear()
+        self._poll_thread = threading.Thread(
+            target=self._poll_loop, daemon=True, name="midi-poll"
+        )
+        self._poll_thread.start()
+
     def disconnect(self) -> None:
         """Close both MIDI ports and release resources."""
+        self._poll_stop.set()
+        if self._poll_thread is not None:
+            self._poll_thread.join(timeout=2.0)
+            self._poll_thread = None
         if self._midi_in is not None:
-            self._midi_in.cancel_callback()
             self._midi_in.close_port()
             self._midi_in = None
         if self._midi_out is not None:
@@ -164,29 +177,67 @@ class DrumMidiTransport:
         if not self.is_connected():
             raise RuntimeError("Not connected — call connect() first")
         self._midi_out.send_message(list(message))
+        self._record_sent(message)
+
+    def _record_sent(self, message: bytearray) -> None:
+        with self._sent_lock:
+            self._sent_cache.append(bytes(message))
+            if len(self._sent_cache) > 32:
+                self._sent_cache.pop(0)
+
+    def _is_echo(self, message: bytes) -> bool:
+        """Return True if this message is a recent WinMM loopback echo."""
+        with self._sent_lock:
+            try:
+                self._sent_cache.remove(message)
+                return True
+            except ValueError:
+                return False
 
     # ------------------------------------------------------------------
     # Receiving
     # ------------------------------------------------------------------
 
-    def set_sysex_callback(
-        self,
-        fn: Optional[Callable[[dict], None]],
-    ) -> None:
-        """
-        Register a callback invoked with a parsed SysEx dict whenever a
-        valid eDrum SysEx message arrives.  Pass None to deregister.
+    @property
+    def _sysex_callback(self):
+        """Compatibility shim — returns None. Use add/remove_listener."""
+        return None
 
-        The dict has keys: device_id, cmd_high, cmd_low, payload (bytes).
+    def add_listener(self, name: str, fn: Callable[[dict], None]) -> None:
+        """Register a named SysEx listener. Replaces any existing listener
+        with the same name."""
+        with self._listeners_lock:
+            self._listeners[name] = fn
+
+    def remove_listener(self, name: str) -> None:
+        """Remove a named listener. No-op if name is not registered."""
+        with self._listeners_lock:
+            self._listeners.pop(name, None)
+
+    def _poll_loop(self) -> None:
         """
-        self._sysex_callback = fn
+        Background thread: poll rtmidi for incoming messages.
+        Used instead of set_callback() because WinMM on Windows silently
+        drops SysEx messages in the callback path.
+        """
+        while not self._poll_stop.is_set():
+            if self._midi_in is None:
+                break
+            try:
+                msg = self._midi_in.get_message()
+            except Exception:
+                break
+            if msg is not None:
+                self._on_message(msg, None)
+            else:
+                self._poll_stop.wait(0.001)
 
     def _on_message(self, message, data) -> None:
         """
-        rtmidi receive callback.
+        Message handler — called from _poll_loop().
 
-        Called on rtmidi's background thread — keep it fast and
-        thread-safe.  Handles two wire formats:
+        get_message() returns (byte_list, delta_time); normalise to byte_list.
+        Handles two wire formats:
 
         - byte 0 == 0xF0: raw SysEx (USB MIDI), passed directly to parse_message.
         - byte 0 >= 0x80 (not 0xF0): BLE MIDI packet.  The OS BLE MIDI driver
@@ -194,19 +245,30 @@ class DrumMidiTransport:
           never 0xF0/0xF7).  Strip them, accumulate the clean SysEx body, then
           dispatch when 0xF7 is seen — matching the firmware's _parsePacket logic.
         """
-        _delta_time, byte_list = message
+        # get_message() → (byte_list, delta_time); normalise to byte_list
+        if isinstance(message[0], (list, bytes, bytearray)):
+            byte_list = message[0]
+        else:
+            byte_list = message[1]
+
         if not byte_list:
             return
 
         first = byte_list[0]
 
         if first == SYSEX_START:
+            if self._is_echo(bytes(byte_list)):
+                return
             parsed = parse_message(bytes(byte_list))
             if parsed is None:
                 return
-            cb = self._sysex_callback
-            if cb is not None:
-                cb(parsed)
+            with self._listeners_lock:
+                callbacks = list(self._listeners.values())
+            for cb in callbacks:
+                try:
+                    cb(parsed)
+                except Exception:
+                    pass
 
         elif first >= 0x80:
             # BLE MIDI: skip byte 0 (header); bytes >= 0x80 that are not 0xF0/0xF7
@@ -222,9 +284,13 @@ class DrumMidiTransport:
                         buf.append(0xF7)
                         parsed = parse_message(bytes(buf))
                         if parsed is not None:
-                            cb = self._sysex_callback
-                            if cb is not None:
-                                cb(parsed)
+                            with self._listeners_lock:
+                                callbacks = list(self._listeners.values())
+                            for cb in callbacks:
+                                try:
+                                    cb(parsed)
+                                except Exception:
+                                    pass
                     in_sysex = False
                     buf = bytearray()
                 elif b < 0x80:
@@ -275,17 +341,16 @@ def request_identify(
 
     event        = threading.Event()
     result: dict = {}
-    previous_cb  = transport._sysex_callback
 
     def _handler(msg: dict) -> None:
         if msg["cmd_high"] == CAT_SYS and msg["cmd_low"] == SYS_IDENT_RESP:
             result.update(parse_identify_response(msg["payload"]))
             event.set()
 
-    transport.set_sysex_callback(_handler)
+    transport.add_listener("identify", _handler)
     transport.send(build_identify_request())
     got_response = event.wait(timeout)
-    transport.set_sysex_callback(previous_cb)
+    transport.remove_listener("identify")
 
     if not got_response:
         raise TimeoutError(

@@ -6,18 +6,17 @@ from typing import Optional
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QObject, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QBrush
+from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTabWidget,
@@ -30,42 +29,64 @@ try:
         COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_BG_CARD, COLOR_BG_CARD_SEL,
         COLOR_BG_INPUT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
         COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
-        COLOR_HIT_HEAD, COLOR_HIT_RIM,
+        COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS,
     )
     from .pad_names import PAD_NAMES, load_pad_names, save_pad_names
+    from .write_worker import WriteCommand, WriteWorker
 except ImportError:
     from ui.theme import (  # type: ignore[no-redef]
         COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_BG_CARD, COLOR_BG_CARD_SEL,
         COLOR_BG_INPUT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
         COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
-        COLOR_HIT_HEAD, COLOR_HIT_RIM,
+        COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS,
     )
     from ui.pad_names import PAD_NAMES, load_pad_names, save_pad_names  # type: ignore[no-redef]
+    from ui.write_worker import WriteCommand, WriteWorker  # type: ignore[no-redef]
 
 try:
     from ..protocol.sysex import (
-        CAT_PAD, CAT_MIDI, CAT_STATUS,
+        CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
         PAD_TYPE_NAMES, CURVE_NAMES,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
         ZONE_HEAD, ZONE_RIM,
+        PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
+        PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
+        MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
+        SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
+        build_set_pad_type, build_set_threshold, build_set_velocity_curve,
+        build_set_retrigger_time, build_set_head_sensitivity,
+        build_set_scan_time, build_set_mask_time,
+        build_set_rim_sensitivity, build_set_rim_threshold,
+        build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
+        build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         INPUT_RESERVED,
     )
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
-        CAT_PAD, CAT_MIDI, CAT_STATUS,
+        CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
         PAD_TYPE_NAMES, CURVE_NAMES,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
         ZONE_HEAD, ZONE_RIM,
+        PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
+        PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
+        MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
+        SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
+        build_set_pad_type, build_set_threshold, build_set_velocity_curve,
+        build_set_retrigger_time, build_set_head_sensitivity,
+        build_set_scan_time, build_set_mask_time,
+        build_set_rim_sensitivity, build_set_rim_threshold,
+        build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
+        build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         INPUT_RESERVED,
@@ -88,12 +109,32 @@ _CURVE_DESCRIPTIONS = {
     "Custom":     "Custom curve",
 }
 
+# (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, spinbox_suffix)
+_TRIGGER_BUILDERS: dict[str, tuple] = {
+    "_thresh":     (build_set_threshold,        CAT_PAD, PAD_SET_THRESH,     "threshold",        0, 4095, ""),
+    "_sens":       (build_set_head_sensitivity, CAT_PAD, PAD_SET_SENS,       "head_sensitivity", 0, 4095, ""),
+    "_scan":       (build_set_scan_time,        CAT_PAD, PAD_SET_SCAN,       "scan_time",        0, 100,  " ms"),
+    "_mask":       (build_set_mask_time,        CAT_PAD, PAD_SET_MASK,       "mask_time",        0, 500,  " ms"),
+    "_retrig":     (build_set_retrigger_time,   CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",   0, 1000, " ms"),
+    "_rim_thresh": (build_set_rim_threshold,    CAT_PAD, PAD_SET_RIM_THRESH, "rim_threshold",    0, 4095, ""),
+    "_rim_sens":   (build_set_rim_sensitivity,  CAT_PAD, PAD_SET_RIM_SENS,   "rim_sensitivity",  0, 4095, ""),
+}
+
 
 def midi_note_name(note: int) -> str:
     """Return note name e.g. 60 -> 'C3', 38 -> 'D2' (middle C = C3 = 60)."""
     names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     octave = (note // 12) - 2
     return f"{names[note % 12]}{octave}"
+
+
+def _spin_style() -> str:
+    return (
+        f"QSpinBox {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
+        f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
+        f"QSpinBox::up-button, QSpinBox::down-button {{"
+        f" width: 16px; background: {COLOR_BG_CARD}; border: none; }}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +192,6 @@ class InputCard(QWidget):
 
     def set_status(self, pad_cfg: Optional[dict], type_name: str = "") -> None:
         if pad_cfg is not None:
-            self._reserved  = pad_cfg.get("pad_type", 0) in {}
             status = pad_cfg.get("_status", 0)
             self._reserved = (status == INPUT_RESERVED)
         self._type_name = type_name
@@ -236,9 +276,8 @@ class HitLogWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
-        dpr = self.devicePixelRatioF()
-        w   = self.width()
-        h   = self.height()
+        w = self.width()
+        h = self.height()
 
         painter.fillRect(0, 0, w, h, QColor(COLOR_BG_DARK))
 
@@ -246,11 +285,10 @@ class HitLogWidget(QWidget):
             painter.end()
             return
 
-        n_bars  = len(self._bars)
-        bar_w   = max(4, (w - 2) // HIT_LOG_BARS)
-        x_start = w - n_bars * bar_w
-
-        label_h = 14
+        n_bars     = len(self._bars)
+        bar_w      = max(4, (w - 2) // HIT_LOG_BARS)
+        x_start    = w - n_bars * bar_w
+        label_h    = 14
         bar_area_h = h - label_h
 
         for i, (vel, zone) in enumerate(self._bars):
@@ -260,7 +298,6 @@ class HitLogWidget(QWidget):
             color = QColor(COLOR_HIT_HEAD if zone == ZONE_HEAD else COLOR_HIT_RIM)
             painter.fillRect(x + 1, y, bar_w - 2, bar_h, color)
 
-        # Footer text
         if self._bars:
             last_vel = self._bars[-1][0]
             painter.setPen(QColor(COLOR_TEXT_SECONDARY))
@@ -294,7 +331,6 @@ class _RefreshWorker(QThread):
         self.signals     = _RefreshSignals()
 
     def run(self) -> None:
-        previous_cb = self._transport._sysex_callback
         results: dict[int, dict] = {}
 
         try:
@@ -306,7 +342,7 @@ class _RefreshWorker(QThread):
         else:
             self.signals.done.emit(results)
         finally:
-            self._transport.set_sysex_callback(previous_cb)
+            self._transport.remove_listener("refresh_worker")
 
     def _fetch_input(self, input_id: int) -> dict:
         transport = self._transport
@@ -323,7 +359,7 @@ class _RefreshWorker(QThread):
                 status.update(parse_input_status_response(msg["payload"]))
                 event.set()
 
-        transport.set_sysex_callback(on_status)
+        transport.add_listener("refresh_worker", on_status)
         transport.send(build_get_input_status(input_id))
         event.wait(2.0)
         if status:
@@ -331,7 +367,7 @@ class _RefreshWorker(QThread):
             result["_status_name"] = status.get("status_name", "")
 
         # --- pad config ---
-        event2 = threading.Event()
+        event2  = threading.Event()
         pad_cfg: dict = {}
 
         def on_pad(msg: dict) -> None:
@@ -341,14 +377,14 @@ class _RefreshWorker(QThread):
                 pad_cfg.update(parse_pad_config_response(msg["payload"]))
                 event2.set()
 
-        transport.set_sysex_callback(on_pad)
+        transport.add_listener("refresh_worker", on_pad)
         transport.send(build_get_pad_config(input_id))
         event2.wait(2.0)
         if pad_cfg:
             result.update(pad_cfg)
 
         # --- midi mapping ---
-        event3 = threading.Event()
+        event3   = threading.Event()
         midi_cfg: dict = {}
 
         def on_midi(msg: dict) -> None:
@@ -358,7 +394,7 @@ class _RefreshWorker(QThread):
                 midi_cfg.update(parse_midi_mapping_response(msg["payload"]))
                 event3.set()
 
-        transport.set_sysex_callback(on_midi)
+        transport.add_listener("refresh_worker", on_midi)
         transport.send(build_get_midi_mapping(input_id))
         event3.wait(2.0)
         if midi_cfg:
@@ -372,9 +408,9 @@ class _RefreshWorker(QThread):
 # ---------------------------------------------------------------------------
 
 class PadConfigTab(QWidget):
-    # emitted by background thread via signal bridge
     _configs_ready = pyqtSignal(dict)
     _hit_received  = pyqtSignal(int, int, int)  # input_id, zone, velocity
+    status_message = pyqtSignal(str, int)        # msg, timeout_ms
 
     def __init__(
         self,
@@ -386,6 +422,8 @@ class PadConfigTab(QWidget):
         self._loaded       = False
         self._active_tab   = False
         self._worker: Optional[_RefreshWorker] = None
+        self._writer: Optional[WriteWorker]    = None
+        self._dirty        = False
         self._selected_id: Optional[int] = None
         self._configs:     dict[int, dict] = {}
         self._pad_names    = load_pad_names()
@@ -408,13 +446,11 @@ class PadConfigTab(QWidget):
         splitter.setHandleWidth(2)
         root.addWidget(splitter)
 
-        # Left panel
         left_panel = self._build_left_panel()
         left_panel.setMinimumWidth(200)
         left_panel.setMaximumWidth(320)
         splitter.addWidget(left_panel)
 
-        # Right panel
         right_panel = self._build_right_panel()
         splitter.addWidget(right_panel)
 
@@ -445,7 +481,6 @@ class PadConfigTab(QWidget):
             row, col = divmod(i, 2)
             grid.addWidget(card, row, col)
             self._cards.append(card)
-        # empty slot for position 9
         grid.addWidget(QWidget(), 4, 1)
         layout.addLayout(grid)
 
@@ -476,31 +511,40 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header row (Refresh button)
+        # Header row
         header = QHBoxLayout()
         header.setContentsMargins(12, 8, 12, 8)
         header.addStretch()
+
         self._loading_lbl = QLabel("⟳")
         self._loading_lbl.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 14px;")
         self._loading_lbl.hide()
         header.addWidget(self._loading_lbl)
+
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(80)
+        refresh_btn.setFixedWidth(70)
         refresh_btn.clicked.connect(self._start_refresh)
         header.addWidget(refresh_btn)
+
+        header.addSpacing(8)
+
+        self._save_btn = QPushButton("Save to Flash")
+        self._save_btn.setFixedWidth(110)
+        self._save_btn.clicked.connect(self._enqueue_save_to_flash)
+        self._save_btn.setEnabled(False)
+        header.addWidget(self._save_btn)
+
         layout.addLayout(header)
 
         # Stacked: placeholder vs detail
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
 
-        # Page 0 — placeholder
         placeholder = QLabel("Connect to device and select an input")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: 13px;")
         self._stack.addWidget(placeholder)
 
-        # Page 1 — detail
         detail = self._build_detail()
         self._stack.addWidget(detail)
 
@@ -513,7 +557,7 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(12, 4, 12, 12)
         layout.setSpacing(10)
 
-        # Section A — header
+        # Section A — name + type
         header_row = QHBoxLayout()
         self._name_combo = QComboBox()
         self._name_combo.addItems(PAD_NAMES)
@@ -522,11 +566,13 @@ class PadConfigTab(QWidget):
         header_row.addWidget(QLabel("Name:"))
         header_row.addWidget(self._name_combo)
         header_row.addSpacing(12)
+
         self._type_combo = QComboBox()
         for k, v in PAD_TYPE_NAMES.items():
             self._type_combo.addItem(v, k)
-        self._type_combo.setEnabled(False)
+        self._type_combo.setEnabled(True)
         self._type_combo.setFixedWidth(140)
+        self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         header_row.addWidget(QLabel("Type:"))
         header_row.addWidget(self._type_combo)
         header_row.addStretch()
@@ -587,7 +633,8 @@ class PadConfigTab(QWidget):
         self._curve_combo = QComboBox()
         for k, v in CURVE_NAMES.items():
             self._curve_combo.addItem(v, k)
-        self._curve_combo.setEnabled(False)
+        self._curve_combo.setEnabled(True)
+        self._curve_combo.currentIndexChanged.connect(self._on_curve_changed)
         vl.addWidget(self._curve_combo)
 
         self._curve_desc = QLabel("")
@@ -640,46 +687,40 @@ class PadConfigTab(QWidget):
         grid = QGridLayout(box)
         grid.setSpacing(8)
 
-        def _param(label: str, units: str = "") -> tuple[QLabel, QLineEdit, QWidget]:
-            lbl  = QLabel(label)
-            lbl.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;")
-            edit = QLineEdit()
-            edit.setReadOnly(True)
-            edit.setFixedWidth(80)
-            edit.setStyleSheet(
-                f"QLineEdit {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
-                f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
-            )
-            row_w = QWidget()
-            rh = QHBoxLayout(row_w)
-            rh.setContentsMargins(0, 0, 0, 0)
-            rh.setSpacing(4)
-            rh.addWidget(edit)
-            if units:
-                u = QLabel(units)
-                u.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;")
-                rh.addWidget(u)
-            rh.addStretch()
-            return lbl, edit, row_w
-
         params = [
-            ("Threshold",        "",   "_thresh"),
-            ("Sensitivity",      "",   "_sens"),
-            ("Scan Time",        "ms", "_scan"),
-            ("Double-Hit Guard", "ms", "_mask"),
-            ("Retrigger",        "ms", "_retrig"),
-            ("Rim Threshold",    "",   "_rim_thresh"),
-            ("Rim Sensitivity",  "",   "_rim_sens"),
+            ("Threshold",        "_thresh"),
+            ("Sensitivity",      "_sens"),
+            ("Scan Time",        "_scan"),
+            ("Double-Hit Guard", "_mask"),
+            ("Retrigger",        "_retrig"),
+            ("Rim Threshold",    "_rim_thresh"),
+            ("Rim Sensitivity",  "_rim_sens"),
         ]
 
         self._param_widgets: dict[str, tuple[QWidget, QWidget]] = {}
-        for idx, (label, units, key) in enumerate(params):
-            lbl, edit, row_w = _param(label, units)
+        for idx, (label, key) in enumerate(params):
+            _, _, _, _, vmin, vmax, suffix = _TRIGGER_BUILDERS[key]
+
+            lbl = QLabel(label)
+            lbl.setStyleSheet(
+                f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
+            )
+
+            spin = QSpinBox()
+            spin.setRange(vmin, vmax)
+            spin.setFixedWidth(90)
+            spin.setStyleSheet(_spin_style())
+            if suffix:
+                spin.setSuffix(suffix)
+            spin.valueChanged.connect(
+                lambda val, k=key: self._on_trigger_changed(k, val)
+            )
+            setattr(self, f"_spin{key}", spin)
+
             r, c = divmod(idx, 2)
-            grid.addWidget(lbl,   r, c * 2)
-            grid.addWidget(row_w, r, c * 2 + 1)
-            self._param_widgets[key] = (lbl, row_w)
-            setattr(self, f"_edit{key}", edit)
+            grid.addWidget(lbl,  r, c * 2)
+            grid.addWidget(spin, r, c * 2 + 1)
+            self._param_widgets[key] = (lbl, spin)
 
         return box
 
@@ -691,15 +732,12 @@ class PadConfigTab(QWidget):
             f"  padding: 4px 12px; }}"
             f"QTabBar::tab:selected {{ background: {COLOR_BG_PANEL}; color: {COLOR_TEXT_PRIMARY}; }}"
         )
-
         midi_tab = self._build_midi_panel()
         tabs.addTab(midi_tab, "MIDI")
-
         for name in ("Options", "Advanced"):
             ph = QWidget()
             tabs.addTab(ph, name)
             tabs.setTabEnabled(tabs.count() - 1, False)
-
         self._midi_tabs = tabs
         return tabs
 
@@ -709,36 +747,90 @@ class PadConfigTab(QWidget):
         grid.setSpacing(8)
         grid.setContentsMargins(8, 8, 8, 8)
 
-        def _row(label: str) -> QLineEdit:
-            lbl = QLabel(label)
-            lbl.setStyleSheet(
+        note_name_style = (
+            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px; min-width: 28px;"
+        )
+
+        def _lbl(text: str) -> QLabel:
+            l = QLabel(text)
+            l.setStyleSheet(
                 f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
             )
-            edit = QLineEdit()
-            edit.setReadOnly(True)
-            edit.setFixedWidth(140)
-            edit.setStyleSheet(
-                f"QLineEdit {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
-                f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
-            )
-            return lbl, edit
+            return l
 
-        midi_fields = [
-            ("Head Note",    "_midi_head_note"),
-            ("Head Channel", "_midi_head_ch"),
-            ("Rim Note",     "_midi_rim_note"),
-            ("Rim Channel",  "_midi_rim_ch"),
-            ("CC Number",    "_midi_cc_num"),
-            ("CC Channel",   "_midi_cc_ch"),
+        def _note_spin() -> QSpinBox:
+            s = QSpinBox()
+            s.setRange(0, 127)
+            s.setFixedWidth(70)
+            s.setStyleSheet(_spin_style())
+            return s
+
+        def _ch_spin() -> QSpinBox:
+            s = QSpinBox()
+            s.setRange(1, 16)
+            s.setFixedWidth(55)
+            s.setStyleSheet(_spin_style())
+            return s
+
+        def _name_lbl() -> QLabel:
+            l = QLabel("C-2")
+            l.setStyleSheet(note_name_style)
+            return l
+
+        # Row 0: Head note + channel (always visible)
+        lbl_hn = _lbl("Head Note")
+        self._spin_midi_head_note = _note_spin()
+        self._lbl_midi_head_name  = _name_lbl()
+        lbl_hch = _lbl("Head Channel")
+        self._spin_midi_head_ch   = _ch_spin()
+
+        grid.addWidget(lbl_hn,                    0, 0)
+        grid.addWidget(self._spin_midi_head_note, 0, 1)
+        grid.addWidget(self._lbl_midi_head_name,  0, 2)
+        grid.addWidget(lbl_hch,                   0, 3)
+        grid.addWidget(self._spin_midi_head_ch,   0, 4)
+
+        self._spin_midi_head_note.valueChanged.connect(self._on_midi_head_changed)
+        self._spin_midi_head_ch.valueChanged.connect(self._on_midi_head_changed)
+
+        # Row 1: Rim note + channel (dual-zone only)
+        self._lbl_rim_note        = _lbl("Rim Note")
+        self._spin_midi_rim_note  = _note_spin()
+        self._lbl_midi_rim_name   = _name_lbl()
+        self._lbl_rim_ch          = _lbl("Rim Channel")
+        self._spin_midi_rim_ch    = _ch_spin()
+
+        grid.addWidget(self._lbl_rim_note,        1, 0)
+        grid.addWidget(self._spin_midi_rim_note,  1, 1)
+        grid.addWidget(self._lbl_midi_rim_name,   1, 2)
+        grid.addWidget(self._lbl_rim_ch,          1, 3)
+        grid.addWidget(self._spin_midi_rim_ch,    1, 4)
+
+        self._spin_midi_rim_note.valueChanged.connect(self._on_midi_rim_changed)
+        self._spin_midi_rim_ch.valueChanged.connect(self._on_midi_rim_changed)
+
+        # Row 2: CC number + channel (hihat only)
+        self._lbl_cc_num        = _lbl("CC Number")
+        self._spin_midi_cc_num  = _note_spin()
+        self._lbl_cc_ch         = _lbl("CC Channel")
+        self._spin_midi_cc_ch   = _ch_spin()
+
+        grid.addWidget(self._lbl_cc_num,          2, 0)
+        grid.addWidget(self._spin_midi_cc_num,    2, 1)
+        grid.addWidget(self._lbl_cc_ch,           2, 3)
+        grid.addWidget(self._spin_midi_cc_ch,     2, 4)
+
+        self._spin_midi_cc_num.valueChanged.connect(self._on_midi_cc_changed)
+        self._spin_midi_cc_ch.valueChanged.connect(self._on_midi_cc_changed)
+
+        self._rim_midi_widgets: list[QWidget] = [
+            self._lbl_rim_note, self._spin_midi_rim_note, self._lbl_midi_rim_name,
+            self._lbl_rim_ch,   self._spin_midi_rim_ch,
         ]
-        self._midi_row_widgets: dict[str, tuple[QWidget, QWidget]] = {}
-        for idx, (label, key) in enumerate(midi_fields):
-            lbl, edit = _row(label)
-            r, c = divmod(idx, 2)
-            grid.addWidget(lbl,  r, c * 2)
-            grid.addWidget(edit, r, c * 2 + 1)
-            self._midi_row_widgets[key] = (lbl, edit)
-            setattr(self, key, edit)
+        self._hihat_midi_widgets: list[QWidget] = [
+            self._lbl_cc_num, self._spin_midi_cc_num,
+            self._lbl_cc_ch,  self._spin_midi_cc_ch,
+        ]
 
         return w
 
@@ -775,22 +867,35 @@ class PadConfigTab(QWidget):
 
     def on_connected(self) -> None:
         self._loaded = False
+        self._dirty  = False
+        self._writer = WriteWorker(self._transport)
+        self._writer.signals.write_ok.connect(self._on_write_ok)
+        self._writer.signals.write_failed.connect(self._on_write_failed)
+        self._writer.start()
+        self._save_btn.setEnabled(True)
+        self._update_save_button_style()
         if self.isVisible():
             self._start_refresh()
 
     def on_disconnected(self) -> None:
-        self._transport.set_sysex_callback(None)
+        if self._writer:
+            self._writer.stop()
+            self._writer.wait(3000)
+            self._writer = None
+        self._transport.remove_listener("pad_config")
+        self._transport.remove_listener("refresh_worker")
         self._stack.setCurrentIndex(0)
         self._loaded = False
+        self._dirty  = False
+        self._save_btn.setEnabled(False)
+        self._update_save_button_style()
 
     def set_active(self, active: bool) -> None:
-        """Called when tab is focused/unfocused."""
         self._active_tab = active
         if active and self._transport.is_connected():
-            self._transport.set_sysex_callback(self._on_sysex)
+            self._transport.add_listener("pad_config", self._on_sysex)
         else:
-            if self._transport.is_connected():
-                self._transport.set_sysex_callback(None)
+            self._transport.remove_listener("pad_config")
 
     # ------------------------------------------------------------------
     # SysEx callback (runs on rtmidi thread)
@@ -829,8 +934,8 @@ class PadConfigTab(QWidget):
         self._loaded  = True
 
         for i, card in enumerate(self._cards):
-            cfg = configs.get(i, {})
-            pad_type = cfg.get("pad_type", 0)
+            cfg       = configs.get(i, {})
+            pad_type  = cfg.get("pad_type", 0)
             type_name = PAD_TYPE_NAMES.get(pad_type, "")
             card.set_status(cfg, type_name)
             card.set_reserved(cfg.get("_status", 0) == INPUT_RESERVED)
@@ -854,15 +959,7 @@ class PadConfigTab(QWidget):
         self._selected_id = input_id
         self._cards[input_id].set_selected(True)
         self._stack.setCurrentIndex(1)
-        if self._configs:
-            self._populate_detail(input_id)
-        else:
-            # No device data yet — just update the name combo from saved names
-            name = self._pad_names.get(input_id, "Unassigned")
-            self._name_combo.blockSignals(True)
-            idx = self._name_combo.findText(name)
-            self._name_combo.setCurrentIndex(max(0, idx))
-            self._name_combo.blockSignals(False)
+        self._populate_detail(input_id)
 
     # ------------------------------------------------------------------
     # Detail population
@@ -870,79 +967,204 @@ class PadConfigTab(QWidget):
 
     def _populate_detail(self, input_id: int) -> None:
         cfg = self._configs.get(input_id, {})
-        if not cfg:
-            return
 
-        pad_type   = cfg.get("pad_type", 0)
-        is_dual    = pad_type in _DUAL_ZONE_TYPES
-        is_hihat   = pad_type in _HIHAT_TYPES
+        pad_type = cfg.get("pad_type", 0)
+        is_dual  = pad_type in _DUAL_ZONE_TYPES
+        is_hihat = pad_type in _HIHAT_TYPES
 
-        # Name combo
-        name = self._pad_names.get(input_id, "Unassigned")
-        self._name_combo.blockSignals(True)
-        idx = self._name_combo.findText(name)
-        self._name_combo.setCurrentIndex(max(0, idx))
-        self._name_combo.blockSignals(False)
+        # Block all interactive widgets to prevent cascade writes during load
+        for widget in self._all_editable_widgets():
+            widget.blockSignals(True)
 
-        # Type combo
-        type_idx = self._type_combo.findData(pad_type)
-        self._type_combo.setCurrentIndex(max(0, type_idx))
+        try:
+            # Name combo
+            name = self._pad_names.get(input_id, "Unassigned")
+            idx  = self._name_combo.findText(name)
+            self._name_combo.setCurrentIndex(max(0, idx))
 
-        # Zone row
-        self._zone_row.setVisible(is_dual)
+            # Type combo
+            type_idx = self._type_combo.findData(pad_type)
+            self._type_combo.setCurrentIndex(max(0, type_idx))
 
-        # Curve
-        curve  = cfg.get("velocity_curve", 0)
-        c_name = CURVE_NAMES.get(curve, "Natural")
-        c_idx  = self._curve_combo.findData(curve)
-        self._curve_combo.setCurrentIndex(max(0, c_idx))
-        self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
+            # Curve
+            curve = cfg.get("velocity_curve", 0)
+            c_idx = self._curve_combo.findData(curve)
+            self._curve_combo.setCurrentIndex(max(0, c_idx))
+            c_name = CURVE_NAMES.get(curve, "Natural")
+            self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
 
-        # Trigger settings
-        def _set(edit, value):
-            edit.setText(str(value))
+            # Trigger spinboxes
+            self._spin_thresh.setValue(cfg.get("threshold", 0))
+            self._spin_sens.setValue(cfg.get("head_sensitivity", 0))
+            self._spin_scan.setValue(cfg.get("scan_time", 0))
+            self._spin_mask.setValue(cfg.get("mask_time", 0))
+            self._spin_retrig.setValue(cfg.get("retrigger_time", 0))
+            self._spin_rim_thresh.setValue(cfg.get("rim_threshold", 0))
+            self._spin_rim_sens.setValue(cfg.get("rim_sensitivity", 0))
 
-        _set(self._edit_thresh,     cfg.get("threshold", "—"))
-        _set(self._edit_sens,       cfg.get("head_sensitivity", "—"))
-        _set(self._edit_scan,       cfg.get("scan_time", "—"))
-        _set(self._edit_mask,       cfg.get("mask_time", "—"))
-        _set(self._edit_retrig,     cfg.get("retrigger_time", "—"))
-        _set(self._edit_rim_thresh, cfg.get("rim_threshold", "—"))
-        _set(self._edit_rim_sens,   cfg.get("rim_sensitivity", "—"))
+            # Head MIDI
+            note = cfg.get("midi_note", 0)
+            ch   = cfg.get("midi_channel", 1)
+            self._spin_midi_head_note.setValue(note)
+            self._spin_midi_head_ch.setValue(ch)
+            self._lbl_midi_head_name.setText(midi_note_name(note))
 
-        for key in ("_rim_thresh", "_rim_sens"):
-            lbl, row_w = self._param_widgets[key]
-            lbl.setVisible(is_dual)
-            row_w.setVisible(is_dual)
-
-        # MIDI
-        note = cfg.get("midi_note", 0)
-        ch   = cfg.get("midi_channel", 1)
-        self._midi_head_note.setText(f"{note} — {midi_note_name(note)}")
-        self._midi_head_ch.setText(str(ch))
-
-        for key in ("_midi_rim_note", "_midi_rim_ch"):
-            lbl, edit = self._midi_row_widgets[key]
-            lbl.setVisible(is_dual)
-            edit.setVisible(is_dual)
-
-        if is_dual:
+            # Rim MIDI
             z2n = cfg.get("zone2_note", 0)
             z2c = cfg.get("zone2_channel", 1)
-            self._midi_rim_note.setText(f"{z2n} — {midi_note_name(z2n)}")
-            self._midi_rim_ch.setText(str(z2c))
+            self._spin_midi_rim_note.setValue(z2n)
+            self._spin_midi_rim_ch.setValue(z2c)
+            self._lbl_midi_rim_name.setText(midi_note_name(z2n))
 
-        for key in ("_midi_cc_num", "_midi_cc_ch"):
-            lbl, edit = self._midi_row_widgets[key]
-            lbl.setVisible(is_hihat)
-            edit.setVisible(is_hihat)
+            # CC MIDI
+            self._spin_midi_cc_num.setValue(cfg.get("cc_number", 0))
+            self._spin_midi_cc_ch.setValue(cfg.get("cc_channel", 1))
 
-        if is_hihat:
-            self._midi_cc_num.setText(str(cfg.get("cc_number", "—")))
-            self._midi_cc_ch.setText(str(cfg.get("cc_channel", "—")))
+        finally:
+            for widget in self._all_editable_widgets():
+                widget.blockSignals(False)
+
+        # Visibility
+        self._zone_row.setVisible(is_dual)
+        self._update_zone_visibility(is_dual, is_hihat)
+
+    def _all_editable_widgets(self) -> list[QWidget]:
+        return [
+            self._name_combo, self._type_combo, self._curve_combo,
+            self._spin_thresh, self._spin_sens, self._spin_scan,
+            self._spin_mask, self._spin_retrig,
+            self._spin_rim_thresh, self._spin_rim_sens,
+            self._spin_midi_head_note, self._spin_midi_head_ch,
+            self._spin_midi_rim_note,  self._spin_midi_rim_ch,
+            self._spin_midi_cc_num,    self._spin_midi_cc_ch,
+        ]
+
+    def _update_zone_visibility(self, is_dual: bool, is_hihat: bool) -> None:
+        for key in ("_rim_thresh", "_rim_sens"):
+            lbl, spin = self._param_widgets[key]
+            lbl.setVisible(is_dual)
+            spin.setVisible(is_dual)
+        for widget in self._rim_midi_widgets:
+            widget.setVisible(is_dual)
+        for widget in self._hihat_midi_widgets:
+            widget.setVisible(is_hihat)
 
     # ------------------------------------------------------------------
-    # Zone tabs
+    # Write helpers
+    # ------------------------------------------------------------------
+
+    def _enqueue_write(
+        self, input_id: int, param: str,
+        message: bytearray, ack_hi: int, ack_lo: int,
+    ) -> None:
+        if not self._writer or not self._transport.is_connected():
+            return
+        cmd = WriteCommand(input_id, param, message, ack_hi, ack_lo)
+        self._writer.enqueue(cmd)
+        self._set_dirty(True)
+
+    def _on_trigger_changed(self, key: str, value: int) -> None:
+        if self._selected_id is None:
+            return
+        fn, ack_hi, ack_lo, param, *_ = _TRIGGER_BUILDERS[key]
+        msg = fn(self._selected_id, value)
+        self._enqueue_write(self._selected_id, param, msg, ack_hi, ack_lo)
+
+    def _on_type_changed(self, index: int) -> None:
+        if self._selected_id is None:
+            return
+        pad_type = self._type_combo.itemData(index)
+        if pad_type is None:
+            return
+        is_dual  = pad_type in _DUAL_ZONE_TYPES
+        is_hihat = pad_type in _HIHAT_TYPES
+        self._zone_row.setVisible(is_dual)
+        self._update_zone_visibility(is_dual, is_hihat)
+        msg = build_set_pad_type(self._selected_id, pad_type)
+        self._enqueue_write(self._selected_id, "pad_type", msg, CAT_PAD, PAD_SET_TYPE)
+
+    def _on_curve_changed(self, index: int) -> None:
+        if self._selected_id is None:
+            return
+        curve = self._curve_combo.itemData(index)
+        if curve is None:
+            return
+        c_name = CURVE_NAMES.get(curve, "")
+        self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
+        msg = build_set_velocity_curve(self._selected_id, curve)
+        self._enqueue_write(self._selected_id, "velocity_curve", msg, CAT_PAD, PAD_SET_CURVE)
+
+    def _on_midi_head_changed(self) -> None:
+        if self._selected_id is None:
+            return
+        note = self._spin_midi_head_note.value()
+        ch   = self._spin_midi_head_ch.value()
+        self._lbl_midi_head_name.setText(midi_note_name(note))
+        msg = build_set_note_mapping(self._selected_id, note, ch)
+        self._enqueue_write(self._selected_id, "midi_note", msg, CAT_MIDI, MIDI_SET_NOTE)
+
+    def _on_midi_rim_changed(self) -> None:
+        if self._selected_id is None:
+            return
+        note = self._spin_midi_rim_note.value()
+        ch   = self._spin_midi_rim_ch.value()
+        self._lbl_midi_rim_name.setText(midi_note_name(note))
+        msg = build_set_zone2_mapping(self._selected_id, note, ch)
+        self._enqueue_write(self._selected_id, "midi_z2", msg, CAT_MIDI, MIDI_SET_Z2)
+
+    def _on_midi_cc_changed(self) -> None:
+        if self._selected_id is None:
+            return
+        cc_num = self._spin_midi_cc_num.value()
+        cc_ch  = self._spin_midi_cc_ch.value()
+        msg = build_set_cc_mapping(self._selected_id, cc_num, cc_ch)
+        self._enqueue_write(self._selected_id, "midi_cc", msg, CAT_MIDI, MIDI_SET_CC)
+
+    def _enqueue_save_to_flash(self) -> None:
+        if not self._writer or not self._transport.is_connected():
+            return
+        msg = build_save_to_flash()
+        cmd = WriteCommand(-1, "save_to_flash", msg, CAT_SYS, SYS_SAVE)
+        self._writer.enqueue(cmd)
+        self.status_message.emit("Saving to flash…", 0)
+
+    # ------------------------------------------------------------------
+    # Write result handlers
+    # ------------------------------------------------------------------
+
+    def _on_write_ok(self, input_id: int, param: str) -> None:
+        if param == "save_to_flash":
+            self._set_dirty(False)
+            self.status_message.emit("Saved to flash.", 3000)
+
+    def _on_write_failed(self, input_id: int, param: str, reason: str) -> None:
+        self.status_message.emit(f"Write failed ({param}): {reason}", 4000)
+
+    # ------------------------------------------------------------------
+    # Dirty state
+    # ------------------------------------------------------------------
+
+    def _set_dirty(self, dirty: bool) -> None:
+        if self._dirty == dirty:
+            return
+        self._dirty = dirty
+        self._update_save_button_style()
+
+    def _update_save_button_style(self) -> None:
+        if self._dirty:
+            self._save_btn.setStyleSheet(
+                f"QPushButton {{"
+                f"  background-color: {COLOR_BG_CARD};"
+                f"  color: {COLOR_WARNING};"
+                f"  border: 2px solid {COLOR_WARNING};"
+                f"  border-radius: 4px; padding: 4px 8px; font-weight: bold;"
+                f"}}"
+            )
+        else:
+            self._save_btn.setStyleSheet("")
+
+    # ------------------------------------------------------------------
+    # Zone selector
     # ------------------------------------------------------------------
 
     def _select_zone(self, zone: int) -> None:

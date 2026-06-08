@@ -33,6 +33,7 @@ struct __attribute__((packed)) Preset {
 
 extern InputConfig g_inputs[NUM_INPUTS];
 
+void configInit();   // must be called once in setup() before configLoad()
 void configLoad();
 void configSave();
 void configResetDefaults();

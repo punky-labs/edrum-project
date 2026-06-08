@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._debug_tab,      "Debug")
 
         tabs.currentChanged.connect(self._on_tab_changed)
+        self._pad_config_tab.status_message.connect(self.show_status)
         self._tabs = tabs
         self.setCentralWidget(tabs)
 
@@ -242,18 +243,16 @@ class MainWindow(QMainWindow):
         self._pad_config_tab.on_connected()
         self._debug_tab.on_connected()
 
-        # Route RX messages to debug tab
-        self._transport.set_sysex_callback(self._on_sysex_rx)
+        self._transport.add_listener("main_window", self._on_sysex_rx)
 
     def _on_disconnect(self) -> None:
-        self._transport.set_sysex_callback(None)
+        self._transport.remove_listener("main_window")
         self._transport.disconnect()
         self._set_disconnected_ui()
         self._pad_config_tab.on_disconnected()
         self._debug_tab.on_disconnected()
 
     def _on_sysex_rx(self, parsed: dict) -> None:
-        # Forward to debug tab (reconstructing raw bytes for display)
         pay = parsed.get("payload", b"")
         raw = bytes([
             0xF0, 0x00, 0x7D,
@@ -264,10 +263,6 @@ class MainWindow(QMainWindow):
             0xF7,
         ])
         self._debug_tab.log_rx(parsed, raw)
-
-        # Also forward to pad config tab if it's active
-        if self._tabs.currentIndex() == self._PAD_CONFIG_IDX:
-            self._pad_config_tab._on_sysex(parsed)
 
     def _set_connected_ui(self, port_name: str) -> None:
         self._btn_connect.setEnabled(False)
@@ -329,6 +324,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Misc
     # ------------------------------------------------------------------
+
+    def show_status(self, msg: str, timeout_ms: int = 3000) -> None:
+        self.statusBar().showMessage(msg, timeout_ms)
 
     def _on_about(self) -> None:
         QMessageBox.about(

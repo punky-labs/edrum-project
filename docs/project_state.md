@@ -51,3 +51,5 @@ github.com/punky-labs/edrum-project
 - Windows: VS Code + PlatformIO + Claude Code CLI
 - Mac: ~/edrum-venv, shared app/ folder via network
 - MCP filesystem server: project root mounted read-only for Claude Desktop
+- upload_protocol = picotool + upload_port = COM10 is the working upload config for the XIAO RP2040 on this machine
+- The mklittlefs PATH fix — add C:\Users\andre\.platformio\packages\tool-mklittlefs-rp2040-earlephilhower to Windows system PATH for buildfs/uploadfs to work
