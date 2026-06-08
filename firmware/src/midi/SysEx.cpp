@@ -74,8 +74,8 @@ static void handleSystem(uint8_t deviceId, uint8_t cmd,
             break;
 
         case SYSEX_SYS_SAVE:
-            configSave();
-            sendAck(deviceId, SYSEX_CAT_SYS, cmd, SYSEX_ACK_OK);
+            g_save_requested = true;
+            // Ack sent after write completes in loop()
             break;
 
         default:

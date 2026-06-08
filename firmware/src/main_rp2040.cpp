@@ -28,11 +28,14 @@ MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 #define PIN_PWR   11
 #define NUMPIXELS 1
 
+volatile bool g_save_requested = false;
+
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
 enum LEDColor {
     BLACK, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE, ORANGE, PURPLE, PINK
 };
+
 
 static void setLED(LEDColor c) {
     uint32_t rgb;
@@ -221,6 +224,14 @@ void loop() {
     if (mounted != wasMounted) {
         wasMounted = mounted;
         setLED(mounted ? GREEN : BLUE);
+    }
+
+    if (g_save_requested) {
+        g_save_requested = false;
+        configSave();
+        uint8_t ack[3] = {SYSEX_CAT_SYS, SYSEX_SYS_SAVE, SYSEX_ACK_OK};
+        sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                        SYSEX_STAT_ACK, ack, 3);
     }
 
     MIDI.read();

@@ -108,7 +108,12 @@ class WriteWorker(QThread):
                 event.set()
 
         self._transport.add_listener("write_worker", on_ack)
-        self._transport.send(cmd.message)
+        try:
+            self._transport.send(cmd.message)
+        except Exception as exc:
+            self._transport.remove_listener("write_worker")
+            self.write_failed.emit(cmd.input_id, cmd.param, f"Send error: {exc}")
+            return
         event.wait(2.0)
         self._transport.remove_listener("write_worker")
 

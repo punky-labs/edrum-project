@@ -91,3 +91,6 @@ void sysexParse(const uint8_t* data, size_t len);
 // Stub: prints to Serial until USB MIDI send is wired up.
 void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
                        const uint8_t* payload, size_t payloadLen);
+
+
+extern volatile bool g_save_requested;
