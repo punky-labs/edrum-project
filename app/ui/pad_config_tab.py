@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Optional
+
+log = logging.getLogger("edrum.pad_config")
 
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QObject, QSize,
@@ -16,6 +19,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -31,7 +35,7 @@ try:
         COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
         COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
-        CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS,
+        CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
     )
     from .pad_names import PAD_NAMES, load_pad_names, save_pad_names
     from .write_worker import WriteCommand, WriteWorker
@@ -42,7 +46,7 @@ except ImportError:
         COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
         COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
-        CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS,
+        CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
     )
     from ui.pad_names import PAD_NAMES, load_pad_names, save_pad_names  # type: ignore[no-redef]
     from ui.write_worker import WriteCommand, WriteWorker  # type: ignore[no-redef]
@@ -109,32 +113,85 @@ _CURVE_DESCRIPTIONS = {
     "Custom":     "Custom curve",
 }
 
-# (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, spinbox_suffix)
-_TRIGGER_BUILDERS: dict[str, tuple] = {
-    "_thresh":     (build_set_threshold,        CAT_PAD, PAD_SET_THRESH,     "threshold",        0, 4095, ""),
-    "_sens":       (build_set_head_sensitivity, CAT_PAD, PAD_SET_SENS,       "head_sensitivity", 0, 4095, ""),
-    "_scan":       (build_set_scan_time,        CAT_PAD, PAD_SET_SCAN,       "scan_time",        0, 100,  " ms"),
-    "_mask":       (build_set_mask_time,        CAT_PAD, PAD_SET_MASK,       "mask_time",        0, 500,  " ms"),
-    "_retrig":     (build_set_retrigger_time,   CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",   0, 1000, " ms"),
-    "_rim_thresh": (build_set_rim_threshold,    CAT_PAD, PAD_SET_RIM_THRESH, "rim_threshold",    0, 4095, ""),
-    "_rim_sens":   (build_set_rim_sensitivity,  CAT_PAD, PAD_SET_RIM_SENS,   "rim_sensitivity",  0, 4095, ""),
+# GM percussion note map — note: name
+# Starting at note 33 as agreed; gaps in the standard are omitted.
+GM_PERCUSSION: dict[int, str] = {
+    33: "Metronome click",
+    34: "Metronome bell",
+    35: "Bass drum",
+    36: "Kick drum",
+    37: "Snare cross stick",
+    38: "Snare drum",
+    39: "Hand clap",
+    40: "Electric snare drum",
+    41: "Floor tom 2",
+    42: "Hi-hat closed",
+    43: "Floor tom 1",
+    44: "Hi-hat foot",
+    45: "Low tom",
+    46: "Hi-hat open",
+    47: "Low-mid tom",
+    48: "High-mid tom",
+    49: "Crash cymbal",
+    50: "High tom",
+    51: "Ride cymbal",
+    52: "China cymbal",
+    53: "Ride bell",
+    54: "Tambourine",
+    55: "Splash cymbal",
+    56: "Cowbell",
+    57: "Crash cymbal 2",
+    58: "Vibraslap",
+    60: "High bongo",
+    61: "Low bongo",
+    62: "Conga dead stroke",
+    63: "Conga",
+    64: "Tumba",
+    65: "High timbale",
+    66: "Low timbale",
+    67: "High agogo",
+    68: "Low agogo",
+    69: "Cabasa",
+    70: "Maracas",
+    71: "Whistle short",
+    72: "Whistle long",
+    73: "Guiro short",
+    74: "Guiro long",
+    75: "Claves",
+    76: "High woodblock",
+    77: "Low woodblock",
+    78: "Cuica high",
+    79: "Cuica low",
+    80: "Triangle mute",
+    81: "Triangle open",
+    82: "Shaker",
+    83: "Sleigh bell",
+    84: "Bell tree",
+    85: "Castanets",
+    86: "Surdu dead stroke",
+    87: "Surdu",
 }
 
 
-def midi_note_name(note: int) -> str:
-    """Return note name e.g. 60 -> 'C3', 38 -> 'D2' (middle C = C3 = 60)."""
-    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    octave = (note // 12) - 2
-    return f"{names[note % 12]}{octave}"
+def gm_note_display(note: int) -> str:
+    """Return display string for a note number.
+    Format: 'Snare drum (38)' for mapped notes, 'Note 32' for unmapped notes."""
+    name = GM_PERCUSSION.get(note)
+    if name:
+        return f"{name} ({note})"
+    return f"Note {note}"
 
 
-def _spin_style() -> str:
-    return (
-        f"QSpinBox {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
-        f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
-        f"QSpinBox::up-button, QSpinBox::down-button {{"
-        f" width: 16px; background: {COLOR_BG_CARD}; border: none; }}"
-    )
+# (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, suffix)
+_TRIGGER_BUILDERS: dict[str, tuple] = {
+    "_thresh":     (build_set_threshold,        CAT_PAD, PAD_SET_THRESH,     "threshold",        0, 1023, ""),
+    "_sens":       (build_set_head_sensitivity, CAT_PAD, PAD_SET_SENS,       "head_sensitivity", 0, 1023, ""),
+    "_scan":       (build_set_scan_time,        CAT_PAD, PAD_SET_SCAN,       "scan_time",        0, 100,  " ms"),
+    "_mask":       (build_set_mask_time,        CAT_PAD, PAD_SET_MASK,       "mask_time",        0, 500,  " ms"),
+    "_retrig":     (build_set_retrigger_time,   CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",   0, 1000, " ms"),
+    "_rim_thresh": (build_set_rim_threshold,    CAT_PAD, PAD_SET_RIM_THRESH, "rim_threshold",    0, 1023, ""),
+    "_rim_sens":   (build_set_rim_sensitivity,  CAT_PAD, PAD_SET_RIM_SENS,   "rim_sensitivity",  0, 1023, ""),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +397,7 @@ class _RefreshWorker(QThread):
         except Exception as exc:
             self.signals.failed.emit(str(exc))
         else:
+            log.info("Refresh complete: %d inputs loaded", len(results))
             self.signals.done.emit(results)
         finally:
             self._transport.remove_listener("refresh_worker")
@@ -361,7 +419,8 @@ class _RefreshWorker(QThread):
 
         transport.add_listener("refresh_worker", on_status)
         transport.send(build_get_input_status(input_id))
-        event.wait(2.0)
+        if not event.wait(2.0):
+            log.warning("Timeout fetching input %d (step=%s)", input_id, "status")
         if status:
             result["_status"] = status.get("status", 0)
             result["_status_name"] = status.get("status_name", "")
@@ -379,8 +438,13 @@ class _RefreshWorker(QThread):
 
         transport.add_listener("refresh_worker", on_pad)
         transport.send(build_get_pad_config(input_id))
-        event2.wait(2.0)
+        if not event2.wait(2.0):
+            log.warning("Timeout fetching input %d (step=%s)", input_id, "pad_config")
         if pad_cfg:
+            log.debug("Fetched input %d: pad_type=%s threshold=%s",
+                      input_id,
+                      pad_cfg.get("pad_type", "?"),
+                      pad_cfg.get("threshold", "?"))
             result.update(pad_cfg)
 
         # --- midi mapping ---
@@ -396,7 +460,8 @@ class _RefreshWorker(QThread):
 
         transport.add_listener("refresh_worker", on_midi)
         transport.send(build_get_midi_mapping(input_id))
-        event3.wait(2.0)
+        if not event3.wait(2.0):
+            log.warning("Timeout fetching input %d (step=%s)", input_id, "midi_mapping")
         if midi_cfg:
             result.update(midi_cfg)
 
@@ -617,11 +682,12 @@ class PadConfigTab(QWidget):
         c_row.addWidget(self._build_hitlog_panel(), stretch=1)
         layout.addLayout(c_row)
 
-        # Section D — Trigger settings
-        layout.addWidget(self._build_trigger_panel())
-
-        # Section E — MIDI tab
-        layout.addWidget(self._build_midi_tabs())
+        # Section D+E — Trigger settings and MIDI side by side
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(10)
+        bottom_row.addWidget(self._build_trigger_panel(), stretch=0)
+        bottom_row.addWidget(self._build_midi_tabs(), stretch=1)
+        layout.addLayout(bottom_row)
 
         return w
 
@@ -684,45 +750,109 @@ class PadConfigTab(QWidget):
     def _build_trigger_panel(self) -> QGroupBox:
         box = QGroupBox("TRIGGER SETTINGS")
         box.setStyleSheet(self._group_style())
-        grid = QGridLayout(box)
-        grid.setSpacing(8)
+
+        outer = QHBoxLayout(box)
+        outer.setSpacing(4)
+        outer.setContentsMargins(8, 16, 8, 8)
 
         params = [
-            ("Threshold",        "_thresh"),
-            ("Sensitivity",      "_sens"),
-            ("Scan Time",        "_scan"),
-            ("Double-Hit Guard", "_mask"),
-            ("Retrigger",        "_retrig"),
-            ("Rim Threshold",    "_rim_thresh"),
-            ("Rim Sensitivity",  "_rim_sens"),
+            ("Threshold",         "_thresh"),
+            ("Sensitivity",       "_sens"),
+            ("Scan Time\n(ms)",   "_scan"),
+            ("Double-Hit\n(ms)",  "_mask"),
+            ("Retrigger\n(ms)",   "_retrig"),
+            ("Rim\nThreshold",    "_rim_thresh"),
+            ("Rim\nSensitivity",  "_rim_sens"),
         ]
 
         self._param_widgets: dict[str, tuple[QWidget, QWidget]] = {}
-        for idx, (label, key) in enumerate(params):
-            _, _, _, _, vmin, vmax, suffix = _TRIGGER_BUILDERS[key]
+        self._slider_value_labels: dict[str, QLabel] = {}
 
-            lbl = QLabel(label)
-            lbl.setStyleSheet(
+        for label_text, key in params:
+            _, _, _, _, vmin, vmax, _ = _TRIGGER_BUILDERS[key]
+
+            col = QWidget()
+            col_layout = QVBoxLayout(col)
+            col_layout.setContentsMargins(2, 0, 2, 0)
+            col_layout.setSpacing(4)
+            col_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+            val_lbl = QLabel("0")
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            val_lbl.setFixedWidth(50)
+            val_lbl.setStyleSheet(
+                f"color: {COLOR_TEXT_PRIMARY}; font-size: {FONT_VALUE_SIZE}px;"
+                f" background: {COLOR_BG_INPUT}; border: 1px solid {COLOR_BORDER};"
+                f" border-radius: 3px; padding: 1px 4px;"
+            )
+            col_layout.addWidget(val_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+            self._slider_value_labels[key] = val_lbl
+
+            slider = QSlider(Qt.Orientation.Vertical)
+            slider.setRange(vmin, vmax)
+            slider.setValue(0)
+            slider.setFixedHeight(SLIDER_HEIGHT)
+            slider.setFixedWidth(30)
+            slider.setInvertedAppearance(False)
+            slider.setInvertedControls(True)
+            slider.setStyleSheet(
+                f"QSlider::groove:vertical {{"
+                f"  background: {COLOR_BG_CARD};"
+                f"  width: 6px;"
+                f"  border-radius: 3px;"
+                f"}}"
+                f"QSlider::handle:vertical {{"
+                f"  background: {COLOR_ACCENT};"
+                f"  border: none;"
+                f"  height: 14px;"
+                f"  width: 14px;"
+                f"  margin: 0 -4px;"
+                f"  border-radius: 7px;"
+                f"}}"
+                f"QSlider::add-page:vertical {{"
+                f"  background: {COLOR_ACCENT};"
+                f"  border-radius: 3px;"
+                f"}}"
+                f"QSlider::sub-page:vertical {{"
+                f"  background: {COLOR_BG_CARD};"
+                f"}}"
+            )
+            slider.valueChanged.connect(
+                lambda val, k=key, lbl=val_lbl: self._on_slider_changed(k, val, lbl)
+            )
+            setattr(self, f"_slider{key}", slider)
+            col_layout.addWidget(slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+            param_lbl = QLabel(label_text)
+            param_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            param_lbl.setStyleSheet(
                 f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
             )
+            col_layout.addWidget(param_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-            spin = QSpinBox()
-            spin.setRange(vmin, vmax)
-            spin.setFixedWidth(90)
-            spin.setStyleSheet(_spin_style())
-            if suffix:
-                spin.setSuffix(suffix)
-            spin.valueChanged.connect(
-                lambda val, k=key: self._on_trigger_changed(k, val)
-            )
-            setattr(self, f"_spin{key}", spin)
+            outer.addWidget(col)
+            self._param_widgets[key] = (col, slider)
 
-            r, c = divmod(idx, 2)
-            grid.addWidget(lbl,  r, c * 2)
-            grid.addWidget(spin, r, c * 2 + 1)
-            self._param_widgets[key] = (lbl, spin)
-
+        outer.addStretch()
         return box
+
+    def _make_note_combo(self) -> QComboBox:
+        combo = QComboBox()
+        combo.setMinimumWidth(200)
+        combo.setStyleSheet(
+            f"QComboBox {{ background: {COLOR_BG_INPUT};"
+            f" color: {COLOR_TEXT_PRIMARY};"
+            f" border: 1px solid {COLOR_BORDER};"
+            f" border-radius: 3px; padding: 2px 6px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+            f"QComboBox QAbstractItemView {{"
+            f" background: {COLOR_BG_PANEL};"
+            f" color: {COLOR_TEXT_PRIMARY};"
+            f" selection-background-color: {COLOR_ACCENT}; }}"
+        )
+        for note, name in GM_PERCUSSION.items():
+            combo.addItem(f"{name} ({note})", note)
+        return combo
 
     def _build_midi_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
@@ -747,8 +877,11 @@ class PadConfigTab(QWidget):
         grid.setSpacing(8)
         grid.setContentsMargins(8, 8, 8, 8)
 
-        note_name_style = (
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px; min-width: 28px;"
+        spin_style = (
+            f"QSpinBox {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
+            f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
+            f"QSpinBox::up-button, QSpinBox::down-button {{"
+            f" width: 16px; background: {COLOR_BG_CARD}; border: none; }}"
         )
 
         def _lbl(text: str) -> QLabel:
@@ -758,73 +891,60 @@ class PadConfigTab(QWidget):
             )
             return l
 
-        def _note_spin() -> QSpinBox:
-            s = QSpinBox()
-            s.setRange(0, 127)
-            s.setFixedWidth(70)
-            s.setStyleSheet(_spin_style())
-            return s
-
         def _ch_spin() -> QSpinBox:
             s = QSpinBox()
             s.setRange(1, 16)
             s.setFixedWidth(55)
-            s.setStyleSheet(_spin_style())
+            s.setStyleSheet(spin_style)
             return s
-
-        def _name_lbl() -> QLabel:
-            l = QLabel("C-2")
-            l.setStyleSheet(note_name_style)
-            return l
 
         # Row 0: Head note + channel (always visible)
         lbl_hn = _lbl("Head Note")
-        self._spin_midi_head_note = _note_spin()
-        self._lbl_midi_head_name  = _name_lbl()
+        self._combo_midi_head_note = self._make_note_combo()
         lbl_hch = _lbl("Head Channel")
-        self._spin_midi_head_ch   = _ch_spin()
+        self._spin_midi_head_ch = _ch_spin()
 
-        grid.addWidget(lbl_hn,                    0, 0)
-        grid.addWidget(self._spin_midi_head_note, 0, 1)
-        grid.addWidget(self._lbl_midi_head_name,  0, 2)
-        grid.addWidget(lbl_hch,                   0, 3)
-        grid.addWidget(self._spin_midi_head_ch,   0, 4)
+        grid.addWidget(lbl_hn,                        0, 0)
+        grid.addWidget(self._combo_midi_head_note,    0, 1)
+        grid.addWidget(lbl_hch,                       0, 3)
+        grid.addWidget(self._spin_midi_head_ch,       0, 4)
 
-        self._spin_midi_head_note.valueChanged.connect(self._on_midi_head_changed)
+        self._combo_midi_head_note.currentIndexChanged.connect(self._on_midi_head_changed)
         self._spin_midi_head_ch.valueChanged.connect(self._on_midi_head_changed)
 
         # Row 1: Rim note + channel (dual-zone only)
         self._lbl_rim_note        = _lbl("Rim Note")
-        self._spin_midi_rim_note  = _note_spin()
-        self._lbl_midi_rim_name   = _name_lbl()
+        self._combo_midi_rim_note = self._make_note_combo()
         self._lbl_rim_ch          = _lbl("Rim Channel")
         self._spin_midi_rim_ch    = _ch_spin()
 
-        grid.addWidget(self._lbl_rim_note,        1, 0)
-        grid.addWidget(self._spin_midi_rim_note,  1, 1)
-        grid.addWidget(self._lbl_midi_rim_name,   1, 2)
-        grid.addWidget(self._lbl_rim_ch,          1, 3)
-        grid.addWidget(self._spin_midi_rim_ch,    1, 4)
+        grid.addWidget(self._lbl_rim_note,            1, 0)
+        grid.addWidget(self._combo_midi_rim_note,     1, 1)
+        grid.addWidget(self._lbl_rim_ch,              1, 3)
+        grid.addWidget(self._spin_midi_rim_ch,        1, 4)
 
-        self._spin_midi_rim_note.valueChanged.connect(self._on_midi_rim_changed)
+        self._combo_midi_rim_note.currentIndexChanged.connect(self._on_midi_rim_changed)
         self._spin_midi_rim_ch.valueChanged.connect(self._on_midi_rim_changed)
 
         # Row 2: CC number + channel (hihat only)
-        self._lbl_cc_num        = _lbl("CC Number")
-        self._spin_midi_cc_num  = _note_spin()
-        self._lbl_cc_ch         = _lbl("CC Channel")
-        self._spin_midi_cc_ch   = _ch_spin()
+        self._lbl_cc_num       = _lbl("CC Number")
+        self._spin_midi_cc_num = QSpinBox()
+        self._spin_midi_cc_num.setRange(0, 127)
+        self._spin_midi_cc_num.setFixedWidth(70)
+        self._spin_midi_cc_num.setStyleSheet(spin_style)
+        self._lbl_cc_ch        = _lbl("CC Channel")
+        self._spin_midi_cc_ch  = _ch_spin()
 
-        grid.addWidget(self._lbl_cc_num,          2, 0)
-        grid.addWidget(self._spin_midi_cc_num,    2, 1)
-        grid.addWidget(self._lbl_cc_ch,           2, 3)
-        grid.addWidget(self._spin_midi_cc_ch,     2, 4)
+        grid.addWidget(self._lbl_cc_num,              2, 0)
+        grid.addWidget(self._spin_midi_cc_num,        2, 1)
+        grid.addWidget(self._lbl_cc_ch,               2, 3)
+        grid.addWidget(self._spin_midi_cc_ch,         2, 4)
 
         self._spin_midi_cc_num.valueChanged.connect(self._on_midi_cc_changed)
         self._spin_midi_cc_ch.valueChanged.connect(self._on_midi_cc_changed)
 
         self._rim_midi_widgets: list[QWidget] = [
-            self._lbl_rim_note, self._spin_midi_rim_note, self._lbl_midi_rim_name,
+            self._lbl_rim_note, self._combo_midi_rim_note,
             self._lbl_rim_ch,   self._spin_midi_rim_ch,
         ]
         self._hihat_midi_widgets: list[QWidget] = [
@@ -866,6 +986,7 @@ class PadConfigTab(QWidget):
     # ------------------------------------------------------------------
 
     def on_connected(self) -> None:
+        log.info("Connected — starting refresh")
         self._loaded = False
         self._dirty  = False
         self._writer = WriteWorker(self._transport)
@@ -878,6 +999,7 @@ class PadConfigTab(QWidget):
             self._start_refresh()
 
     def on_disconnected(self) -> None:
+        log.info("Disconnected")
         if self._writer:
             self._writer.stop()
             self._writer.wait(3000)
@@ -921,6 +1043,7 @@ class PadConfigTab(QWidget):
             return
         if self._worker and self._worker.isRunning():
             return
+        log.info("Starting full refresh")
         self._loading_lbl.show()
         worker = _RefreshWorker(self._transport)
         worker.signals.done.connect(self._on_configs_ready)
@@ -965,7 +1088,30 @@ class PadConfigTab(QWidget):
     # Detail population
     # ------------------------------------------------------------------
 
+    def _set_slider(self, key: str, value: int) -> None:
+        """Set slider value and update its label without triggering writes."""
+        slider = getattr(self, f"_slider{key}", None)
+        lbl    = self._slider_value_labels.get(key)
+        if slider:
+            slider.blockSignals(True)
+            slider.setValue(int(value))
+            slider.blockSignals(False)
+        if lbl:
+            lbl.setText(str(int(value)))
+
+    def _set_note_combo(self, combo: QComboBox, note: int) -> None:
+        """Set combo to the given note. Falls back to a temporary item if not in GM map."""
+        idx = combo.findData(note)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.blockSignals(True)
+            combo.insertItem(0, gm_note_display(note), note)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+
     def _populate_detail(self, input_id: int) -> None:
+        log.debug("Populating detail for input %d", input_id)
         cfg = self._configs.get(input_id, {})
 
         pad_type = cfg.get("pad_type", 0)
@@ -993,28 +1139,26 @@ class PadConfigTab(QWidget):
             c_name = CURVE_NAMES.get(curve, "Natural")
             self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
 
-            # Trigger spinboxes
-            self._spin_thresh.setValue(cfg.get("threshold", 0))
-            self._spin_sens.setValue(cfg.get("head_sensitivity", 0))
-            self._spin_scan.setValue(cfg.get("scan_time", 0))
-            self._spin_mask.setValue(cfg.get("mask_time", 0))
-            self._spin_retrig.setValue(cfg.get("retrigger_time", 0))
-            self._spin_rim_thresh.setValue(cfg.get("rim_threshold", 0))
-            self._spin_rim_sens.setValue(cfg.get("rim_sensitivity", 0))
+            # Trigger sliders
+            self._set_slider("_thresh",     cfg.get("threshold", 0))
+            self._set_slider("_sens",       cfg.get("head_sensitivity", 0))
+            self._set_slider("_scan",       cfg.get("scan_time", 0))
+            self._set_slider("_mask",       cfg.get("mask_time", 0))
+            self._set_slider("_retrig",     cfg.get("retrigger_time", 0))
+            self._set_slider("_rim_thresh", cfg.get("rim_threshold", 0))
+            self._set_slider("_rim_sens",   cfg.get("rim_sensitivity", 0))
 
             # Head MIDI
-            note = cfg.get("midi_note", 0)
+            note = cfg.get("midi_note", 38)
             ch   = cfg.get("midi_channel", 1)
-            self._spin_midi_head_note.setValue(note)
+            self._set_note_combo(self._combo_midi_head_note, note)
             self._spin_midi_head_ch.setValue(ch)
-            self._lbl_midi_head_name.setText(midi_note_name(note))
 
             # Rim MIDI
-            z2n = cfg.get("zone2_note", 0)
+            z2n = cfg.get("zone2_note", 39)
             z2c = cfg.get("zone2_channel", 1)
-            self._spin_midi_rim_note.setValue(z2n)
+            self._set_note_combo(self._combo_midi_rim_note, z2n)
             self._spin_midi_rim_ch.setValue(z2c)
-            self._lbl_midi_rim_name.setText(midi_note_name(z2n))
 
             # CC MIDI
             self._spin_midi_cc_num.setValue(cfg.get("cc_number", 0))
@@ -1031,19 +1175,18 @@ class PadConfigTab(QWidget):
     def _all_editable_widgets(self) -> list[QWidget]:
         return [
             self._name_combo, self._type_combo, self._curve_combo,
-            self._spin_thresh, self._spin_sens, self._spin_scan,
-            self._spin_mask, self._spin_retrig,
-            self._spin_rim_thresh, self._spin_rim_sens,
-            self._spin_midi_head_note, self._spin_midi_head_ch,
-            self._spin_midi_rim_note,  self._spin_midi_rim_ch,
-            self._spin_midi_cc_num,    self._spin_midi_cc_ch,
+            self._slider_thresh, self._slider_sens, self._slider_scan,
+            self._slider_mask, self._slider_retrig,
+            self._slider_rim_thresh, self._slider_rim_sens,
+            self._combo_midi_head_note, self._spin_midi_head_ch,
+            self._combo_midi_rim_note,  self._spin_midi_rim_ch,
+            self._spin_midi_cc_num,     self._spin_midi_cc_ch,
         ]
 
     def _update_zone_visibility(self, is_dual: bool, is_hihat: bool) -> None:
         for key in ("_rim_thresh", "_rim_sens"):
-            lbl, spin = self._param_widgets[key]
-            lbl.setVisible(is_dual)
-            spin.setVisible(is_dual)
+            col, slider = self._param_widgets[key]
+            col.setVisible(is_dual)
         for widget in self._rim_midi_widgets:
             widget.setVisible(is_dual)
         for widget in self._hihat_midi_widgets:
@@ -1063,10 +1206,13 @@ class PadConfigTab(QWidget):
         self._writer.enqueue(cmd)
         self._set_dirty(True)
 
-    def _on_trigger_changed(self, key: str, value: int) -> None:
+    def _on_slider_changed(self, key: str, value: int, lbl: QLabel) -> None:
+        lbl.setText(str(value))
         if self._selected_id is None:
             return
         fn, ack_hi, ack_lo, param, *_ = _TRIGGER_BUILDERS[key]
+        log.debug("Slider changed: input=%d key=%s value=%d",
+                  self._selected_id, key, value)
         msg = fn(self._selected_id, value)
         self._enqueue_write(self._selected_id, param, msg, ack_hi, ack_lo)
 
@@ -1097,18 +1243,20 @@ class PadConfigTab(QWidget):
     def _on_midi_head_changed(self) -> None:
         if self._selected_id is None:
             return
-        note = self._spin_midi_head_note.value()
+        note = self._combo_midi_head_note.currentData()
         ch   = self._spin_midi_head_ch.value()
-        self._lbl_midi_head_name.setText(midi_note_name(note))
+        if note is None:
+            return
         msg = build_set_note_mapping(self._selected_id, note, ch)
         self._enqueue_write(self._selected_id, "midi_note", msg, CAT_MIDI, MIDI_SET_NOTE)
 
     def _on_midi_rim_changed(self) -> None:
         if self._selected_id is None:
             return
-        note = self._spin_midi_rim_note.value()
+        note = self._combo_midi_rim_note.currentData()
         ch   = self._spin_midi_rim_ch.value()
-        self._lbl_midi_rim_name.setText(midi_note_name(note))
+        if note is None:
+            return
         msg = build_set_zone2_mapping(self._selected_id, note, ch)
         self._enqueue_write(self._selected_id, "midi_z2", msg, CAT_MIDI, MIDI_SET_Z2)
 
@@ -1123,6 +1271,7 @@ class PadConfigTab(QWidget):
     def _enqueue_save_to_flash(self) -> None:
         if not self._writer or not self._transport.is_connected():
             return
+        log.info("Save to flash requested")
         msg = build_save_to_flash()
         cmd = WriteCommand(-1, "save_to_flash", msg, CAT_SYS, SYS_SAVE)
         self._writer.enqueue(cmd)
@@ -1134,10 +1283,14 @@ class PadConfigTab(QWidget):
 
     def _on_write_ok(self, input_id: int, param: str) -> None:
         if param == "save_to_flash":
+            log.info("Save to flash: OK")
             self._set_dirty(False)
             self.status_message.emit("Saved to flash.", 3000)
 
     def _on_write_failed(self, input_id: int, param: str, reason: str) -> None:
+        if param == "save_to_flash":
+            log.info("Save to flash: FAILED")
+        log.error("Write error: %s", reason)
         self.status_message.emit(f"Write failed ({param}): {reason}", 4000)
 
     # ------------------------------------------------------------------

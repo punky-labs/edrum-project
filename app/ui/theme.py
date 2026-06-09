@@ -35,6 +35,7 @@ FONT_TITLE_SIZE      = 10
 CARD_MIN_WIDTH       = 120
 CARD_MIN_HEIGHT      = 80
 HIT_LOG_BARS         = 30
+SLIDER_HEIGHT        = 160   # logical pixels for vertical trigger sliders
 
 
 def apply_dark_theme(app: QApplication) -> None:

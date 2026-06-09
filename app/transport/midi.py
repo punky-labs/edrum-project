@@ -8,12 +8,15 @@ everything else is silently ignored.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
 from typing import Callable, Optional
 
 import rtmidi
+
+log = logging.getLogger("edrum.transport")
 
 # Support both package import and direct-script execution.
 try:
@@ -106,6 +109,7 @@ class DrumMidiTransport:
         if self.is_connected():
             self.disconnect()
 
+        log.info("Connecting to port matching '%s'", port_name)
         needle = port_name.lower()
 
         midi_in  = rtmidi.MidiIn()
@@ -119,12 +123,14 @@ class DrumMidiTransport:
 
         if in_idx is None:
             del midi_in, midi_out
+            log.error("No input port matching '%s'. Available: %s", port_name, in_ports)
             raise ConnectionError(
                 f"No MIDI input port matching '{port_name}'. "
                 f"Available inputs: {in_ports}"
             )
         if out_idx is None:
             del midi_in, midi_out
+            log.error("No output port matching '%s'. Available: %s", port_name, out_ports)
             raise ConnectionError(
                 f"No MIDI output port matching '{port_name}'. "
                 f"Available outputs: {out_ports}"
@@ -135,6 +141,7 @@ class DrumMidiTransport:
         midi_in.ignore_types(sysex=False, timing=True, active_sense=True)
         # No set_callback — we poll instead (WinMM drops SysEx in callbacks)
         midi_out.open_port(out_idx)
+        log.info("Opened port: in='%s' out='%s'", in_ports[in_idx], out_ports[out_idx])
 
         self._midi_in   = midi_in
         self._midi_out  = midi_out
@@ -145,13 +152,16 @@ class DrumMidiTransport:
             target=self._poll_loop, daemon=True, name="midi-poll"
         )
         self._poll_thread.start()
+        log.debug("Poll thread started")
 
     def disconnect(self) -> None:
         """Close both MIDI ports and release resources."""
+        log.info("Disconnecting from '%s'", self._port_name)
         self._poll_stop.set()
         if self._poll_thread is not None:
             self._poll_thread.join(timeout=2.0)
             self._poll_thread = None
+            log.debug("Poll thread stopped")
         if self._midi_in is not None:
             self._midi_in.close_port()
             self._midi_in = None
@@ -178,6 +188,7 @@ class DrumMidiTransport:
             raise RuntimeError("Not connected — call connect() first")
         self._midi_out.send_message(list(message))
         self._record_sent(message)
+        log.debug("TX: %s", message.hex(" ").upper())
 
     def _record_sent(self, message: bytearray) -> None:
         with self._sent_lock:
@@ -190,6 +201,7 @@ class DrumMidiTransport:
         with self._sent_lock:
             try:
                 self._sent_cache.remove(message)
+                log.debug("Echo filtered: %s", message.hex(" ").upper())
                 return True
             except ValueError:
                 return False
@@ -225,7 +237,8 @@ class DrumMidiTransport:
                 break
             try:
                 msg = self._midi_in.get_message()
-            except Exception:
+            except Exception as exc:
+                log.error("Poll loop exception: %s", exc, exc_info=True)
                 break
             if msg is not None:
                 self._on_message(msg, None)
@@ -261,7 +274,9 @@ class DrumMidiTransport:
                 return
             parsed = parse_message(bytes(byte_list))
             if parsed is None:
+                log.warning("RX: unparseable SysEx: %s", bytes(byte_list).hex(" ").upper())
                 return
+            log.debug("RX: %s", bytes(byte_list).hex(" ").upper())
             with self._listeners_lock:
                 callbacks = list(self._listeners.values())
             for cb in callbacks:

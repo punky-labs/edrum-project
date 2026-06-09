@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
+
+log = logging.getLogger("edrum.main_window")
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
@@ -56,7 +59,7 @@ class MainWindow(QMainWindow):
         apply_dark_theme(QApplication.instance())
 
         self.setWindowTitle("eDrum Config")
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(1280, 800)
 
         self._setup_menu_bar()
         self._setup_toolbar()
@@ -230,6 +233,7 @@ class MainWindow(QMainWindow):
                                 "Please select a MIDI port from the drop-down.")
             return
 
+        log.info("User initiated connect to '%s'", port)
         import re
         port_search = re.sub(r'\s+\d+$', '', port).strip()
 
@@ -246,6 +250,7 @@ class MainWindow(QMainWindow):
         self._transport.add_listener("main_window", self._on_sysex_rx)
 
     def _on_disconnect(self) -> None:
+        log.info("User initiated disconnect")
         self._transport.remove_listener("main_window")
         self._transport.disconnect()
         self._set_disconnected_ui()
@@ -265,6 +270,7 @@ class MainWindow(QMainWindow):
         self._debug_tab.log_rx(parsed, raw)
 
     def _set_connected_ui(self, port_name: str) -> None:
+        log.info("Connected to '%s'", port_name)
         self._btn_connect.setEnabled(False)
         self._btn_disconnect.setEnabled(True)
         self._act_connect.setEnabled(False)
@@ -276,6 +282,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Connected to {port_name}")
 
     def _set_disconnected_ui(self) -> None:
+        log.info("Disconnected")
         self._btn_connect.setEnabled(True)
         self._btn_disconnect.setEnabled(False)
         self._act_connect.setEnabled(True)
@@ -303,6 +310,9 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_identify_done(self, result: dict) -> None:
+        log.info("Device identified: FW v%d.%d device_id=0x%02X inputs=%d",
+                 result.get('fw_maj'), result.get('fw_min'),
+                 result.get('device_id'), result.get('num_inputs'))
         self._identify_worker = None
         port = self._transport._port_name or ""
         self._conn_widget.set_identified(
@@ -315,6 +325,7 @@ class MainWindow(QMainWindow):
         self._act_identify.setEnabled(True)
 
     def _on_identify_failed(self, error: str) -> None:
+        log.warning("Identify failed: %s", error)
         self._identify_worker = None
         self.statusBar().showMessage(f"Identify failed: {error}")
         QMessageBox.warning(self, "Identify failed",

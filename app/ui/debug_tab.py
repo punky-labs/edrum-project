@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
+
+log = logging.getLogger("edrum.debug_tab")
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QTextCursor
@@ -208,9 +211,11 @@ class DebugTab(QWidget):
         self._emit_line("RX", parsed, raw_bytes)
 
     def on_connected(self) -> None:
+        log.info("Debug tab: connected")
         self._append_line(f"[{_ts()}] --- connected ---")
 
     def on_disconnected(self) -> None:
+        log.info("Debug tab: disconnected")
         self._append_line(f"[{_ts()}] --- disconnected ---")
 
     # ------------------------------------------------------------------

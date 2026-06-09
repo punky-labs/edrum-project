@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from typing import Optional
+
+log = logging.getLogger("edrum.write_worker")
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -59,6 +62,7 @@ class WriteWorker(QThread):
             if key not in self._pending:
                 self._order.append(key)
             self._pending[key] = cmd
+        log.debug("Enqueue input=%d param=%s", cmd.input_id, cmd.param)
         self._wake.set()
 
     def stop(self) -> None:
@@ -105,14 +109,17 @@ class WriteWorker(QThread):
                     and pay[0] == cmd.ack_hi
                     and pay[1] == cmd.ack_lo):
                 ok_flag[0] = (pay[2] == ACK_OK)
+                log.debug("Ack input=%d param=%s ok=%s", cmd.input_id, cmd.param, ok_flag[0])
                 event.set()
 
         self._transport.add_listener("write_worker", on_ack)
         try:
+            log.debug("Sending input=%d param=%s", cmd.input_id, cmd.param)
             self._transport.send(cmd.message)
         except Exception as exc:
             self._transport.remove_listener("write_worker")
-            self.write_failed.emit(cmd.input_id, cmd.param, f"Send error: {exc}")
+            log.error("Send error input=%d param=%s: %s", cmd.input_id, cmd.param, exc, exc_info=True)
+            self.signals.write_failed.emit(cmd.input_id, cmd.param, f"Send error: {exc}")
             return
         event.wait(2.0)
         self._transport.remove_listener("write_worker")
@@ -121,6 +128,8 @@ class WriteWorker(QThread):
             if ok_flag[0]:
                 self.signals.write_ok.emit(cmd.input_id, cmd.param)
             else:
+                log.warning("Device error input=%d param=%s", cmd.input_id, cmd.param)
                 self.signals.write_failed.emit(cmd.input_id, cmd.param, "device error")
         else:
+            log.warning("Timeout waiting for ack: input=%d param=%s", cmd.input_id, cmd.param)
             self.signals.write_failed.emit(cmd.input_id, cmd.param, "timeout")
