@@ -25,7 +25,7 @@ DEV_HEAD    = 0x00      # head unit device ID; satellites are 0x01–0x0F
 HEADER_LEN  = 5         # MFR0 MFR1 DEV_ID CMD_HI CMD_LO — matches firmware SYSEX_HEADER_LEN
 MSG_MIN_LEN = 7         # F0 + HEADER_LEN + F7
 
-NUM_INPUTS  = 9
+NUM_INPUTS  = 5
 MAX_PRESETS = 16
 
 # ---------------------------------------------------------------------------
@@ -237,8 +237,8 @@ def _build(cmd_high: int, cmd_low: int,
 
 
 def _check_input_id(input_id: int) -> None:
-    if not 0 <= input_id <= 8:
-        raise ValueError(f"input_id {input_id} out of range (0–8)")
+    if not 0 <= input_id <= 4:
+        raise ValueError(f"input_id {input_id} out of range (0–4)")
 
 
 def _check_preset_id(preset_id: int) -> None:
@@ -671,7 +671,7 @@ if __name__ == "__main__":
     _check("fw_maj == 0",            result["fw_maj"]     == 0)
     _check("fw_min == 1",            result["fw_min"]     == 1)
     _check("device_id == DEV_HEAD",  result["device_id"]  == DEV_HEAD)
-    _check("num_inputs == 9",        result["num_inputs"] == NUM_INPUTS)
+    _check("num_inputs == NUM_INPUTS", result["num_inputs"] == NUM_INPUTS)
 
     # ── Set threshold (14-bit encoding in message) ────────────────────────────
     print("\nSet threshold (02 02) — input 2, value 1000:")

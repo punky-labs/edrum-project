@@ -15,21 +15,28 @@ static InputConfig defaultInput(uint8_t idx) {
     InputConfig c = {};
     c.linkedInput      = 0xFF;
     c.padType          = 0;
-    c.threshold        = 512;
+    c.threshold        = 30;
     c.velocityCurve    = 0;
     c.retriggerTime    = 50;
-    c.headSensitivity  = 1000;
+    c.headSensitivity  = 500;
     c.scanTime         = 10;
     c.maskTime         = 30;
     c.rimSensitivity   = 200;
     c.rimThreshold     = 30;
     c.crosstalkGroup   = 0;
-    c.midiNote         = 36 + idx;
-    c.midiChannel      = 1;
-    c.zone2MidiNote    = 37 + idx;
-    c.zone2MidiChannel = 1;
+    c.midiChannel      = 10;
+    c.zone2MidiChannel = 10;
     c.ccNumber         = 4;
-    c.ccChannel        = 1;
+    c.ccChannel        = 10;
+
+    switch (idx) {
+        case 0:  c.midiNote = 36; c.zone2MidiNote = 36; break;  // kick
+        case 1:  c.midiNote = 38; c.zone2MidiNote = 40; break;  // snare head / snare rim
+        case 2:  c.midiNote = 42; c.zone2MidiNote = 46; break;  // hi-hat closed / open
+        case 3:  c.midiNote = 51; c.zone2MidiNote = 53; break;  // ride / ride bell
+        case 4:  c.midiNote = 44; c.zone2MidiNote = 44; break;  // hi-hat foot pedal (CC)
+        default: c.midiNote = 38; c.zone2MidiNote = 38; break;
+    }
     return c;
 }
 

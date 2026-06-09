@@ -78,11 +78,10 @@ static int smoothVal(int prev, int reading) {
 static PDrum* drums[NUM_INPUTS];
 
 // ADC channel per input: {headCh, rimCh}; -1 = no ADC channel (stub)
-// Inputs 0-3: dual zone  head = idx*2+1, rim = idx*2
-// Input  4:   hihat      channel 8 exceeds MCP3008 range → stub for now
-// Inputs 5-8: single-channel stubs
-static const int8_t kHeadCh[NUM_INPUTS] = { 1, 3, 5, 7, -1, -1, -1, -1, -1 };
-static const int8_t kRimCh[NUM_INPUTS]  = { 0, 2, 4, 6, -1, -1, -1, -1, -1 };
+// Jacks 0-3: tip (odd) = head/piezo, ring (even) = rim
+// Jack  4:   hi-hat controller — stubbed, no ADC channel assigned yet
+static const int8_t kHeadCh[NUM_INPUTS] = { 1, 3, 5, 7, -1 };
+static const int8_t kRimCh[NUM_INPUTS]  = { 0, 2, 4, 6, -1 };
 
 static void applyConfig() {
     for (int i = 0; i < NUM_INPUTS; i++) {
@@ -130,8 +129,10 @@ static void onSysEx(byte* data, unsigned size) {
 // ---------------------------------------------------------------------------
 
 static void printHelp() {
-    Serial.println("[eDrum] p=ping  i=identify  s=config  n=test note (C3 ch10)");
+    Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
 }
+
+static bool g_adcDump = false;
 
 static void handleSerial(char cmd) {
     switch (cmd) {
@@ -153,12 +154,13 @@ static void handleSerial(char cmd) {
             Serial.println("[Config]");
             for (int i = 0; i < NUM_INPUTS; i++) {
                 Serial.printf("  [%d] note=%d ch=%d z2note=%d z2ch=%d"
-                              " thresh=%d curve=%d retrig=%d\n",
+              " thresh=%d sens=%d scan=%d mask=%d curve=%d retrig=%d\n",
                     i,
                     g_inputs[i].midiNote,    g_inputs[i].midiChannel,
                     g_inputs[i].zone2MidiNote, g_inputs[i].zone2MidiChannel,
-                    g_inputs[i].threshold,   g_inputs[i].velocityCurve,
-                    g_inputs[i].retriggerTime);
+                    g_inputs[i].threshold,   g_inputs[i].headSensitivity,
+                    g_inputs[i].scanTime,    g_inputs[i].maskTime,
+                    g_inputs[i].velocityCurve, g_inputs[i].retriggerTime);
             }
             break;
         }
@@ -173,6 +175,15 @@ static void handleSerial(char cmd) {
             Serial.println("[eDrum] Rebooting to bootloader...");
             delay(100);
             reset_usb_boot(0, 0);
+            break;
+        }
+        case 'a': {
+            g_adcDump = !g_adcDump;
+            Serial.println(g_adcDump ? "[ADC] Dump ON" : "[ADC] Dump OFF");
+            break;
+        }
+        case 'h': {
+            printHelp();
             break;
         }
         default:
@@ -251,6 +262,14 @@ void loop() {
     if (Serial.available()) {
         handleSerial((char)Serial.read());
     }
+
+    static unsigned long lastAdcPrint = 0;
+        if (g_adcDump && millis() - lastAdcPrint >= 100) {
+            lastAdcPrint = millis();
+            Serial.printf("[ADC] 0:%4d 1:%4d 2:%4d 3:%4d 4:%4d 5:%4d 6:%4d 7:%4d\n",
+                pinVals[0], pinVals[1], pinVals[2], pinVals[3],
+                pinVals[4], pinVals[5], pinVals[6], pinVals[7]);
+        }
 
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!drums[i]) continue;

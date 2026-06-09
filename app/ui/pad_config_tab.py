@@ -61,6 +61,7 @@ except ImportError:
 try:
     from ..protocol.sysex import (
         CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
+        NUM_INPUTS,
         PAD_TYPE_NAMES, CURVE_NAMES,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
@@ -83,6 +84,7 @@ try:
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
         CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
+        NUM_INPUTS,
         PAD_TYPE_NAMES, CURVE_NAMES,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
@@ -553,7 +555,7 @@ class _RefreshWorker(QThread):
     def __init__(
         self,
         transport: DrumMidiTransport,
-        num_inputs: int = 9,
+        num_inputs: int = NUM_INPUTS,
     ) -> None:
         super().__init__()
         self._transport  = transport

@@ -43,7 +43,7 @@ Example: value 1000 (0x03E8) → `07 68`
 
 ## Category 02 — Pad config
 
-`INPUT_ID` range: `00`–`08` (4 dual-channel inputs + 1 hihat input = 9 inputs).
+`INPUT_ID` range: `00`–`04` (4 physical jacks + 1 hi-hat controller = 5 inputs).
 
 | Command | Data bytes | Name | Description |
 |---|---|---|---|
@@ -54,19 +54,11 @@ Example: value 1000 (0x03E8) → `07 68`
 | `02 05` | `[INPUT_ID] [XTALK_GROUP]` | Set crosstalk group | Inputs in same group suppress each other |
 | `02 06` | `[INPUT_ID]` | Get pad config | Request current config for one input |
 | `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RSENS_HI] [RSENS_LO] [RTHRESH_HI] [RTHRESH_LO]` | Pad config response | Full config dump for one input (18 bytes) |
-| `02 08` | `[INPUT_A] [INPUT_B]` | Link inputs | Pair two inputs as one instrument (e.g. ride body + bell) |
-| `02 09` | `[INPUT_ID]` | Unlink input | Remove input from any linked pair |
-| `02 0A` | `[INPUT_ID]` | Get input status | Query whether input is available, active, or reserved |
 | `02 0B` | `[INPUT_ID] [SENS_HI] [SENS_LO]` | Set head sensitivity | Upper ADC bound for velocity scaling, 14-bit split |
 | `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split |
 | `02 0D` | `[INPUT_ID] [MASK_HI] [MASK_LO]` | Set mask time | Post-hit ignore window in ms, 14-bit split |
 | `02 0E` | `[INPUT_ID] [RSENS_HI] [RSENS_LO]` | Set rim sensitivity | Rim/zone-2 sensitivity, 14-bit split |
 | `02 0F` | `[INPUT_ID] [RTHRESH_HI] [RTHRESH_LO]` | Set rim threshold | Rim/zone-2 threshold, 14-bit split |
-
-### Input status response values (02 0A)
-00 = available
-01 = active (configured)
-02 = reserved (paired to another input)
 
 ### Pad type values
 00 = piezo (single zone)
@@ -76,12 +68,6 @@ Example: value 1000 (0x03E8) → `07 68`
 04 = hihat control (open/closed switch)
 05 = bass drum (single zone)
 06 = dual piezo (head + rim piezo, e.g. newer Roland mesh pads) — consumes 2 input channels
-
-**Note on types 01 and 06:** Both consume two physical input channels.
-When either type is assigned to an input, the paired channel is
-automatically reserved and unavailable for independent assignment.
-The Python config app must query input status (`02 0A`) on load and
-grey out any reserved inputs in the UI.
 
 **DSP distinction:**
 - Type `01` (piezo + rim switch): uses analog amplitude for velocity,

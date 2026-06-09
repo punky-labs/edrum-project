@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
-#define NUM_INPUTS      9
+#define NUM_INPUTS      5
 #define MAX_PRESETS     16
 #define PRESET_NAME_LEN 16
 

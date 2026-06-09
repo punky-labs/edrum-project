@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 try:
     from ..protocol.sysex import (
         DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD, ZONE_RIM,
+        NUM_INPUTS,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         build_message, parse_message,
     )
@@ -37,6 +38,7 @@ try:
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
         DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD, ZONE_RIM,
+        NUM_INPUTS,
         PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         build_message, parse_message,
     )
@@ -46,7 +48,7 @@ except ImportError:
 _APP_DIR        = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _PAD_NAMES_PATH = os.path.join(_APP_DIR, "pad_names.json")
 
-_NUM_INPUTS  = 9
+_NUM_INPUTS  = NUM_INPUTS
 _COLS        = 3
 _DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 
