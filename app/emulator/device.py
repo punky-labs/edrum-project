@@ -171,6 +171,32 @@ class EmulatorDevice:
             cfg["cc_channel"],
         ]
         return build_message(DEV_HEAD, CAT_MIDI, MIDI_RESP, payload)
+    
+    def apply_curve(self, input_id: int, raw_velocity: int) -> int:
+        """Apply the velocity curve for input_id to a raw velocity (0-127)."""
+        ct = self._inputs.get(input_id, {}).get("velocity_curve", 0)
+        x = raw_velocity
+        if x <= 0:
+            return 0
+        if ct == 0 or ct == 5:          # Natural / Custom — linear
+            return x
+        elif ct == 1:                   # Expressive
+            b = 1.02
+            y = (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+        elif ct == 2:                   # Sensitive
+            b = 1.05
+            y = (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+        elif ct == 3:                   # Punchy
+            b = 0.98
+            denom = b**126 - 1
+            y = (126.0 / denom) * (b**(x - 1) - 1) + 1 if abs(denom) > 1e-10 else float(x)
+        elif ct == 4:                   # Aggressive
+            b = 0.95
+            denom = b**126 - 1
+            y = (126.0 / denom) * (b**(x - 1) - 1) + 1 if abs(denom) > 1e-10 else float(x)
+        else:
+            return x
+        return max(1, min(127, round(y)))
 
     # ------------------------------------------------------------------
     # Command dispatch

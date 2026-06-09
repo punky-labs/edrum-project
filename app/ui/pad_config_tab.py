@@ -13,6 +13,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
 from PyQt6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -33,8 +34,8 @@ try:
     from .theme import (
         COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_BG_CARD, COLOR_BG_CARD_SEL,
         COLOR_BG_INPUT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
-        COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
+        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_HIT_OTHER,
+         COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
     )
@@ -77,7 +78,7 @@ try:
         build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
-        INPUT_RESERVED,
+        INPUT_ACTIVE, INPUT_RESERVED,
     )
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
@@ -99,7 +100,7 @@ except ImportError:
         build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
-        INPUT_RESERVED,
+        INPUT_ACTIVE, INPUT_RESERVED,
     )
 
 try:
@@ -109,6 +110,10 @@ except ImportError:
 
 _DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 _HIHAT_TYPES     = {PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW}
+
+# Input 4 is hardwired to the hi-hat controller jack (A0 on RP2040)
+_HIHAT_INPUT_ID   = 4
+_HIHAT_INPUT_TYPE = PAD_TYPE_HIHAT_CC
 
 _ICON_SIZE = 56   # logical pixels for card icons
 
@@ -473,8 +478,8 @@ class HitLogWidget(QWidget):
         self.setMinimumHeight(80)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def add_hit(self, velocity: int, zone: int) -> None:
-        self._bars.append((velocity, zone))
+    def add_hit(self, velocity: int, zone: int, is_selected: bool = True) -> None:
+        self._bars.append((velocity, zone, is_selected))
         if len(self._bars) > HIT_LOG_BARS:
             self._bars.pop(0)
         self._count = (self._count % 255) + 1
@@ -511,11 +516,16 @@ class HitLogWidget(QWidget):
         label_h    = 14
         bar_area_h = h - label_h
 
-        for i, (vel, zone) in enumerate(self._bars):
+        for i, (vel, zone, is_selected) in enumerate(self._bars):
             x     = x_start + i * bar_w
             bar_h = int((vel / 127.0) * bar_area_h)
             y     = bar_area_h - bar_h
-            color = QColor(COLOR_HIT_HEAD if zone == ZONE_HEAD else COLOR_HIT_RIM)
+            if not is_selected:
+                color = QColor(COLOR_HIT_OTHER)
+            elif zone == ZONE_HEAD:
+                color = QColor(COLOR_HIT_HEAD)
+            else:
+                color = QColor(COLOR_HIT_RIM)
             painter.fillRect(x + 1, y, bar_w - 2, bar_h, color)
 
         if self._bars:
@@ -702,15 +712,34 @@ class PadConfigTab(QWidget):
         grid = QGridLayout()
         grid.setSpacing(6)
         self._cards: list[InputCard] = []
-        for i in range(9):
+
+        # Create all 5 cards (inputs 0-4 only)
+        for i in range(5):
             card = InputCard(i)
             card.set_name(self._pad_names.get(i, "Unassigned"))
             card.clicked.connect(self._on_card_clicked)
-            row, col = divmod(i, 2)
-            grid.addWidget(card, row, col)
             self._cards.append(card)
-        grid.addWidget(QWidget(), 4, 1)
+
+        # Pad inputs 0-3 in 2x2 grid
+        grid.addWidget(self._cards[0], 0, 0)
+        grid.addWidget(self._cards[1], 0, 1)
+        grid.addWidget(self._cards[2], 1, 0)
+        grid.addWidget(self._cards[3], 1, 1)
+
         layout.addLayout(grid)
+
+        # Separator line between pads and hi-hat
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {COLOR_BORDER};")
+        layout.addWidget(sep)
+
+        # Hi-hat controller card — full width
+        hihat_grid = QGridLayout()
+        hihat_grid.setSpacing(6)
+        hihat_grid.addWidget(self._cards[4], 0, 0)
+        hihat_grid.addWidget(QWidget(), 0, 1)   # empty slot beside hi-hat
+        layout.addLayout(hihat_grid)
 
         layout.addStretch()
 
@@ -806,38 +835,6 @@ class PadConfigTab(QWidget):
         header_row.addStretch()
         layout.addLayout(header_row)
 
-        # Section B — zone selector
-        self._zone_row = QWidget()
-        zone_h = QHBoxLayout(self._zone_row)
-        zone_h.setContentsMargins(0, 0, 0, 0)
-        zone_h.setSpacing(4)
-        self._btn_head = QPushButton("HEAD")
-        self._btn_head.setCheckable(True)
-        self._btn_head.setChecked(True)
-        self._btn_head.setFixedWidth(80)
-        self._btn_rim  = QPushButton("RIM")
-        self._btn_rim.setCheckable(True)
-        self._btn_rim.setFixedWidth(80)
-        for b in (self._btn_head, self._btn_rim):
-            b.setStyleSheet(
-                f"QPushButton {{"
-                f"  background-color: {COLOR_BG_CARD};"
-                f"  color: {COLOR_TEXT_SECONDARY};"
-                f"  border: 1px solid {COLOR_BORDER};"
-                f"  border-radius: 4px; padding: 4px 8px;"
-                f"}}"
-                f"QPushButton:checked {{"
-                f"  background-color: {COLOR_ACCENT}; color: #fff;"
-                f"}}"
-            )
-        self._btn_head.clicked.connect(lambda: self._select_zone(ZONE_HEAD))
-        self._btn_rim.clicked.connect(lambda: self._select_zone(ZONE_RIM))
-        zone_h.addWidget(self._btn_head)
-        zone_h.addWidget(self._btn_rim)
-        zone_h.addStretch()
-        self._zone_row.hide()
-        layout.addWidget(self._zone_row)
-
         # Section C — Curve + Hit Log
         c_row = QHBoxLayout()
         c_row.setSpacing(10)
@@ -874,24 +871,42 @@ class PadConfigTab(QWidget):
         vl.addWidget(self._curve_desc)
 
         self._curve_widget = VelocityCurveWidget()
-        vl.addWidget(self._curve_widget)
+
+        curve_row = QHBoxLayout()
+        curve_row.setSpacing(4)
+        curve_row.setContentsMargins(0, 0, 0, 0)
+        curve_row.addWidget(self._curve_widget, stretch=1)
+
+        # Velocity bar — right-aligned inside the group box
+        vel_col = QWidget()
+        vcl = QVBoxLayout(vel_col)
+        vcl.setContentsMargins(0, 0, 0, 0)
+        vcl.setSpacing(2)
 
         self._vel_bar = QProgressBar()
         self._vel_bar.setRange(0, 127)
         self._vel_bar.setValue(0)
         self._vel_bar.setTextVisible(False)
         self._vel_bar.setOrientation(Qt.Orientation.Vertical)
-        self._vel_bar.setFixedHeight(80)
+        self._vel_bar.setFixedWidth(18)
         self._vel_bar.setStyleSheet(
-            f"QProgressBar {{ background: {COLOR_BG_INPUT}; border: 1px solid {COLOR_BORDER}; }}"
-            f"QProgressBar::chunk {{ background: {COLOR_ACCENT}; }}"
+            f"QProgressBar {{ background: {COLOR_BG_INPUT};"
+            f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; }}"
+            f"QProgressBar::chunk {{ background: {COLOR_ACCENT};"
+            f" border-radius: 2px; }}"
         )
-        vl.addWidget(self._vel_bar, alignment=Qt.AlignmentFlag.AlignHCenter)
+        vcl.addWidget(self._vel_bar, stretch=1)
 
         self._vel_lbl = QLabel("—")
         self._vel_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._vel_lbl.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY};")
-        vl.addWidget(self._vel_lbl)
+        self._vel_lbl.setFixedWidth(28)
+        self._vel_lbl.setStyleSheet(
+            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
+        )
+        vcl.addWidget(self._vel_lbl)
+
+        curve_row.addWidget(vel_col)
+        vl.addLayout(curve_row)
 
         return box
 
@@ -1039,9 +1054,15 @@ class PadConfigTab(QWidget):
 
     def _build_midi_panel(self) -> QWidget:
         w = QWidget()
-        grid = QGridLayout(w)
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
         grid.setSpacing(8)
         grid.setContentsMargins(8, 8, 8, 8)
+        grid.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         spin_style = (
             f"QSpinBox {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
@@ -1117,6 +1138,19 @@ class PadConfigTab(QWidget):
             self._lbl_cc_num, self._spin_midi_cc_num,
             self._lbl_cc_ch,  self._spin_midi_cc_ch,
         ]
+
+        outer.addWidget(grid_widget)
+        outer.addStretch()
+
+        self._midi_monitor = QLabel("—")
+        self._midi_monitor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._midi_monitor.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-size: {FONT_LABEL_SIZE}px;"
+            f" background: {COLOR_BG_CARD}; border: 1px solid {COLOR_BORDER};"
+            f" border-radius: 3px; padding: 4px 8px;"
+        )
+        self._midi_monitor.setFixedHeight(28)
+        outer.addWidget(self._midi_monitor)
 
         return w
 
@@ -1225,12 +1259,17 @@ class PadConfigTab(QWidget):
         self._configs = configs
         self._loaded  = True
 
-        for i, card in enumerate(self._cards):
+        for i in range(5):
             cfg       = configs.get(i, {})
             pad_type  = cfg.get("pad_type", 0)
             type_name = PAD_TYPE_NAMES.get(pad_type, "")
-            card.set_status(cfg, type_name)
-            card.set_reserved(cfg.get("_status", 0) == INPUT_RESERVED)
+            self._cards[i].set_status(cfg, type_name)
+            self._cards[i].set_reserved(cfg.get("_status", 0) == INPUT_RESERVED)
+
+        # Input 4 is always the hi-hat controller — lock its type
+        hihat_card = self._cards[_HIHAT_INPUT_ID]
+        hihat_card.set_reserved(False)
+        hihat_card.set_status({"_status": INPUT_ACTIVE}, "Hi-Hat Controller")
 
         if self._selected_id is not None:
             self._populate_detail(self._selected_id)
@@ -1287,6 +1326,12 @@ class PadConfigTab(QWidget):
         is_dual  = pad_type in _DUAL_ZONE_TYPES
         is_hihat = pad_type in _HIHAT_TYPES
 
+        # Input 4 is always hi-hat regardless of what the device has stored
+        if input_id == _HIHAT_INPUT_ID:
+            pad_type = PAD_TYPE_HIHAT_CC
+            is_dual  = False
+            is_hihat = True
+
         # Block all interactive widgets to prevent cascade writes during load
         for widget in self._all_editable_widgets():
             widget.blockSignals(True)
@@ -1300,6 +1345,14 @@ class PadConfigTab(QWidget):
             # Type combo
             type_idx = self._type_combo.findData(pad_type)
             self._type_combo.setCurrentIndex(max(0, type_idx))
+
+            # Input 4 is hardwired to hi-hat — lock type dropdown
+            is_hihat_input = (input_id == _HIHAT_INPUT_ID)
+            self._type_combo.setEnabled(not is_hihat_input)
+            if is_hihat_input:
+                hihat_idx = self._type_combo.findData(PAD_TYPE_HIHAT_CC)
+                if hihat_idx >= 0:
+                    self._type_combo.setCurrentIndex(hihat_idx)
 
             # Curve
             curve = cfg.get("velocity_curve", 0)
@@ -1342,8 +1395,9 @@ class PadConfigTab(QWidget):
         self._curve_widget.clear_hit()
 
         # Visibility
-        self._zone_row.setVisible(is_dual)
         self._update_zone_visibility(is_dual, is_hihat)
+
+        self._midi_monitor.setText("—")
 
     def _all_editable_widgets(self) -> list[QWidget]:
         return [
@@ -1357,11 +1411,32 @@ class PadConfigTab(QWidget):
         ]
 
     def _update_zone_visibility(self, is_dual: bool, is_hihat: bool) -> None:
+        # Rim sliders: always visible, disabled for single-zone pads
         for key in ("_rim_thresh", "_rim_sens"):
             col, slider = self._param_widgets[key]
-            col.setVisible(is_dual)
+            slider.setEnabled(is_dual)
+            lbl = self._slider_value_labels.get(key)
+            val_color    = COLOR_TEXT_PRIMARY if is_dual else COLOR_TEXT_DISABLED
+            border_color = COLOR_BORDER
+            bg_color     = COLOR_BG_INPUT if is_dual else COLOR_BG_DARK
+            if lbl:
+                lbl.setStyleSheet(
+                    f"color: {val_color}; font-size: {FONT_VALUE_SIZE}px;"
+                    f" background: {bg_color}; border: 1px solid {border_color};"
+                    f" border-radius: 3px; padding: 1px 4px;"
+                )
+            for widget in col.findChildren(QLabel):
+                if widget is not lbl:
+                    widget.setStyleSheet(
+                        f"color: {COLOR_TEXT_SECONDARY if is_dual else COLOR_TEXT_DISABLED};"
+                        f" font-size: {FONT_LABEL_SIZE}px;"
+                    )
+
+        # MIDI rim fields: hide for single-zone (these are in the MIDI panel)
         for widget in self._rim_midi_widgets:
             widget.setVisible(is_dual)
+
+        # MIDI CC fields: show for hi-hat types only
         for widget in self._hihat_midi_widgets:
             widget.setVisible(is_hihat)
 
@@ -1392,12 +1467,13 @@ class PadConfigTab(QWidget):
     def _on_type_changed(self, index: int) -> None:
         if self._selected_id is None:
             return
+        if self._selected_id == _HIHAT_INPUT_ID:
+            return   # type is locked for hi-hat input
         pad_type = self._type_combo.itemData(index)
         if pad_type is None:
             return
         is_dual  = pad_type in _DUAL_ZONE_TYPES
         is_hihat = pad_type in _HIHAT_TYPES
-        self._zone_row.setVisible(is_dual)
         self._update_zone_visibility(is_dual, is_hihat)
         msg = build_set_pad_type(self._selected_id, pad_type)
         self._enqueue_write(self._selected_id, "pad_type", msg, CAT_PAD, PAD_SET_TYPE)
@@ -1491,14 +1567,6 @@ class PadConfigTab(QWidget):
             self._save_btn.setStyleSheet("")
 
     # ------------------------------------------------------------------
-    # Zone selector
-    # ------------------------------------------------------------------
-
-    def _select_zone(self, zone: int) -> None:
-        self._btn_head.setChecked(zone == ZONE_HEAD)
-        self._btn_rim.setChecked(zone == ZONE_RIM)
-
-    # ------------------------------------------------------------------
     # Name change
     # ------------------------------------------------------------------
 
@@ -1515,19 +1583,28 @@ class PadConfigTab(QWidget):
 
     def _on_hit(self, input_id: int, zone: int,
                 raw_vel: int, midi_vel: int) -> None:
-        # Velocity bar shows post-curve MIDI output (what the DAW receives)
-        self._vel_bar.setValue(midi_vel)
-        self._vel_lbl.setText(str(midi_vel))
+        
+        is_selected = (self._selected_id == input_id)
+        self._hitlog.add_hit(raw_vel, zone, is_selected)
 
-        # Curve dot: X = raw input, Y = midi output
-        self._curve_widget.set_last_hit(raw_vel, midi_vel)
+        if is_selected:
+            self._vel_bar.setValue(midi_vel)
+            self._vel_lbl.setText(str(midi_vel))
+            self._curve_widget.set_last_hit(raw_vel, midi_vel)
 
-        if self._selected_id == input_id:
-            # Hit log shows raw sensor values
-            self._hitlog.add_hit(raw_vel, zone)
-        elif self._autotrack_btn.isChecked():
+            cfg        = self._configs.get(self._selected_id, {})
+            note       = cfg.get("midi_note", 0) if zone == ZONE_HEAD \
+                         else cfg.get("zone2_note", 0)
+            note_name  = gm_note_display(note)
+            ch         = cfg.get("midi_channel", 1) if zone == ZONE_HEAD \
+                         else cfg.get("zone2_channel", 1)
+            zone_label = "Head" if zone == ZONE_HEAD else "Rim"
+            self._midi_monitor.setText(
+                f"► {zone_label}  {note_name}  vel {midi_vel}  ch {ch}"
+            )
+
+        if not is_selected and self._autotrack_btn.isChecked():
             self._select_input(input_id)
-            self._hitlog.add_hit(raw_vel, zone)
 
     def _clear_hitlog(self) -> None:
         self._hitlog.clear()

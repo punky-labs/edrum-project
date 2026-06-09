@@ -28,24 +28,27 @@ from PyQt6.QtWidgets import (
 
 try:
     from ..protocol.sysex import (
-        DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD,
+        DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD, ZONE_RIM,
+        PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         build_message, parse_message,
     )
     from ..ui.theme import apply_dark_theme
     from .transport import EmulatorTransport
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
-        DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD,
+        DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG, ZONE_HEAD, ZONE_RIM,
+        PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
         build_message, parse_message,
     )
     from ui.theme import apply_dark_theme  # type: ignore[no-redef]
     from emulator.transport import EmulatorTransport  # type: ignore[no-redef]
 
-_APP_DIR       = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+_APP_DIR        = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _PAD_NAMES_PATH = os.path.join(_APP_DIR, "pad_names.json")
 
-_NUM_INPUTS = 9
-_COLS       = 3
+_NUM_INPUTS  = 9
+_COLS        = 3
+_DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 
 
 def _load_pad_names() -> dict[int, str]:
@@ -67,10 +70,11 @@ class EmulatorWindow(QWidget):
     def __init__(self, transport: EmulatorTransport,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._transport  = transport
-        self._pad_names  = _load_pad_names()
-        self._sliders:   dict[int, QSlider] = {}
-        self._vel_labels: dict[int, QLabel] = {}
+        self._transport   = transport
+        self._pad_names   = _load_pad_names()
+        self._sliders:    dict[int, QSlider] = {}
+        self._vel_labels: dict[int, QLabel]  = {}
+        self._rim_btns:   dict[int, QPushButton] = {}
 
         self.setWindowTitle("eDrum Emulator")
         apply_dark_theme(QApplication.instance())
@@ -98,11 +102,25 @@ class EmulatorWindow(QWidget):
             cell.setSpacing(4)
 
             name = self._pad_names.get(input_id, f"Input {input_id}")
-            btn  = QPushButton(name)
-            btn.setMinimumHeight(36)
-            btn.clicked.connect(lambda checked, i=input_id: self._on_hit(i))
-            cell.addWidget(btn)
 
+            # Head button
+            head_btn = QPushButton(name)
+            head_btn.setMinimumHeight(36)
+            head_btn.clicked.connect(
+                lambda checked, i=input_id: self._on_hit(i, ZONE_HEAD))
+            cell.addWidget(head_btn)
+
+            # Rim button — visible only for dual-zone pad types
+            rim_btn = QPushButton("Rim")
+            rim_btn.setMinimumHeight(28)
+            rim_btn.clicked.connect(
+                lambda checked, i=input_id: self._on_hit(i, ZONE_RIM))
+            is_dual = self._is_dual_zone(input_id)
+            rim_btn.setVisible(is_dual)
+            self._rim_btns[input_id] = rim_btn
+            cell.addWidget(rim_btn)
+
+            # Velocity slider
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(1, 127)
             slider.setValue(100)
@@ -130,24 +148,50 @@ class EmulatorWindow(QWidget):
         self.adjustSize()
 
     # ------------------------------------------------------------------
+    # Pad type helpers
+    # ------------------------------------------------------------------
+
+    def _is_dual_zone(self, input_id: int) -> bool:
+        """Return True if the emulator device has this input set to a dual-zone type."""
+        pad_type = self._transport._device._inputs.get(input_id, {}).get("pad_type", 0)
+        return pad_type in _DUAL_ZONE_TYPES
+
+    def refresh_pad_types(self) -> None:
+        """Update rim button visibility to match current device config.
+        Call this after a config refresh if pad types may have changed."""
+        for input_id, btn in self._rim_btns.items():
+            btn.setVisible(self._is_dual_zone(input_id))
+        self.adjustSize()
+
+    # ------------------------------------------------------------------
     # Hit injection
     # ------------------------------------------------------------------
 
-    def _on_hit(self, input_id: int) -> None:
-        vel  = self._sliders[input_id].value()
-        name = self._pad_names.get(input_id, f"Input {input_id}")
+    def _on_hit(self, input_id: int, zone: int) -> None:
+        vel      = self._sliders[input_id].value()
+        name     = self._pad_names.get(input_id, f"Input {input_id}")
 
-        # Build 05 03 hit event: [input_id, zone, raw_vel, midi_vel]
+        # Don't send rim hits for single-zone pads
+        if zone == ZONE_RIM and not self._is_dual_zone(input_id):
+            self._status_lbl.setText(
+                f"Rim blocked: {name} (input {input_id}) is not dual-zone"
+            )
+            return
+    
+        midi_vel = self._transport._device.apply_curve(input_id, vel)
+
         msg = build_message(DEV_HEAD, CAT_STATUS, STAT_HIT_DEBUG,
-                            [input_id, ZONE_HEAD, vel, vel])
+                            [input_id, zone, vel, midi_vel])
         parsed = parse_message(msg)
         if parsed is not None:
             self._transport._dispatch_to_listeners(parsed)
 
+        zone_name = "rim" if zone == ZONE_RIM else "head"
         self._status_lbl.setText(
-            f"Hit: {name} (input {input_id}) vel={vel}"
+            f"Hit: {name} (input {input_id}) {zone_name} vel={vel}"
         )
-        log.debug("Emulated hit: input=%d name='%s' vel=%d", input_id, name, vel)
+        log.debug("Emulated hit: input=%d zone=%s raw=%d midi=%d",
+                  input_id, zone_name, vel, midi_vel)
 
     # ------------------------------------------------------------------
     # Window lifecycle

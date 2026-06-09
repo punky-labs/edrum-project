@@ -174,9 +174,9 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
             uint8_t linked = g_inputs[id].linkedInput;
             uint8_t status;
             // Reserved: this input is the secondary of a hardware dual-zone pair
-            // (the primary holds padType 01 or 06)
+            // (the primary holds padType 01 or 05)
             if (linked < NUM_INPUTS &&
-                (g_inputs[linked].padType == 1 || g_inputs[linked].padType == 6)) {
+                (g_inputs[linked].padType == 1 || g_inputs[linked].padType == 5)) {
                 status = SYSEX_INPUT_RESERVED;
             } else if (g_inputs[id].padType != 0) {
                 status = SYSEX_INPUT_ACTIVE;

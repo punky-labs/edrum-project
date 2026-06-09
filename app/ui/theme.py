@@ -25,6 +25,7 @@ COLOR_BORDER         = "#3a3a3a"
 # Hit log
 COLOR_HIT_HEAD       = "#00aacc"
 COLOR_HIT_RIM        = "#cc6600"
+COLOR_HIT_OTHER      = "#555555"   # grey — crosstalk / other pad hits
 
 # Fonts
 FONT_LABEL_SIZE      = 9

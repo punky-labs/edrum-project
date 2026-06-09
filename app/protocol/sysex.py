@@ -71,22 +71,20 @@ PAD_SET_RIM_SENS   = 0x0E
 PAD_SET_RIM_THRESH = 0x0F
 
 # Pad type values
-PAD_TYPE_PIEZO      = 0x00
-PAD_TYPE_PIEZO_RIM  = 0x01
-PAD_TYPE_RIM_ONLY   = 0x02
-PAD_TYPE_HIHAT_CC   = 0x03
-PAD_TYPE_HIHAT_SW   = 0x04
-PAD_TYPE_BASS_DRUM  = 0x05
-PAD_TYPE_DUAL_PIEZO = 0x06
+PAD_TYPE_PIEZO        = 0x00   # Single piezo (head only)
+PAD_TYPE_PIEZO_RIM    = 0x01   # Piezo + switch (head + rim)
+PAD_TYPE_RIM_ONLY     = 0x02   # Switch only
+PAD_TYPE_HIHAT_CC     = 0x03   # Hi-hat continuous controller
+PAD_TYPE_HIHAT_SW     = 0x04   # Hi-hat open/close switch
+PAD_TYPE_DUAL_PIEZO   = 0x05   # Dual piezo (e.g. mesh head)
 
 PAD_TYPE_NAMES: dict[int, str] = {
-    PAD_TYPE_PIEZO:      "piezo",
-    PAD_TYPE_PIEZO_RIM:  "piezo+rim",
-    PAD_TYPE_RIM_ONLY:   "rim-only",
-    PAD_TYPE_HIHAT_CC:   "hihat-cc",
-    PAD_TYPE_HIHAT_SW:   "hihat-sw",
-    PAD_TYPE_BASS_DRUM:  "bass-drum",
-    PAD_TYPE_DUAL_PIEZO: "dual-piezo",
+    PAD_TYPE_PIEZO:      "Single Piezo",
+    PAD_TYPE_PIEZO_RIM:  "Piezo + Switch",
+    PAD_TYPE_RIM_ONLY:   "Switch Only",
+    PAD_TYPE_HIHAT_CC:   "Hi-Hat (Continuous)",
+    PAD_TYPE_HIHAT_SW:   "Hi-Hat (Switch)",
+    PAD_TYPE_DUAL_PIEZO: "Dual Piezo",
 }
 
 # Velocity curve values
