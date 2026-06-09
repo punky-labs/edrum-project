@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Optional
 
 log = logging.getLogger("edrum.main_window")
@@ -33,6 +34,13 @@ except ImportError:
     from ui.debug_tab import DebugTab                              # type: ignore[no-redef]
     from ui.theme import apply_dark_theme                          # type: ignore[no-redef]
 
+try:
+    from ..emulator.transport import EmulatorTransport
+    from ..emulator.window import EmulatorWindow
+except ImportError:
+    from emulator.transport import EmulatorTransport  # type: ignore[no-redef]
+    from emulator.window import EmulatorWindow        # type: ignore[no-redef]
+
 
 class _IdentifyWorker(QThread):
     finished = pyqtSignal(dict)
@@ -53,8 +61,14 @@ class _IdentifyWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self._transport            = DrumMidiTransport()
         self._identify_worker: Optional[_IdentifyWorker] = None
+        self._emulator_window: Optional[EmulatorWindow]  = None
+
+        # Transport — must exist before _setup_central() builds tabs
+        if "--emulator" in sys.argv:
+            self._transport: DrumMidiTransport | EmulatorTransport = EmulatorTransport()
+        else:
+            self._transport = DrumMidiTransport()
 
         apply_dark_theme(QApplication.instance())
 
@@ -66,6 +80,11 @@ class MainWindow(QMainWindow):
         self._setup_central()
         self._setup_status_bar()
         self._setup_shortcuts()
+
+        # Emulator window — created after UI so transport is fully wired
+        if isinstance(self._transport, EmulatorTransport):
+            self._emulator_window = EmulatorWindow(self._transport)
+            self._act_launch_emulator.setEnabled(True)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -104,6 +123,12 @@ class MainWindow(QMainWindow):
         self._act_show_debug.setCheckable(True)
         self._act_show_debug.triggered.connect(self._toggle_debug_tab)
         debug_menu.addAction(self._act_show_debug)
+
+        dev_menu = mb.addMenu("De&v")
+        self._act_launch_emulator = QAction("Launch &Emulator", self)
+        self._act_launch_emulator.setEnabled(False)
+        self._act_launch_emulator.triggered.connect(self._on_launch_emulator)
+        dev_menu.addAction(self._act_launch_emulator)
 
         help_menu = mb.addMenu("&Help")
         about_act = QAction("&About", self)
@@ -178,9 +203,16 @@ class MainWindow(QMainWindow):
     # Port management
     # ------------------------------------------------------------------
 
+    def _on_launch_emulator(self) -> None:
+        if self._emulator_window is not None:
+            self._emulator_window.show()
+
     def _refresh_ports(self) -> None:
         try:
-            ports = DrumMidiTransport.list_ports()
+            if isinstance(self._transport, EmulatorTransport):
+                ports = EmulatorTransport.list_ports()
+            else:
+                ports = DrumMidiTransport.list_ports()
         except Exception:
             return
 

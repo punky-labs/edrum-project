@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Optional
 
 log = logging.getLogger("edrum.pad_config")
 
 from PyQt6.QtCore import (
-    Qt, QThread, pyqtSignal, QObject, QSize,
+    Qt, QThread, pyqtSignal, QObject, QPoint, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -50,6 +51,11 @@ except ImportError:
     )
     from ui.pad_names import PAD_NAMES, load_pad_names, save_pad_names  # type: ignore[no-redef]
     from ui.write_worker import WriteCommand, WriteWorker  # type: ignore[no-redef]
+
+try:
+    from .asset_loader import load_pad_icon
+except ImportError:
+    from ui.asset_loader import load_pad_icon  # type: ignore[no-redef]
 
 try:
     from ..protocol.sysex import (
@@ -103,6 +109,8 @@ except ImportError:
 
 _DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 _HIHAT_TYPES     = {PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW}
+
+_ICON_SIZE = 56   # logical pixels for card icons
 
 _CURVE_DESCRIPTIONS = {
     "Natural":    "Even response — what you play is what you get",
@@ -212,12 +220,12 @@ class InputCard(QWidget):
         self._name      = "Unassigned"
         self._type_name = ""
 
-        self.setMinimumSize(CARD_MIN_WIDTH, CARD_MIN_HEIGHT)
+        self.setMinimumSize(CARD_MIN_WIDTH, CARD_MIN_HEIGHT + _ICON_SIZE + 4)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
 
         num_lbl = QLabel(str(input_id))
@@ -225,6 +233,11 @@ class InputCard(QWidget):
             f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
         )
         layout.addWidget(num_lbl, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._icon_lbl = QLabel()
+        self._icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon_lbl.setFixedSize(_ICON_SIZE, _ICON_SIZE)
+        layout.addWidget(self._icon_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._name_lbl = QLabel(self._name)
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -241,7 +254,17 @@ class InputCard(QWidget):
         )
         layout.addWidget(self._type_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        self._update_icon("Unassigned")
         self._refresh_style()
+
+    def _update_icon(self, pad_name: str) -> None:
+        """Load and display the icon for the given pad name."""
+        pixmap = load_pad_icon(pad_name, _ICON_SIZE)
+        if pixmap is not None:
+            self._icon_lbl.setPixmap(pixmap)
+        else:
+            self._icon_lbl.clear()
+            self._icon_lbl.setText("?")
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
@@ -258,6 +281,7 @@ class InputCard(QWidget):
     def set_name(self, name: str) -> None:
         self._name = name
         self._name_lbl.setText(name)
+        self._update_icon(name)
 
     def set_reserved(self, reserved: bool) -> None:
         self._reserved = reserved
@@ -296,6 +320,145 @@ class InputCard(QWidget):
         if not self._reserved:
             self.clicked.emit(self._input_id)
         super().mousePressEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# VelocityCurveWidget
+# ---------------------------------------------------------------------------
+
+class VelocityCurveWidget(QWidget):
+    """
+    Draws the velocity response curve for the currently selected
+    curve type. Shows a live dot at the last hit position.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._curve_type:   int = 0
+        self._last_vel_in:  int = -1
+        self._last_vel_out: int = -1
+
+        self.setMinimumHeight(120)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+
+    def set_curve(self, curve_type: int) -> None:
+        self._curve_type = curve_type
+        self.update()
+
+    def set_last_hit(self, raw_vel: int, midi_vel: int) -> None:
+        """
+        Place the hit dot at (raw_vel, midi_vel) on the curve.
+        raw_vel:  X position (pre-curve input, 0-127)
+        midi_vel: Y position (post-curve output, 0-127)
+        """
+        self._last_vel_in  = raw_vel
+        self._last_vel_out = midi_vel
+        self.update()
+
+    def clear_hit(self) -> None:
+        self._last_vel_in  = -1
+        self._last_vel_out = -1
+        self.update()
+
+    def _calc_output(self, x: int) -> float:
+        if x <= 0:
+            return 0.0
+        ct = self._curve_type
+
+        if ct == 0 or ct == 5:          # Natural or Custom (linear)
+            return float(x)
+        elif ct == 1:                   # Expressive (exp 1.02)
+            b = 1.02
+            return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+        elif ct == 2:                   # Sensitive (exp 1.05)
+            b = 1.05
+            return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+        elif ct == 3:                   # Punchy (log 0.98)
+            b = 0.98
+            denom = b**126 - 1
+            if abs(denom) < 1e-10:
+                return float(x)
+            return (126.0 / denom) * (b**(x - 1) - 1) + 1
+        elif ct == 4:                   # Aggressive (log 0.95)
+            b = 0.95
+            denom = b**126 - 1
+            if abs(denom) < 1e-10:
+                return float(x)
+            return (126.0 / denom) * (b**(x - 1) - 1) + 1
+        return float(x)
+
+    def _build_curve_points(self) -> list[tuple[float, float]]:
+        points = []
+        for x in range(128):
+            y = max(0.0, min(127.0, self._calc_output(x)))
+            points.append((x / 127.0, y / 127.0))
+        return points
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        margin_l = 8
+        margin_r = 8
+        margin_t = 8
+        margin_b = 8
+        plot_w = w - margin_l - margin_r
+        plot_h = h - margin_t - margin_b
+
+        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_DARK))
+
+        grid_pen = QPen(QColor(COLOR_BORDER))
+        grid_pen.setWidth(1)
+        painter.setPen(grid_pen)
+        for frac in (0.25, 0.5, 0.75):
+            gy = margin_t + int((1.0 - frac) * plot_h)
+            painter.drawLine(margin_l, gy, margin_l + plot_w, gy)
+            gx = margin_l + int(frac * plot_w)
+            painter.drawLine(gx, margin_t, gx, margin_t + plot_h)
+
+        border_pen = QPen(QColor(COLOR_BORDER))
+        border_pen.setWidth(1)
+        painter.setPen(border_pen)
+        painter.drawRect(margin_l, margin_t, plot_w, plot_h)
+
+        points = self._build_curve_points()
+
+        curve_pen = QPen(QColor(COLOR_ACCENT))
+        curve_pen.setWidth(2)
+        curve_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        curve_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(curve_pen)
+
+        def to_px(x_norm: float, y_norm: float) -> tuple[int, int]:
+            px = margin_l + int(x_norm * plot_w)
+            py = margin_t + int((1.0 - y_norm) * plot_h)
+            return px, py
+
+        poly_points = [QPoint(*to_px(xn, yn)) for xn, yn in points]
+        painter.drawPolyline(QPolygon(poly_points))
+
+        if self._last_vel_in >= 0:
+            x_norm = self._last_vel_in  / 127.0
+            y_norm = self._last_vel_out / 127.0   # actual firmware output value
+            dot_x, dot_y = to_px(x_norm, y_norm)
+
+            glow_pen = QPen(QColor(COLOR_ACCENT))
+            glow_pen.setWidth(1)
+            painter.setPen(glow_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(dot_x - 7, dot_y - 7, 14, 14)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(COLOR_ACCENT))
+            painter.drawEllipse(dot_x - 4, dot_y - 4, 8, 8)
+
+        painter.end()
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +637,7 @@ class _RefreshWorker(QThread):
 
 class PadConfigTab(QWidget):
     _configs_ready = pyqtSignal(dict)
-    _hit_received  = pyqtSignal(int, int, int)  # input_id, zone, velocity
+    _hit_received  = pyqtSignal(int, int, int, int)  # input_id, zone, raw_vel, midi_vel
     status_message = pyqtSignal(str, int)        # msg, timeout_ms
 
     def __init__(
@@ -709,6 +872,9 @@ class PadConfigTab(QWidget):
             f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
         )
         vl.addWidget(self._curve_desc)
+
+        self._curve_widget = VelocityCurveWidget()
+        vl.addWidget(self._curve_widget)
 
         self._vel_bar = QProgressBar()
         self._vel_bar.setRange(0, 127)
@@ -1027,10 +1193,13 @@ class PadConfigTab(QWidget):
         hi  = msg.get("cmd_high", 0)
         lo  = msg.get("cmd_low",  0)
         pay = msg.get("payload",  b"")
-        if hi == CAT_STATUS and lo == 0x03 and len(pay) >= 3:
+        if hi == CAT_STATUS and lo == 0x03 and len(pay) >= 4:
             try:
                 r = parse_hit_event(pay)
-                self._hit_received.emit(r["input_id"], r["zone"], r["velocity"])
+                self._hit_received.emit(
+                    r["input_id"], r["zone"],
+                    r["raw_velocity"], r["midi_velocity"]
+                )
             except Exception:
                 pass
 
@@ -1168,6 +1337,10 @@ class PadConfigTab(QWidget):
             for widget in self._all_editable_widgets():
                 widget.blockSignals(False)
 
+        # Update curve widget directly (signals were blocked during populate)
+        self._curve_widget.set_curve(cfg.get("velocity_curve", 0))
+        self._curve_widget.clear_hit()
+
         # Visibility
         self._zone_row.setVisible(is_dual)
         self._update_zone_visibility(is_dual, is_hihat)
@@ -1237,6 +1410,7 @@ class PadConfigTab(QWidget):
             return
         c_name = CURVE_NAMES.get(curve, "")
         self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
+        self._curve_widget.set_curve(curve)
         msg = build_set_velocity_curve(self._selected_id, curve)
         self._enqueue_write(self._selected_id, "velocity_curve", msg, CAT_PAD, PAD_SET_CURVE)
 
@@ -1339,17 +1513,24 @@ class PadConfigTab(QWidget):
     # Hit events
     # ------------------------------------------------------------------
 
-    def _on_hit(self, input_id: int, zone: int, velocity: int) -> None:
-        self._vel_bar.setValue(velocity)
-        self._vel_lbl.setText(str(velocity))
+    def _on_hit(self, input_id: int, zone: int,
+                raw_vel: int, midi_vel: int) -> None:
+        # Velocity bar shows post-curve MIDI output (what the DAW receives)
+        self._vel_bar.setValue(midi_vel)
+        self._vel_lbl.setText(str(midi_vel))
+
+        # Curve dot: X = raw input, Y = midi output
+        self._curve_widget.set_last_hit(raw_vel, midi_vel)
 
         if self._selected_id == input_id:
-            self._hitlog.add_hit(velocity, zone)
+            # Hit log shows raw sensor values
+            self._hitlog.add_hit(raw_vel, zone)
         elif self._autotrack_btn.isChecked():
             self._select_input(input_id)
-            self._hitlog.add_hit(velocity, zone)
+            self._hitlog.add_hit(raw_vel, zone)
 
     def _clear_hitlog(self) -> None:
         self._hitlog.clear()
         self._vel_bar.setValue(0)
         self._vel_lbl.setText("—")
+        self._curve_widget.clear_hit()

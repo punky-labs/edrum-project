@@ -135,7 +135,7 @@ These messages are always device → app direction.
 |---|---|---|---|
 | `05 01` | `[CMD_HIGH] [CMD_LOW] [STATUS]` | Command ack | Confirms receipt of any set command — `00`=ok, `01`=error |
 | `05 02` | `[INPUT_ID] [ERROR_CODE]` | Input error | Reports a hardware-level problem on an input |
-| `05 03` | `[INPUT_ID] [ZONE] [VELOCITY]` | Hit event (debug) | Live hit data for Python app velocity visualisation. ZONE: 00=head, 01=rim |
+| `05 03` | `[INPUT_ID] [ZONE] [RAW_VEL] [MIDI_VEL]` | Hit event (debug) | Live hit data. ZONE: 00=head, 01=rim. RAW_VEL: pre-curve sensor velocity (0-127, mapped from ADC). MIDI_VEL: post-curve MIDI output velocity (0-127). |
 | `05 04` | `[INPUT_ID] [VALUE_HI] [VALUE_LO]` | Raw ADC stream | Reserved — future raw ADC streaming for hardware calibration (not yet implemented) |
 
 ### Zone values (05 03)

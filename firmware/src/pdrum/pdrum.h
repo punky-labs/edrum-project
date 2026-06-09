@@ -42,6 +42,8 @@ public:
 
   int velocity;
   int velocityRim;
+  int velocityRaw;     // pre-curve head velocity (ADC units, 0-1023)
+  int velocityRimRaw;  // pre-curve rim velocity (ADC units, 0-1023)
   int velocityCup;
   byte pedalCC;
 

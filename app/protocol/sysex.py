@@ -604,14 +604,20 @@ def parse_input_error(payload: bytes) -> dict:
 
 
 def parse_hit_event(payload: bytes) -> dict:
-    """05 03 -> {input_id, zone, zone_name, velocity}"""
-    _require_len(payload, 3, "hit_event")
+    """
+    05 03 -> {input_id, zone, zone_name, raw_velocity, midi_velocity}
+
+    raw_velocity:  pre-curve sensor reading mapped to 0-127
+    midi_velocity: post-curve MIDI output velocity
+    """
+    _require_len(payload, 4, "hit_event")
     zone = payload[1]
     return {
-        "input_id":  payload[0],
-        "zone":      zone,
-        "zone_name": ZONE_NAMES.get(zone, f"0x{zone:02X}"),
-        "velocity":  payload[2],
+        "input_id":      payload[0],
+        "zone":          zone,
+        "zone_name":     ZONE_NAMES.get(zone, f"0x{zone:02X}"),
+        "raw_velocity":  payload[2],
+        "midi_velocity": payload[3],
     }
 
 
@@ -775,17 +781,18 @@ if __name__ == "__main__":
 
     # ── Hit event parser ──────────────────────────────────────────────────────
     print("\nHit event parser (05 03):")
-    result = parse_hit_event(bytes([5, ZONE_HEAD, 100]))
-    _check("input_id == 5",       result["input_id"]  == 5)
-    _check("zone == ZONE_HEAD",   result["zone"]       == ZONE_HEAD)
-    _check("zone_name == 'head'", result["zone_name"]  == "head")
-    _check("velocity == 100",     result["velocity"]   == 100)
+    result = parse_hit_event(bytes([5, ZONE_HEAD, 80, 100]))
+    _check("input_id == 5",           result["input_id"]      == 5)
+    _check("zone == ZONE_HEAD",       result["zone"]           == ZONE_HEAD)
+    _check("zone_name == 'head'",     result["zone_name"]      == "head")
+    _check("raw_velocity == 80",      result["raw_velocity"]   == 80)
+    _check("midi_velocity == 100",    result["midi_velocity"]  == 100)
 
-    result = parse_hit_event(bytes([3, ZONE_RIM, 64]))
-    _check("rim: input_id == 3",  result["input_id"]  == 3)
-    _check("rim: zone == RIM",    result["zone"]       == ZONE_RIM)
-    _check("rim: zone_name",      result["zone_name"]  == "rim")
-    _check("rim: velocity == 64", result["velocity"]   == 64)
+    result = parse_hit_event(bytes([3, ZONE_RIM, 50, 64]))
+    _check("rim: input_id == 3",      result["input_id"]      == 3)
+    _check("rim: zone == RIM",        result["zone"]           == ZONE_RIM)
+    _check("rim: raw_velocity == 50", result["raw_velocity"]   == 50)
+    _check("rim: midi_vel == 64",     result["midi_velocity"]  == 64)
 
     # ── Validation errors ─────────────────────────────────────────────────────
     print("\nValidation errors:")

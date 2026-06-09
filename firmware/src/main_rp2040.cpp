@@ -181,6 +181,18 @@ static void handleSerial(char cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: map raw ADC value to 0-127, mirroring pdrum.cpp curve() map()
+// ---------------------------------------------------------------------------
+
+static uint8_t rawToMidi(int raw, uint16_t threshold, uint16_t sens) {
+    if (raw <= (int)threshold) return 0;
+    long mapped = map((long)raw, (long)threshold, (long)sens, 1, 127);
+    if (mapped < 0)   return 0;
+    if (mapped > 127) return 127;
+    return (uint8_t)mapped;
+}
+
+// ---------------------------------------------------------------------------
 // Core 0 — USB MIDI, config, sensing, output
 // ---------------------------------------------------------------------------
 
@@ -251,27 +263,35 @@ void loop() {
         drums[i]->sensing(headVal, rimVal);
 
         if (drums[i]->hit) {
-            byte note = drums[i]->noteHead;
-            byte vel  = (byte)constrain(drums[i]->velocity, 0, 127);
-            byte ch   = g_inputs[i].midiChannel;
+            byte note    = drums[i]->noteHead;
+            byte vel     = (byte)constrain(drums[i]->velocity, 0, 127);
+            byte ch      = g_inputs[i].midiChannel;
+            byte raw_vel = rawToMidi(drums[i]->velocityRaw,
+                                     g_inputs[i].threshold,
+                                     g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            Serial.printf("[HIT] i=%d note=%d vel=%d ch=%d\n", i, note, vel, ch);
-            // 05 03 — hit event debug stream (head zone)
-            uint8_t dbg[3] = { (uint8_t)i, SYSEX_ZONE_HEAD, vel };
+            Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
+                          i, note, vel, raw_vel, ch);
+            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
+            uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_HEAD, raw_vel, vel };
             sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
-                              SYSEX_STAT_HIT_DEBUG, dbg, 3);
+                              SYSEX_STAT_HIT_DEBUG, dbg, 4);
         } else if (drums[i]->hitRim) {
-            byte note = drums[i]->noteRim;
-            byte vel  = (byte)constrain(drums[i]->velocityRim, 0, 127);
-            byte ch   = g_inputs[i].zone2MidiChannel;
+            byte note    = drums[i]->noteRim;
+            byte vel     = (byte)constrain(drums[i]->velocityRim, 0, 127);
+            byte ch      = g_inputs[i].zone2MidiChannel;
+            byte raw_vel = rawToMidi(drums[i]->velocityRimRaw,
+                                     g_inputs[i].rimThreshold,
+                                     g_inputs[i].rimSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            Serial.printf("[RIM] i=%d note=%d vel=%d ch=%d\n", i, note, vel, ch);
-            // 05 03 — hit event debug stream (rim zone)
-            uint8_t dbg[3] = { (uint8_t)i, SYSEX_ZONE_RIM, vel };
+            Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
+                          i, note, vel, raw_vel, ch);
+            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
+            uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
             sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
-                              SYSEX_STAT_HIT_DEBUG, dbg, 3);
+                              SYSEX_STAT_HIT_DEBUG, dbg, 4);
         }
     }
 }

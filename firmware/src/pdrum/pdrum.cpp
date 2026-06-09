@@ -43,6 +43,8 @@ PDrum::PDrum(byte pin1, byte pin2)
   curvetype = 0;          //6
   noteHead = 38;          //7
   noteRim = 39;           //8
+  velocityRaw    = 0;
+  velocityRimRaw = 0;
 }
 
 //
@@ -92,8 +94,12 @@ void PDrum::sensing(int piezoValue, int rimValue)
     //scan end
     if (millis() - time_hit >= scantime){
       time_end = millis();
-      velocity = curve(velocity, headThreshold, headSensitivity, curvetype);
-      velocityRim = curve(velocityRim, rimThreshold, rimSensitivity, curvetype);
+      // Capture raw values BEFORE curve is applied
+      velocityRaw    = velocity;
+      velocityRimRaw = velocityRim;
+      // Apply curve to get post-curve MIDI velocity
+      velocity    = curve(velocity,    headThreshold, headSensitivity, curvetype);
+      velocityRim = curve(velocityRim, rimThreshold,  rimSensitivity,  curvetype);
 
       // Edge
       if ((velocity - velocityRim < RimSensitivity) && (velocityRim > RimThreshold)) {
