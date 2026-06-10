@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Scratch / dev files
+test_poll.py
+app/scratch.txt
+app/test_midi.py
+
+# App logs (runtime artefacts)
+app/logs/
