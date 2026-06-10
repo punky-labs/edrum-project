@@ -64,11 +64,13 @@ def main() -> int:
     log.info("Platform: %s", platform.platform())
     log.info("App dir: %s", _APP_DIR)
 
+    DEV_MODE = "--dev" in sys.argv
+
     app = QApplication(sys.argv)
     app.setApplicationName("eDrum Config")
     app.setOrganizationName("eDrum")
 
-    window = MainWindow()
+    window = MainWindow(dev_mode=DEV_MODE)
     window.show()
 
     return app.exec()

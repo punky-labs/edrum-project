@@ -1,0 +1,127 @@
+{
+  "Drum": {
+    "Roland \u2014 PD-8": {
+      "pad_type": 1,
+      "threshold": 100,
+      "head_sensitivity": 800,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 50,
+      "rim_sensitivity": 400
+    },
+    "Roland \u2014 PDX-8": {
+      "pad_type": 1,
+      "threshold": 120,
+      "head_sensitivity": 850,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 60,
+      "rim_sensitivity": 450
+    },
+    "Roland \u2014 PD-85": {
+      "pad_type": 1,
+      "threshold": 110,
+      "head_sensitivity": 820,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 55,
+      "rim_sensitivity": 420
+    },
+    "Roland \u2014 KD-8": {
+      "pad_type": 0,
+      "threshold": 150,
+      "head_sensitivity": 900,
+      "scan_time": 15,
+      "mask_time": 50,
+      "rim_threshold": 0,
+      "rim_sensitivity": 0
+    },
+    "Alesis \u2014 Strike Pro mesh": {
+      "pad_type": 1,
+      "threshold": 100,
+      "head_sensitivity": 800,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 50,
+      "rim_sensitivity": 400
+    },
+    "Generic \u2014 Single Piezo": {
+      "pad_type": 0,
+      "threshold": 100,
+      "head_sensitivity": 800,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 0,
+      "rim_sensitivity": 0
+    },
+    "Generic \u2014 Dual Piezo": {
+      "pad_type": 1,
+      "threshold": 100,
+      "head_sensitivity": 800,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 50,
+      "rim_sensitivity": 400
+    }
+  },
+  "Cymbal": {
+    "Roland \u2014 CY-8": {
+      "pad_type": 2,
+      "threshold": 80,
+      "head_sensitivity": 750,
+      "scan_time": 8,
+      "mask_time": 40,
+      "rim_threshold": 40,
+      "rim_sensitivity": 350
+    },
+    "Roland \u2014 CY-12": {
+      "pad_type": 2,
+      "threshold": 80,
+      "head_sensitivity": 750,
+      "scan_time": 8,
+      "mask_time": 40,
+      "rim_threshold": 40,
+      "rim_sensitivity": 350
+    },
+    "Roland \u2014 CY-13R": {
+      "pad_type": 2,
+      "threshold": 75,
+      "head_sensitivity": 730,
+      "scan_time": 8,
+      "mask_time": 40,
+      "rim_threshold": 38,
+      "rim_sensitivity": 340
+    },
+    "Roland \u2014 CY-14C": {
+      "pad_type": 2,
+      "threshold": 75,
+      "head_sensitivity": 730,
+      "scan_time": 8,
+      "mask_time": 40,
+      "rim_threshold": 38,
+      "rim_sensitivity": 340
+    },
+    "Generic \u2014 Dual Cymbal": {
+      "pad_type": 2,
+      "threshold": 80,
+      "head_sensitivity": 750,
+      "scan_time": 8,
+      "mask_time": 40,
+      "rim_threshold": 40,
+      "rim_sensitivity": 350
+    }
+  },
+  "Other": {
+    "Generic \u2014 Single Piezo (other)": {
+      "pad_type": 0,
+      "threshold": 100,
+      "head_sensitivity": 800,
+      "scan_time": 10,
+      "mask_time": 30,
+      "rim_threshold": 0,
+      "rim_sensitivity": 0
+    }
+  },
+  "My Presets": {
+  }
+}

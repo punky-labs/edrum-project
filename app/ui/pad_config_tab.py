@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QProgressBar,
     QPushButton,
@@ -109,6 +110,23 @@ try:
     from ..transport.midi import DrumMidiTransport
 except ImportError:
     from transport.midi import DrumMidiTransport  # type: ignore[no-redef]
+
+try:
+    from .presets import (
+        CATEGORIES as PRESET_CATEGORIES,
+        load_presets, get_category_models, get_preset, save_user_preset,
+    )
+except ImportError:
+    from ui.presets import (  # type: ignore[no-redef]
+        CATEGORIES as PRESET_CATEGORIES,
+        load_presets, get_category_models, get_preset, save_user_preset,
+    )
+
+try:
+    import qtawesome as qta
+    _QTA = True
+except ImportError:
+    _QTA = False
 
 _DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 _HIHAT_TYPES     = {PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW}
@@ -237,7 +255,7 @@ class InputCard(QWidget):
 
         num_lbl = QLabel(str(input_id))
         num_lbl.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
+            f"color: {COLOR_TEXT_PRIMARY}; font-size: 13px; font-weight: bold;"
         )
         layout.addWidget(num_lbl, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -253,13 +271,6 @@ class InputCard(QWidget):
         f.setPointSize(FONT_VALUE_SIZE)
         self._name_lbl.setFont(f)
         layout.addWidget(self._name_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self._type_lbl = QLabel("")
-        self._type_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._type_lbl.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
-        )
-        layout.addWidget(self._type_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._update_icon("Unassigned")
         self._refresh_style()
@@ -282,7 +293,6 @@ class InputCard(QWidget):
             status = pad_cfg.get("_status", 0)
             self._reserved = (status == INPUT_RESERVED)
         self._type_name = type_name
-        self._type_lbl.setText(type_name)
         self._refresh_style()
 
     def set_name(self, name: str) -> None:
@@ -671,6 +681,7 @@ class PadConfigTab(QWidget):
         self._configs_ready.connect(self._on_configs_ready)
         self._hit_received.connect(self._on_hit)
 
+        self._preset_data: dict = load_presets()
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -770,29 +781,14 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header row
+        # Loading indicator — spinner shown during refresh
         header = QHBoxLayout()
-        header.setContentsMargins(12, 8, 12, 8)
+        header.setContentsMargins(12, 4, 12, 4)
         header.addStretch()
-
         self._loading_lbl = QLabel("⟳")
         self._loading_lbl.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 14px;")
         self._loading_lbl.hide()
         header.addWidget(self._loading_lbl)
-
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedWidth(70)
-        refresh_btn.clicked.connect(self._start_refresh)
-        header.addWidget(refresh_btn)
-
-        header.addSpacing(8)
-
-        self._save_btn = QPushButton("Save to Flash")
-        self._save_btn.setFixedWidth(110)
-        self._save_btn.clicked.connect(self._enqueue_save_to_flash)
-        self._save_btn.setEnabled(False)
-        header.addWidget(self._save_btn)
-
         layout.addLayout(header)
 
         # Stacked: placeholder vs detail
@@ -836,6 +832,35 @@ class PadConfigTab(QWidget):
         header_row.addWidget(self._type_combo)
         header_row.addStretch()
         layout.addLayout(header_row)
+
+        # Section B — Preset selector
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset:"))
+        self._preset_cat_combo = QComboBox()
+        self._preset_cat_combo.addItems(PRESET_CATEGORIES)
+        preset_row.addWidget(self._preset_cat_combo)
+        self._preset_model_combo = QComboBox()
+        self._preset_model_combo.setMinimumWidth(200)
+        preset_row.addWidget(self._preset_model_combo)
+        self._preset_apply_btn = QPushButton(" Apply")
+        self._preset_apply_btn.setFixedWidth(80)
+        if _QTA:
+            self._preset_apply_btn.setIcon(qta.icon('fa5s.check', color='#e0e0e0'))
+        preset_row.addWidget(self._preset_apply_btn)
+        self._preset_save_btn = QPushButton(" Save…")
+        self._preset_save_btn.setFixedWidth(90)
+        if _QTA:
+            self._preset_save_btn.setIcon(qta.icon('fa5s.bookmark', color='#e0e0e0'))
+        preset_row.addWidget(self._preset_save_btn)
+        preset_row.addStretch()
+        layout.addLayout(preset_row)
+
+        self._preset_cat_combo.currentTextChanged.connect(self._on_preset_cat_changed)
+        self._preset_apply_btn.clicked.connect(self._on_preset_apply)
+        self._preset_save_btn.clicked.connect(self._on_preset_save)
+
+        # Initialise model combo for default category
+        self._on_preset_cat_changed(PRESET_CATEGORIES[0])
 
         # Section C — Curve + Hit Log
         c_row = QHBoxLayout()
@@ -919,9 +944,11 @@ class PadConfigTab(QWidget):
 
         hdr = QHBoxLayout()
         hdr.addStretch()
-        clear_btn = QPushButton("Clear")
-        clear_btn.setFixedWidth(50)
+        clear_btn = QPushButton(" Clear")
+        clear_btn.setFixedWidth(70)
         clear_btn.clicked.connect(self._clear_hitlog)
+        if _QTA:
+            clear_btn.setIcon(qta.icon('fa5s.trash-alt', color='#888888'))
         hdr.addWidget(clear_btn)
         vl.addLayout(hdr)
 
@@ -1147,14 +1174,97 @@ class PadConfigTab(QWidget):
         self._midi_monitor = QLabel("—")
         self._midi_monitor.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._midi_monitor.setStyleSheet(
-            f"color: {COLOR_ACCENT}; font-size: {FONT_LABEL_SIZE}px;"
+            f"color: {COLOR_ACCENT}; font-size: 13px; font-weight: bold;"
             f" background: {COLOR_BG_CARD}; border: 1px solid {COLOR_BORDER};"
             f" border-radius: 3px; padding: 4px 8px;"
         )
-        self._midi_monitor.setFixedHeight(28)
+        self._midi_monitor.setFixedHeight(36)
         outer.addWidget(self._midi_monitor)
 
         return w
+
+    # ------------------------------------------------------------------
+    # Preset selector handlers
+    # ------------------------------------------------------------------
+
+    def _on_preset_cat_changed(self, category: str) -> None:
+        models = get_category_models(self._preset_data, category)
+        self._preset_model_combo.blockSignals(True)
+        self._preset_model_combo.clear()
+        if models:
+            self._preset_model_combo.addItems(models)
+            self._preset_apply_btn.setEnabled(True)
+        else:
+            self._preset_model_combo.addItem("(no presets)")
+            self._preset_apply_btn.setEnabled(False)
+        self._preset_model_combo.blockSignals(False)
+
+    def _on_preset_apply(self) -> None:
+        category = self._preset_cat_combo.currentText()
+        model    = self._preset_model_combo.currentText()
+        if not model or model == "(no presets)":
+            return
+        preset = get_preset(self._preset_data, category, model)
+        if preset is None:
+            return
+
+        pad_type = preset.get("pad_type", 0)
+
+        for widget in self._all_editable_widgets():
+            widget.blockSignals(True)
+        try:
+            self._set_slider("_thresh",     preset.get("threshold", 0))
+            self._set_slider("_sens",       preset.get("head_sensitivity", 0))
+            self._set_slider("_scan",       preset.get("scan_time", 0))
+            self._set_slider("_mask",       preset.get("mask_time", 0))
+            self._set_slider("_rim_thresh", preset.get("rim_threshold", 0))
+            self._set_slider("_rim_sens",   preset.get("rim_sensitivity", 0))
+
+            type_idx = self._type_combo.findData(pad_type)
+            if type_idx >= 0:
+                self._type_combo.setCurrentIndex(type_idx)
+        finally:
+            for widget in self._all_editable_widgets():
+                widget.blockSignals(False)
+
+        is_dual  = pad_type in _DUAL_ZONE_TYPES
+        is_hihat = pad_type in _HIHAT_TYPES
+        self._update_zone_visibility(is_dual, is_hihat)
+        self.status_message.emit(
+            "Preset applied — review settings and Save to Flash to write.", 5000
+        )
+
+    def _on_preset_save(self) -> None:
+        name, ok = QInputDialog.getText(self, "Save Preset", "Enter preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        values = {
+            "pad_type":         self._type_combo.currentData(),
+            "threshold":        self._slider_thresh.value(),
+            "head_sensitivity": self._slider_sens.value(),
+            "scan_time":        self._slider_scan.value(),
+            "mask_time":        self._slider_mask.value(),
+            "rim_threshold":    self._slider_rim_thresh.value(),
+            "rim_sensitivity":  self._slider_rim_sens.value(),
+        }
+        save_user_preset(name, values)
+        self._preset_data = load_presets()
+
+        self._preset_cat_combo.blockSignals(True)
+        idx = self._preset_cat_combo.findText("My Presets")
+        if idx >= 0:
+            self._preset_cat_combo.setCurrentIndex(idx)
+        self._preset_cat_combo.blockSignals(False)
+
+        self._on_preset_cat_changed("My Presets")
+
+        model_idx = self._preset_model_combo.findText(name)
+        if model_idx >= 0:
+            self._preset_model_combo.setCurrentIndex(model_idx)
+
+        self.status_message.emit(f"Preset '{name}' saved.", 3000)
 
     @staticmethod
     def _group_style() -> str:
@@ -1195,8 +1305,8 @@ class PadConfigTab(QWidget):
         self._writer.signals.write_ok.connect(self._on_write_ok)
         self._writer.signals.write_failed.connect(self._on_write_failed)
         self._writer.start()
-        self._save_btn.setEnabled(True)
-        self._update_save_button_style()
+        # Register hit listener immediately on connect — don't wait for tab switch
+        self._transport.add_listener("pad_config", self._on_sysex)
         if self.isVisible():
             self._start_refresh()
 
@@ -1211,8 +1321,6 @@ class PadConfigTab(QWidget):
         self._stack.setCurrentIndex(0)
         self._loaded = False
         self._dirty  = False
-        self._save_btn.setEnabled(False)
-        self._update_save_button_style()
 
     def set_active(self, active: bool) -> None:
         self._active_tab = active
@@ -1553,20 +1661,6 @@ class PadConfigTab(QWidget):
         if self._dirty == dirty:
             return
         self._dirty = dirty
-        self._update_save_button_style()
-
-    def _update_save_button_style(self) -> None:
-        if self._dirty:
-            self._save_btn.setStyleSheet(
-                f"QPushButton {{"
-                f"  background-color: {COLOR_BG_CARD};"
-                f"  color: {COLOR_WARNING};"
-                f"  border: 2px solid {COLOR_WARNING};"
-                f"  border-radius: 4px; padding: 4px 8px; font-weight: bold;"
-                f"}}"
-            )
-        else:
-            self._save_btn.setStyleSheet("")
 
     # ------------------------------------------------------------------
     # Name change

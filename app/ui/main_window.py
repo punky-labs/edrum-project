@@ -22,16 +22,24 @@ from PyQt6.QtWidgets import (
 )
 
 try:
+    import qtawesome as qta
+    _QTA = True
+except ImportError:
+    _QTA = False
+
+try:
     from ..transport.midi import DrumMidiTransport, request_identify
     from .connection_widget import ConnectionWidget
     from .pad_config_tab import PadConfigTab
     from .debug_tab import DebugTab
+    from .presets_tab import PresetsTab
     from .theme import apply_dark_theme
 except ImportError:
     from transport.midi import DrumMidiTransport, request_identify  # type: ignore[no-redef]
     from ui.connection_widget import ConnectionWidget               # type: ignore[no-redef]
     from ui.pad_config_tab import PadConfigTab                     # type: ignore[no-redef]
     from ui.debug_tab import DebugTab                              # type: ignore[no-redef]
+    from ui.presets_tab import PresetsTab                          # type: ignore[no-redef]
     from ui.theme import apply_dark_theme                          # type: ignore[no-redef]
 
 try:
@@ -59,8 +67,9 @@ class _IdentifyWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, dev_mode: bool = False) -> None:
         super().__init__()
+        self._dev_mode = dev_mode
         self._identify_worker: Optional[_IdentifyWorker] = None
         self._emulator_window: Optional[EmulatorWindow]  = None
 
@@ -117,12 +126,13 @@ class MainWindow(QMainWindow):
         self._act_identify.triggered.connect(self._on_identify)
         dev_menu.addAction(self._act_identify)
 
-        debug_menu = mb.addMenu("&Debug")
-        self._act_show_debug = QAction("Show &Debug Tab", self)
-        #self._act_show_debug.setShortcut("Ctrl+D")
-        self._act_show_debug.setCheckable(True)
-        self._act_show_debug.triggered.connect(self._toggle_debug_tab)
-        debug_menu.addAction(self._act_show_debug)
+        self._act_show_debug: Optional[QAction] = None
+        if self._dev_mode:
+            debug_menu = mb.addMenu("&Debug")
+            self._act_show_debug = QAction("Show &Debug Tab", self)
+            self._act_show_debug.setCheckable(True)
+            self._act_show_debug.triggered.connect(self._toggle_debug_tab)
+            debug_menu.addAction(self._act_show_debug)
 
         dev_menu = mb.addMenu("De&v")
         self._act_launch_emulator = QAction("Launch &Emulator", self)
@@ -150,18 +160,21 @@ class MainWindow(QMainWindow):
         refresh_btn.setFixedWidth(28)
         refresh_btn.setToolTip("Refresh MIDI ports")
         refresh_btn.clicked.connect(self._refresh_ports)
+        if _QTA:
+            refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#888888'))
+            refresh_btn.setText("")
         tb.addWidget(refresh_btn)
 
         tb.addSeparator()
 
-        self._btn_connect = QPushButton("Connect")
-        self._btn_connect.clicked.connect(self._on_connect)
-        tb.addWidget(self._btn_connect)
-
-        self._btn_disconnect = QPushButton("Disconnect")
-        self._btn_disconnect.setEnabled(False)
-        self._btn_disconnect.clicked.connect(self._on_disconnect)
-        tb.addWidget(self._btn_disconnect)
+        # Single toggle button — Connect when disconnected, Disconnect when connected
+        self._btn_connect_toggle = QPushButton("Connect")
+        self._btn_connect_toggle.setFixedWidth(130)
+        self._btn_connect_toggle.clicked.connect(self._on_connect_toggle)
+        self._btn_connect_toggle.setToolTip("Connect to selected MIDI port")
+        if _QTA:
+            self._btn_connect_toggle.setIcon(qta.icon('fa5s.plug', color='#e0e0e0'))
+        tb.addWidget(self._btn_connect_toggle)
 
         tb.addSeparator()
 
@@ -170,6 +183,26 @@ class MainWindow(QMainWindow):
         self._status_dot.setToolTip("Not connected")
         tb.addWidget(self._status_dot)
 
+        tb.addSeparator()
+
+        self._btn_refresh = QPushButton(" Refresh")
+        self._btn_refresh.setFixedWidth(100)
+        self._btn_refresh.setEnabled(False)
+        self._btn_refresh.setToolTip("Re-read all pad settings from device")
+        self._btn_refresh.clicked.connect(self._on_toolbar_refresh)
+        if _QTA:
+            self._btn_refresh.setIcon(qta.icon('fa5s.sync', color='#e0e0e0'))
+        tb.addWidget(self._btn_refresh)
+
+        self._btn_save_flash = QPushButton(" Flash")
+        self._btn_save_flash.setFixedWidth(90)
+        self._btn_save_flash.setEnabled(False)
+        self._btn_save_flash.setToolTip("Write current settings to device flash")
+        self._btn_save_flash.clicked.connect(self._on_toolbar_save_flash)
+        if _QTA:
+            self._btn_save_flash.setIcon(qta.icon('fa5s.save', color='#e0e0e0'))
+        tb.addWidget(self._btn_save_flash)
+
         self._refresh_ports()
 
     def _setup_central(self) -> None:
@@ -177,18 +210,24 @@ class MainWindow(QMainWindow):
         self._debug_tab      = DebugTab()
 
         tabs = QTabWidget()
-        tabs.addTab(self._pad_config_tab, "Pad Config")
-        tabs.addTab(QWidget(),            "MIDI Mapping")
-        tabs.addTab(QWidget(),            "Presets")
-        tabs.addTab(self._debug_tab,      "Debug")
+        tabs.addTab(self._pad_config_tab, "Pad Config")   # always 0
+
+        self._PAD_CONFIG_IDX    = 0
+        self._PRESETS_EDITOR_IDX = -1
+        self._DEBUG_IDX          = -1
+
+        if self._dev_mode:
+            self._presets_editor_tab = PresetsTab()
+            tabs.addTab(self._presets_editor_tab, "Presets (Editor)")  # 2
+            tabs.addTab(self._debug_tab,           "Debug")             # 3
+            self._PRESETS_EDITOR_IDX = 2
+            self._DEBUG_IDX          = 3
+        # User mode: no Presets editor, no Debug tab — clean minimal UI
 
         tabs.currentChanged.connect(self._on_tab_changed)
         self._pad_config_tab.status_message.connect(self.show_status)
         self._tabs = tabs
         self.setCentralWidget(tabs)
-
-        self._PAD_CONFIG_IDX = 0
-        self._DEBUG_IDX      = 3
 
     def _setup_status_bar(self) -> None:
         self._conn_widget = ConnectionWidget()
@@ -196,8 +235,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def _setup_shortcuts(self) -> None:
-        sc = QShortcut(QKeySequence("Ctrl+D"), self)
-        sc.activated.connect(self._toggle_debug_tab)
+        if self._dev_mode:
+            sc = QShortcut(QKeySequence("Ctrl+D"), self)
+            sc.activated.connect(self._toggle_debug_tab)
 
     # ------------------------------------------------------------------
     # Port management
@@ -246,13 +286,28 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         self._pad_config_tab.set_active(index == self._PAD_CONFIG_IDX)
-        self._act_show_debug.setChecked(index == self._DEBUG_IDX)
+        if self._act_show_debug is not None:
+            self._act_show_debug.setChecked(index == self._DEBUG_IDX)
 
     def _toggle_debug_tab(self) -> None:
+        if not self._dev_mode:
+            return
         if self._tabs.currentIndex() == self._DEBUG_IDX:
             self._tabs.setCurrentIndex(self._PAD_CONFIG_IDX)
         else:
             self._tabs.setCurrentIndex(self._DEBUG_IDX)
+
+    def _on_connect_toggle(self) -> None:
+        if self._transport.is_connected():
+            self._on_disconnect()
+        else:
+            self._on_connect()
+
+    def _on_toolbar_refresh(self) -> None:
+        self._pad_config_tab._start_refresh()
+
+    def _on_toolbar_save_flash(self) -> None:
+        self._pad_config_tab._enqueue_save_to_flash()
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -303,8 +358,25 @@ class MainWindow(QMainWindow):
 
     def _set_connected_ui(self, port_name: str) -> None:
         log.info("Connected to '%s'", port_name)
-        self._btn_connect.setEnabled(False)
-        self._btn_disconnect.setEnabled(True)
+        self._btn_connect_toggle.setText("Disconnect")
+        self._btn_connect_toggle.setToolTip(f"Disconnect from {port_name}")
+        if _QTA:
+            self._btn_connect_toggle.setIcon(qta.icon('fa5s.unlink', color='#2ecc71'))
+        self._btn_connect_toggle.setStyleSheet(
+            "QPushButton {"
+            f"  background-color: #1a3a2a;"
+            f"  color: #2ecc71;"
+            f"  border: 1px solid #2ecc71;"
+            "  border-radius: 3px; padding: 4px 8px;"
+            "}"
+            "QPushButton:hover {"
+            f"  background-color: #3a1a1a;"
+            f"  color: #e74c3c;"
+            f"  border: 1px solid #e74c3c;"
+            "}"
+        )
+        self._btn_refresh.setEnabled(True)
+        self._btn_save_flash.setEnabled(True)
         self._act_connect.setEnabled(False)
         self._act_disconnect.setEnabled(True)
         self._act_identify.setEnabled(True)
@@ -315,8 +387,13 @@ class MainWindow(QMainWindow):
 
     def _set_disconnected_ui(self) -> None:
         log.info("Disconnected")
-        self._btn_connect.setEnabled(True)
-        self._btn_disconnect.setEnabled(False)
+        self._btn_connect_toggle.setText("Connect")
+        self._btn_connect_toggle.setToolTip("Connect to selected MIDI port")
+        self._btn_connect_toggle.setStyleSheet("")
+        if _QTA:
+            self._btn_connect_toggle.setIcon(qta.icon('fa5s.plug', color='#e0e0e0'))
+        self._btn_refresh.setEnabled(False)
+        self._btn_save_flash.setEnabled(False)
         self._act_connect.setEnabled(True)
         self._act_disconnect.setEnabled(False)
         self._act_identify.setEnabled(False)
@@ -386,4 +463,9 @@ class MainWindow(QMainWindow):
             self._identify_worker.wait(3000)
         if self._transport.is_connected():
             self._transport.disconnect()
+        # Close emulator window if open — prevents process hanging on exit
+        if self._emulator_window is not None:
+            self._emulator_window.hide()
+            self._emulator_window.deleteLater()
+            self._emulator_window = None
         event.accept()

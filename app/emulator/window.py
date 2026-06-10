@@ -200,5 +200,12 @@ class EmulatorWindow(QWidget):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        event.ignore()
-        self.hide()
+        # Hide rather than destroy when user closes the window directly,
+        # so it can be re-opened from the Dev menu. The main window calls
+        # close() explicitly on shutdown which will also reach here, but
+        # by that point Qt is tearing down and accept() is correct.
+        if self.isVisible():
+            event.ignore()
+            self.hide()
+        else:
+            event.accept()

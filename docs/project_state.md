@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-09
+Last updated: 2026-06-10 (afternoon)
 
 ## Hardware
 - Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
@@ -44,9 +44,26 @@ Last updated: 2026-06-09
 - Vertical sliders for all 7 trigger settings (rim sliders greyed for
   single-zone pads)
 - GM percussion dropdowns for MIDI note selection
-- MIDI monitor strip showing last hit note/velocity/channel
-- Dark theme, drum kit icons (app/assets/pads/ 1024×1024 PNG)
+- MIDI monitor strip showing last hit note/velocity/channel (13px bold)
+- Dark theme; pad icons planned overhaul to linework/SVG style (TE-inspired)
 - Pad names persist locally (app/pad_names.json)
+- Autotrack button functional — pad selection follows incoming hits
+- Presets system: category→model two-dropdown selector inline with
+  Name/Type; Apply populates UI only (no device write); Save Current…
+  saves to My Presets in app/presets.json
+- Dev mode: launch with --dev flag; enables Debug tab, Presets Editor tab,
+  manufacturer preset editing; user mode shows only Pad Config tab
+- QtAwesome icons on toolbar and key buttons (fa5s family)
+- Toolbar: single Connect/Disconnect toggle button with green/red tint;
+  Refresh and Save to Flash moved to toolbar (enabled only when connected)
+- Input cards: bold numbered inputs, pad name only — type label removed
+  (left panel = "My Kit" view; type detail lives in right panel only)
+- MIDI Mapping top-level tab removed; MIDI assignment lives in per-pad
+  detail panel
+- Future: single-tab QTabWidget in user mode is slightly redundant —
+  consider removing tab chrome entirely as a future architecture task
+- Bug fixes: hit log listener registers on connect (not tab switch);
+  emulator window closes cleanly on main window close
 
 ## Serial Debug Commands (firmware)
 - h — print help + build number
@@ -58,15 +75,23 @@ Last updated: 2026-06-09
 - r — reboot to bootloader (UF2 upload mode)
 
 ## Pending — Next Sessions
+- **pdrum library review/rewrite**: biggest blocker for playable pads;
+  known gaps: rim detection (hardcoded `else if (1)`), dead choke code,
+  unused HelloDrum legacy members; no watchdog timer in firmware
 - **DSP tuning**: dial in threshold/sensitivity/mask per pad type;
-  validate rim detection on PD-7
+  validate rim detection on PD-7; requires hardware session
 - **Test all 4 jacks**: confirm consistent behaviour across jacks
 - **Hi-hat firmware**: A0 analog read, CC output, open/close thresholds,
-  min/max calibration
-- **Presets tab**: save/load named configurations
-- **MIDI Mapping tab**: per-input note/channel assignment UI
+  min/max calibration (FSR-based custom controller)
 - **curves.py**: shared curve math module (VelocityCurveWidget + emulator)
 - **Move project out of Dropbox**: clone to C:\Dev\ to avoid file lock issues
+- **Watchdog timer**: add RP2040 hardware watchdog to prevent mid-session lockups
+- **Error handling hardening**: Windows MIDI/Serial crash scenarios,
+  graceful recovery from flash write interruption, factory reset via header pin button
+- **Pad icon overhaul**: replace photographic PNG icons with linework SVGs;
+  single stroke weight, accent-colour tinting for selected state
+- **Tab chrome**: consider removing QTabWidget in user mode (single tab
+  is redundant); replace with direct layout
 
 ## Protocol
 - SysEx v0.2, manufacturer ID 00 7D
@@ -96,6 +121,17 @@ Last updated: 2026-06-09
 - Jack 2: note=42 (hi-hat closed), z2=46 (hi-hat open)
 - Jack 3: note=51 (ride), z2=53 (ride bell)
 - Jack 4: note=44 (hi-hat pedal CC), stubbed
+
+## pdrum Library — Known Gaps (next major task)
+- Rim detection logic: `else if (1)` is a hardcoded placeholder — always
+  fires as head hit regardless of rim signal
+- Choke detection: `else if (0)` — dead code, never reached
+- No watchdog timer integration
+- Unused HelloDrum legacy members: exTCRT, exFSR, pedalCC, hi-hat flags,
+  padtype[]/instrumentName[] arrays defined but never used by class
+- curve() uses pow() on every hit — candidate for lookup table
+- HelloDrum reference: github.com/RyoKosaka/HelloDrum-arduino-Library
+  (v0.7.7) — useful for known-good DSP parameter values per pad model
 
 ## Known Issues / Gotchas
 - Windows WinMM: rtmidi callback silently drops SysEx — use polling
