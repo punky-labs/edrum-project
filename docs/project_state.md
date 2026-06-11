@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-11 (session 2)
+Last updated: 2026-06-11 (session 3)
 
 ## Hardware
 - Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
@@ -87,6 +87,15 @@ Last updated: 2026-06-11 (session 2)
 - Clicking populates right panel stack page 2 (hi-hat placeholder for now)
 - Selecting a pad card unchecks the hi-hat button and vice versa
 - _refresh_hihat_btn() updates icon colour: teal when checked, secondary grey otherwise
+## Right Panel Layout (current)
+- Velocity curve + hit log panels fill full height (minimum 220px each),
+  side by side with stretch=1 — primary live feedback area
+- Below: trigger settings sliders (stretch=0) + detail tabs (stretch=0)
+- Detail tabs: Config (index 0, default), MIDI (index 1),
+  Options (index 2, disabled), Advanced (index 3, disabled)
+- Config tab: Name + Type (grid row), Preset selector (hbox row)
+- MIDI tab: head/rim note assignments, channels, CC mapping, MIDI monitor
+- Loading spinner removed — status bar communicates loading state
 - Right panel stack: 0=placeholder, 1=pad detail, 2=hi-hat detail (placeholder)
 
 ## BOAL Design System — Implemented

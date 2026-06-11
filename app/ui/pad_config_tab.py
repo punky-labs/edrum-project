@@ -756,16 +756,6 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Loading indicator — spinner shown during refresh
-        header = QHBoxLayout()
-        header.setContentsMargins(12, 4, 12, 4)
-        header.addStretch()
-        self._loading_lbl = QLabel("⟳")
-        self._loading_lbl.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 14px;")
-        self._loading_lbl.hide()
-        header.addWidget(self._loading_lbl)
-        layout.addLayout(header)
-
         # Stacked: placeholder (0) / pad detail (1) / hi-hat detail (2)
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
@@ -792,15 +782,11 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(12, 4, 12, 12)
         layout.setSpacing(10)
 
-        # Section A — name + type
-        header_row = QHBoxLayout()
+        # Name/Type widgets — placed in Config tab
         self._name_combo = QComboBox()
         self._name_combo.addItems(PAD_NAMES)
         self._name_combo.setFixedWidth(160)
         self._name_combo.currentTextChanged.connect(self._on_name_changed)
-        header_row.addWidget(QLabel("Name:"))
-        header_row.addWidget(self._name_combo)
-        header_row.addSpacing(12)
 
         self._type_combo = QComboBox()
         for k, v in PAD_TYPE_NAMES.items():
@@ -808,32 +794,20 @@ class PadConfigTab(QWidget):
         self._type_combo.setEnabled(True)
         self._type_combo.setFixedWidth(140)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
-        header_row.addWidget(QLabel("Type:"))
-        header_row.addWidget(self._type_combo)
-        header_row.addStretch()
-        layout.addLayout(header_row)
 
-        # Section B — Preset selector
-        preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("Preset:"))
+        # Preset widgets — placed in Config tab
         self._preset_cat_combo = QComboBox()
         self._preset_cat_combo.addItems(PRESET_CATEGORIES)
-        preset_row.addWidget(self._preset_cat_combo)
         self._preset_model_combo = QComboBox()
         self._preset_model_combo.setMinimumWidth(200)
-        preset_row.addWidget(self._preset_model_combo)
         self._preset_apply_btn = QPushButton(" Apply")
         self._preset_apply_btn.setFixedWidth(80)
         if _QTA:
             self._preset_apply_btn.setIcon(qta.icon('fa5s.check', color='#e0e0e0'))
-        preset_row.addWidget(self._preset_apply_btn)
         self._preset_save_btn = QPushButton(" Save…")
         self._preset_save_btn.setFixedWidth(90)
         if _QTA:
             self._preset_save_btn.setIcon(qta.icon('fa5s.bookmark', color='#e0e0e0'))
-        preset_row.addWidget(self._preset_save_btn)
-        preset_row.addStretch()
-        layout.addLayout(preset_row)
 
         self._preset_cat_combo.currentTextChanged.connect(self._on_preset_cat_changed)
         self._preset_apply_btn.clicked.connect(self._on_preset_apply)
@@ -842,19 +816,23 @@ class PadConfigTab(QWidget):
         # Initialise model combo for default category
         self._on_preset_cat_changed(PRESET_CATEGORIES[0])
 
-        # Section C — Curve + Hit Log
+        # Curve + Hit Log (full-height row)
         c_row = QHBoxLayout()
         c_row.setSpacing(10)
-        c_row.addWidget(self._build_curve_panel(), stretch=1)
-        c_row.addWidget(self._build_hitlog_panel(), stretch=1)
-        layout.addLayout(c_row)
+        curve_box = self._build_curve_panel()
+        hitlog_box = self._build_hitlog_panel()
+        curve_box.setMinimumHeight(220)
+        hitlog_box.setMinimumHeight(220)
+        c_row.addWidget(curve_box, stretch=1)
+        c_row.addWidget(hitlog_box, stretch=1)
+        layout.addLayout(c_row, 1)
 
-        # Section D+E — Trigger settings and MIDI side by side
+        # Trigger settings and detail tabs side by side
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
         bottom_row.addWidget(self._build_trigger_panel(), stretch=0)
-        bottom_row.addWidget(self._build_midi_tabs(), stretch=1)
-        layout.addLayout(bottom_row)
+        bottom_row.addWidget(self._build_detail_tabs(), stretch=1)
+        layout.addLayout(bottom_row, 0)
 
         return w
 
@@ -996,16 +974,42 @@ class PadConfigTab(QWidget):
             combo.addItem(f"{name} ({note})", note)
         return combo
 
-    def _build_midi_tabs(self) -> QTabWidget:
+    def _build_detail_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
-        midi_tab = self._build_midi_panel()
-        tabs.addTab(midi_tab, "MIDI")
+        tabs.addTab(self._build_config_tab(), "Config")
+        tabs.addTab(self._build_midi_panel(), "MIDI")
         for name in ("Options", "Advanced"):
             ph = QWidget()
             tabs.addTab(ph, name)
             tabs.setTabEnabled(tabs.count() - 1, False)
-        self._midi_tabs = tabs
+        self._detail_tabs = tabs
         return tabs
+
+    def _build_config_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("config_tab_widget")
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(8)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        grid.addWidget(QLabel("Name"), 0, 0)
+        grid.addWidget(self._name_combo, 0, 1)
+        grid.addWidget(QLabel("Type"), 0, 2)
+        grid.addWidget(self._type_combo, 0, 3)
+        outer.addLayout(grid)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset"))
+        preset_row.addWidget(self._preset_cat_combo)
+        preset_row.addWidget(self._preset_model_combo, 1)
+        preset_row.addWidget(self._preset_apply_btn)
+        preset_row.addWidget(self._preset_save_btn)
+        outer.addLayout(preset_row)
+
+        outer.addStretch()
+        return w
 
     def _build_midi_panel(self) -> QWidget:
         w = QWidget()
@@ -1246,11 +1250,9 @@ class PadConfigTab(QWidget):
         if self._worker and self._worker.isRunning():
             return
         log.info("Starting full refresh")
-        self._loading_lbl.show()
         worker = _RefreshWorker(self._transport)
         worker.signals.done.connect(self._on_configs_ready)
         worker.signals.failed.connect(self._on_refresh_failed)
-        worker.finished.connect(self._loading_lbl.hide)
         self._worker = worker
         worker.start()
 
@@ -1269,7 +1271,7 @@ class PadConfigTab(QWidget):
             self._populate_detail(self._selected_id)
 
     def _on_refresh_failed(self, error: str) -> None:
-        self._loading_lbl.hide()
+        pass
 
     # ------------------------------------------------------------------
     # Card selection
