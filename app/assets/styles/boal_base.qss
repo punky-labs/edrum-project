@@ -1,0 +1,503 @@
+/* =============================================================================
+   BOAL Design System — Base Stylesheet
+   Version: 0.1.0
+
+   Typography:  IBM Plex Sans (UI), IBM Plex Mono (values/readouts)
+   Personality: Rams minimalist — precise, utilitarian, slightly warm.
+                One accent, used sparingly. No decoration for its own sake.
+
+   TOKEN MAP
+   (QSS has no variables — update hex values here AND in theme.py together)
+
+   Backgrounds
+     bg-base        #141414   — window / root surface
+     bg-surface     #1e1e1e   — panels, sidebars
+     bg-card        #252525   — cards, group boxes
+     bg-card-sel    #0d2a36   — selected card tint
+     bg-input       #1a1a1a   — text inputs, spinboxes, combos
+
+   Text
+     text-primary   #d8d4ce   — warm off-white, main labels
+     text-secondary #6b6b6b   — subdued labels, hints
+     text-disabled  #3a3a3a   — greyed-out controls
+
+   Accents
+     accent         #00aabb   — teal, primary accent (eDrum head)
+     accent-rim     #cc6600   — orange, secondary accent (rim)
+     connected      #2ecc71   — green, connection status
+     warning        #e74c3c   — red, error/warning
+
+   Structure
+     border         #2a2a2a   — subtle card/input borders
+     border-focus   #00aabb   — same as accent on focus
+     radius-card    10px
+     radius-input   6px
+     radius-btn     6px
+
+============================================================================= */
+
+
+/* ---------------------------------------------------------------------------
+   Base — window and root
+--------------------------------------------------------------------------- */
+
+QMainWindow,
+QWidget {
+    background-color: #141414;
+    color: #d8d4ce;
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    font-size: 11px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Menu bar
+--------------------------------------------------------------------------- */
+
+QMenuBar {
+    background-color: #141414;
+    color: #d8d4ce;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background-color: #252525;
+}
+
+QMenu {
+    background-color: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 5px 20px 5px 12px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: #252525;
+    color: #d8d4ce;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #2a2a2a;
+    margin: 3px 8px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Toolbar
+--------------------------------------------------------------------------- */
+
+QToolBar {
+    background-color: #1e1e1e;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 4px 8px;
+    spacing: 4px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    background: #2a2a2a;
+    margin: 4px 6px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Status bar
+--------------------------------------------------------------------------- */
+
+QStatusBar {
+    background-color: #1e1e1e;
+    color: #6b6b6b;
+    border-top: 1px solid #2a2a2a;
+    font-size: 10px;
+    font-family: "IBM Plex Mono", monospace;
+    padding: 2px 8px;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Splitter
+--------------------------------------------------------------------------- */
+
+QSplitter::handle {
+    background-color: #2a2a2a;
+}
+
+QSplitter::handle:horizontal {
+    width: 1px;
+}
+
+QSplitter::handle:vertical {
+    height: 1px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Buttons
+--------------------------------------------------------------------------- */
+
+QPushButton {
+    background-color: #252525;
+    color: #d8d4ce;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 11px;
+}
+
+QPushButton:hover {
+    background-color: #2e2e2e;
+    border-color: #3a3a3a;
+}
+
+QPushButton:pressed {
+    background-color: #1e1e1e;
+}
+
+QPushButton:disabled {
+    background-color: #1a1a1a;
+    color: #3a3a3a;
+    border-color: #222222;
+}
+
+QPushButton:checked {
+    background-color: #00aabb;
+    color: #ffffff;
+    border: none;
+}
+
+/* Primary / accent button — set via property or object name */
+QPushButton[accent="true"],
+QPushButton#btn_connect {
+    background-color: #00aabb;
+    color: #ffffff;
+    border: none;
+}
+
+QPushButton[accent="true"]:hover,
+QPushButton#btn_connect:hover {
+    background-color: #00c4d0;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Tabs
+--------------------------------------------------------------------------- */
+
+QTabWidget::pane {
+    background-color: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    border-radius: 0 6px 6px 6px;
+    top: -1px;
+}
+
+QTabBar {
+    background: transparent;
+}
+
+QTabBar::tab {
+    background-color: #1a1a1a;
+    color: #6b6b6b;
+    border: 1px solid #2a2a2a;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    padding: 6px 16px;
+    margin-right: 2px;
+    font-size: 11px;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    color: #d8d4ce;
+    border-bottom: 1px solid #1e1e1e;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #222222;
+    color: #a0a0a0;
+}
+
+QTabBar::tab:disabled {
+    color: #3a3a3a;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Group boxes — used as section cards
+--------------------------------------------------------------------------- */
+
+QGroupBox {
+    background-color: #1e1e1e;
+    border: none;
+    border-radius: 10px;
+    margin-top: 14px;
+    padding-top: 6px;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    color: #6b6b6b;
+    text-transform: uppercase;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 4px;
+    top: 2px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Combo boxes
+--------------------------------------------------------------------------- */
+
+QComboBox {
+    background-color: #1a1a1a;
+    color: #d8d4ce;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    selection-background-color: #00aabb;
+}
+
+QComboBox:hover {
+    background-color: #222222;
+}
+
+QComboBox:focus {
+    background-color: #1e2a2e;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox::down-arrow {
+    width: 8px;
+    height: 8px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1e1e1e;
+    color: #d8d4ce;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    selection-background-color: #00aabb;
+    selection-color: #ffffff;
+    padding: 2px;
+    outline: none;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Spin boxes
+--------------------------------------------------------------------------- */
+
+QSpinBox {
+    background-color: #1a1a1a;
+    color: #d8d4ce;
+    border: none;
+    border-radius: 6px;
+    padding: 3px 6px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+}
+
+QSpinBox:hover {
+    background-color: #222222;
+}
+
+QSpinBox:focus {
+    background-color: #1e2a2e;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button {
+    background-color: #252525;
+    border: none;
+    width: 16px;
+}
+
+QSpinBox::up-button:hover,
+QSpinBox::down-button:hover {
+    background-color: #2e2e2e;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Sliders
+--------------------------------------------------------------------------- */
+
+QSlider::groove:vertical {
+    background-color: #252525;
+    width: 4px;
+    border-radius: 2px;
+}
+
+QSlider::handle:vertical {
+    background-color: #00aabb;
+    border: none;
+    height: 12px;
+    width: 12px;
+    margin: 0 -4px;
+    border-radius: 6px;
+}
+
+QSlider::handle:vertical:hover {
+    background-color: #00c4d0;
+}
+
+QSlider::add-page:vertical {
+    background-color: #00aabb;
+    border-radius: 2px;
+    opacity: 0.6;
+}
+
+QSlider::sub-page:vertical {
+    background-color: #252525;
+    border-radius: 2px;
+}
+
+QSlider::groove:horizontal {
+    background-color: #252525;
+    height: 4px;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #00aabb;
+    border: none;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+
+QSlider::add-page:horizontal {
+    background-color: #252525;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #00aabb;
+    border-radius: 2px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Progress bars
+--------------------------------------------------------------------------- */
+
+QProgressBar {
+    background-color: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #00aabb;
+    border-radius: 3px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Labels — general
+--------------------------------------------------------------------------- */
+
+QLabel {
+    color: #d8d4ce;
+    background: transparent;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Frames / separators
+--------------------------------------------------------------------------- */
+
+QFrame[frameShape="4"],   /* HLine */
+QFrame[frameShape="5"] {  /* VLine */
+    color: #2a2a2a;
+    background-color: #2a2a2a;
+    border: none;
+    max-height: 1px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Scroll bars
+--------------------------------------------------------------------------- */
+
+QScrollBar:vertical {
+    background: #141414;
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #2e2e2e;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #3a3a3a;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: #141414;
+    height: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background: #2e2e2e;
+    border-radius: 4px;
+    min-width: 24px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #3a3a3a;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Tooltips
+--------------------------------------------------------------------------- */
+
+QToolTip {
+    background-color: #1e1e1e;
+    color: #d8d4ce;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 10px;
+}

@@ -1,31 +1,38 @@
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
-# Background colours
-COLOR_BG_DARK        = "#1a1a1a"
-COLOR_BG_PANEL       = "#242424"
-COLOR_BG_CARD        = "#2e2e2e"
-COLOR_BG_CARD_SEL    = "#1a3a4a"
-COLOR_BG_INPUT       = "#1e1e1e"
+# ---------------------------------------------------------------------------
+# Colour tokens
+# Keep these in sync with the TOKEN MAP in boal_base.qss
+# ---------------------------------------------------------------------------
 
-# Text colours
-COLOR_TEXT_PRIMARY   = "#e0e0e0"
-COLOR_TEXT_SECONDARY = "#888888"
-COLOR_TEXT_DISABLED  = "#444444"
+# Backgrounds
+COLOR_BG_DARK        = "#141414"   # bg-base
+COLOR_BG_PANEL       = "#1e1e1e"   # bg-surface
+COLOR_BG_CARD        = "#252525"   # bg-card
+COLOR_BG_CARD_SEL    = "#0d2a36"   # bg-card-sel
+COLOR_BG_INPUT       = "#1a1a1a"   # bg-input
 
-# Accent colours
-COLOR_ACCENT         = "#00aacc"
-COLOR_RIM            = "#cc6600"
-COLOR_CONNECTED      = "#2ecc71"
-COLOR_WARNING        = "#e74c3c"
-COLOR_BORDER         = "#3a3a3a"
+# Text
+COLOR_TEXT_PRIMARY   = "#d8d4ce"   # text-primary  (warm off-white)
+COLOR_TEXT_SECONDARY = "#6b6b6b"   # text-secondary
+COLOR_TEXT_DISABLED  = "#3a3a3a"   # text-disabled
+
+# Accents
+COLOR_ACCENT         = "#00aabb"   # accent (teal)
+COLOR_RIM            = "#cc6600"   # accent-rim (orange)
+COLOR_CONNECTED      = "#2ecc71"   # connected (green)
+COLOR_WARNING        = "#e74c3c"   # warning (red)
+COLOR_BORDER         = "#2a2a2a"   # border
 
 # Hit log
-COLOR_HIT_HEAD       = "#00aacc"
-COLOR_HIT_RIM        = "#cc6600"
-COLOR_HIT_OTHER      = "#555555"   # grey — crosstalk / other pad hits
+COLOR_HIT_HEAD       = "#00aabb"   # matches accent
+COLOR_HIT_RIM        = "#cc6600"   # matches accent-rim
+COLOR_HIT_OTHER      = "#3a3a3a"   # grey — crosstalk / other pad hits
 
 # Fonts
 FONT_LABEL_SIZE      = 9
@@ -39,8 +46,31 @@ HIT_LOG_BARS         = 30
 SLIDER_HEIGHT        = 160   # logical pixels for vertical trigger sliders
 
 
+# ---------------------------------------------------------------------------
+# Stylesheet loader
+# ---------------------------------------------------------------------------
+
+_STYLES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "styles")
+
+
+def _load_qss(*filenames: str) -> str:
+    """Read and concatenate one or more .qss files from the styles directory."""
+    parts = []
+    for name in filenames:
+        path = os.path.normpath(os.path.join(_STYLES_DIR, name))
+        try:
+            with open(path, encoding="utf-8") as f:
+                parts.append(f.read())
+        except OSError as exc:
+            import logging
+            logging.getLogger("edrum.theme").warning("Could not load stylesheet %s: %s", path, exc)
+    return "\n".join(parts)
+
+
 def apply_dark_theme(app: QApplication) -> None:
-    """Apply a dark QPalette to the QApplication."""
+    """Apply the BOAL base palette + eDrum stylesheet to the QApplication."""
+
+    # QPalette — fallback colours for widgets not covered by QSS
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window,          QColor(COLOR_BG_DARK))
     palette.setColor(QPalette.ColorRole.WindowText,      QColor(COLOR_TEXT_PRIMARY))
@@ -55,3 +85,7 @@ def apply_dark_theme(app: QApplication) -> None:
     palette.setColor(QPalette.ColorRole.ToolTipBase,     QColor(COLOR_BG_PANEL))
     palette.setColor(QPalette.ColorRole.ToolTipText,     QColor(COLOR_TEXT_PRIMARY))
     app.setPalette(palette)
+
+    # QSS stylesheet — base + product overrides
+    stylesheet = _load_qss("boal_base.qss", "edrum.qss")
+    app.setStyleSheet(stylesheet)

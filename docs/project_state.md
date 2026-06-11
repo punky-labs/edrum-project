@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-10 (afternoon)
+Last updated: 2026-06-11
 
 ## Hardware
 - Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
@@ -44,8 +44,7 @@ Last updated: 2026-06-10 (afternoon)
 - Vertical sliders for all 7 trigger settings (rim sliders greyed for
   single-zone pads)
 - GM percussion dropdowns for MIDI note selection
-- MIDI monitor strip showing last hit note/velocity/channel (13px bold)
-- Dark theme; pad icons planned overhaul to linework/SVG style (TE-inspired)
+- MIDI monitor strip showing last hit note/velocity/channel (monospace bold)
 - Pad names persist locally (app/pad_names.json)
 - Autotrack button functional — pad selection follows incoming hits
 - Presets system: category→model two-dropdown selector inline with
@@ -56,14 +55,41 @@ Last updated: 2026-06-10 (afternoon)
 - QtAwesome icons on toolbar and key buttons (fa5s family)
 - Toolbar: single Connect/Disconnect toggle button with green/red tint;
   Refresh and Save to Flash moved to toolbar (enabled only when connected)
-- Input cards: bold numbered inputs, pad name only — type label removed
-  (left panel = "My Kit" view; type detail lives in right panel only)
+- Input cards: large dim numeral (28px, #3a3a3a) top-left as architectural
+  element; pad name below icon; no border; selected state = teal icon recolour
 - MIDI Mapping top-level tab removed; MIDI assignment lives in per-pad
   detail panel
-- Future: single-tab QTabWidget in user mode is slightly redundant —
-  consider removing tab chrome entirely as a future architecture task
+- Emulator auto-launches on startup when --emulator flag is passed
 - Bug fixes: hit log listener registers on connect (not tab switch);
   emulator window closes cleanly on main window close
+
+## BOAL Design System — Implemented
+- Stylesheet architecture: app/assets/styles/boal_base.qss (design system)
+  + app/assets/styles/edrum.qss (product overrides)
+- Loaded and applied in app/ui/theme.py via app.setStyleSheet()
+- QPalette retained as fallback for widgets not covered by QSS
+- Token map documented at top of boal_base.qss — update hex values
+  there AND in theme.py colour constants together
+- Typography: IBM Plex Sans (UI labels), IBM Plex Mono (numeric readouts);
+  currently falling back to Segoe UI — font bundling pending
+- Colour palette: bg-base #141414, bg-surface #1e1e1e, bg-card #252525,
+  accent #00aabb (teal), accent-rim #cc6600 (orange), warm text #d8d4ce
+- No borders on inputs/combos/spinboxes — differentiated by background shade
+- No borders on cards — selected state via icon recolour only
+- Group boxes: borderless, 10px radius, uppercase spaced title
+- Sliders: 4px groove, 12px round handle, filled track below handle
+- QSS dynamic properties on InputCard: selected/reserved drive icon colour
+  via _icon_color() → load_pad_icon() with COLOR_ACCENT / COLOR_TEXT_SECONDARY
+  / COLOR_TEXT_DISABLED
+
+## SVG Icon System — Implemented
+- app/assets/pads/ now contains SVG versions of all pad icons
+- asset_loader.py: SVG preferred over PNG (tries .svg first, .png fallback)
+- Runtime recolouring via QPainter CompositionMode_SourceIn —
+  single SVG file rendered at any colour; cache keyed on (name, size, colour)
+- SVG requirements: filled paths only (no strokes), transparent background
+- Icon colours: normal = #6b6b6b, selected = #00aabb, reserved = #3a3a3a
+- All icons exported from Affinity (or similar) with strokes expanded to fills
 
 ## Serial Debug Commands (firmware)
 - h — print help + build number
@@ -88,10 +114,14 @@ Last updated: 2026-06-10 (afternoon)
 - **Watchdog timer**: add RP2040 hardware watchdog to prevent mid-session lockups
 - **Error handling hardening**: Windows MIDI/Serial crash scenarios,
   graceful recovery from flash write interruption, factory reset via header pin button
-- **Pad icon overhaul**: replace photographic PNG icons with linework SVGs;
-  single stroke weight, accent-colour tinting for selected state
+- **IBM Plex font bundling**: add font files to app/assets/fonts/, load via
+  QFontDatabase.addApplicationFont() in theme.py; remove Segoe UI fallback
+- **Autotrack button**: currently too visually prominent (full-width, teal);
+  needs to be small and quiet — low priority cosmetic
 - **Tab chrome**: consider removing QTabWidget in user mode (single tab
   is redundant); replace with direct layout
+- **BOAL brand**: colour palette and identity exploration deferred;
+  ClickBox product concept live in Notion
 
 ## Protocol
 - SysEx v0.2, manufacturer ID 00 7D

@@ -33,22 +33,22 @@ from PyQt6.QtWidgets import (
 
 try:
     from .theme import (
-        COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_BG_CARD, COLOR_BG_CARD_SEL,
-        COLOR_BG_INPUT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_HIT_OTHER,
-         COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
-        FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
+        COLOR_BG_DARK, COLOR_BG_PANEL,
+        COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_HIT_OTHER,
+        COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM,
+        FONT_LABEL_SIZE, FONT_VALUE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
     )
     from .pad_names import PAD_NAMES, load_pad_names, save_pad_names
     from .write_worker import WriteCommand, WriteWorker
 except ImportError:
     from ui.theme import (  # type: ignore[no-redef]
-        COLOR_BG_DARK, COLOR_BG_PANEL, COLOR_BG_CARD, COLOR_BG_CARD_SEL,
-        COLOR_BG_INPUT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_BORDER,
-        COLOR_HIT_HEAD, COLOR_HIT_RIM, COLOR_WARNING,
-        FONT_LABEL_SIZE, FONT_VALUE_SIZE, FONT_TITLE_SIZE,
+        COLOR_BG_DARK, COLOR_BG_PANEL,
+        COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_HIT_OTHER,
+        COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM,
+        FONT_LABEL_SIZE, FONT_VALUE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
     )
     from ui.pad_names import PAD_NAMES, load_pad_names, save_pad_names  # type: ignore[no-redef]
@@ -254,9 +254,7 @@ class InputCard(QWidget):
         layout.setSpacing(2)
 
         num_lbl = QLabel(str(input_id))
-        num_lbl.setStyleSheet(
-            f"color: {COLOR_TEXT_PRIMARY}; font-size: 13px; font-weight: bold;"
-        )
+        num_lbl.setObjectName("card_num_label")
         layout.addWidget(num_lbl, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self._icon_lbl = QLabel()
@@ -266,18 +264,23 @@ class InputCard(QWidget):
 
         self._name_lbl = QLabel(self._name)
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        f = self._name_lbl.font()
-        f.setBold(True)
-        f.setPointSize(FONT_VALUE_SIZE)
-        self._name_lbl.setFont(f)
+        self._name_lbl.setObjectName("card_name_label")
         layout.addWidget(self._name_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._update_icon("Unassigned")
         self._refresh_style()
 
+    def _icon_color(self) -> str:
+        """Return the appropriate icon colour for the current card state."""
+        if self._reserved:
+            return COLOR_TEXT_DISABLED
+        if self._selected:
+            return COLOR_ACCENT
+        return COLOR_TEXT_SECONDARY
+
     def _update_icon(self, pad_name: str) -> None:
         """Load and display the icon for the given pad name."""
-        pixmap = load_pad_icon(pad_name, _ICON_SIZE)
+        pixmap = load_pad_icon(pad_name, _ICON_SIZE, self._icon_color())
         if pixmap is not None:
             self._icon_lbl.setPixmap(pixmap)
         else:
@@ -305,33 +308,13 @@ class InputCard(QWidget):
         self._refresh_style()
 
     def _refresh_style(self) -> None:
-        if self._reserved:
-            text_color   = COLOR_TEXT_DISABLED
-            border_color = COLOR_BORDER
-            bg_color     = COLOR_BG_CARD
-        elif self._selected:
-            text_color   = COLOR_TEXT_PRIMARY
-            border_color = COLOR_ACCENT
-            bg_color     = COLOR_BG_CARD_SEL
-        else:
-            text_color   = COLOR_TEXT_PRIMARY
-            border_color = COLOR_BORDER
-            bg_color     = COLOR_BG_CARD
-
-        self.setStyleSheet(
-            f"#InputCard {{"
-            f"  background-color: {bg_color};"
-            f"  border: 2px solid {border_color};"
-            f"  border-radius: 6px;"
-            f"}}"
-            f"#InputCard QLabel {{"
-            f"  background: transparent;"
-            f"}}"
-        )
-        self._name_lbl.setStyleSheet(
-            f"color: {text_color}; font-weight: bold;"
-            f" font-size: {FONT_VALUE_SIZE}px;"
-        )
+        self.setProperty("selected", self._selected)
+        self.setProperty("reserved", self._reserved)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+        # Recolour icon to match new state
+        self._update_icon(self._name)
 
     def mousePressEvent(self, event) -> None:
         if not self._reserved:
@@ -428,7 +411,7 @@ class VelocityCurveWidget(QWidget):
         plot_w = w - margin_l - margin_r
         plot_h = h - margin_t - margin_b
 
-        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_DARK))
+        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_PANEL))
 
         grid_pen = QPen(QColor(COLOR_BORDER))
         grid_pen.setWidth(1)
@@ -516,7 +499,7 @@ class HitLogWidget(QWidget):
         w = self.width()
         h = self.height()
 
-        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_DARK))
+        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_PANEL))
 
         if not self._bars:
             painter.end()
@@ -710,16 +693,12 @@ class PadConfigTab(QWidget):
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet(f"background-color: {COLOR_BG_PANEL};")
         layout = QVBoxLayout(w)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
         title = QLabel("INPUTS")
-        title.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_TITLE_SIZE}px;"
-            " font-weight: bold; letter-spacing: 2px;"
-        )
+        title.setObjectName("section_label")
         layout.addWidget(title)
 
         grid = QGridLayout()
@@ -757,26 +736,14 @@ class PadConfigTab(QWidget):
         layout.addStretch()
 
         self._autotrack_btn = QPushButton("AUTOTRACK")
+        self._autotrack_btn.setObjectName("autotrack_btn")
         self._autotrack_btn.setCheckable(True)
-        self._autotrack_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {COLOR_BG_CARD};"
-            f"  color: {COLOR_TEXT_SECONDARY};"
-            f"  border: 1px solid {COLOR_BORDER};"
-            f"  border-radius: 4px; padding: 4px 8px;"
-            f"}}"
-            f"QPushButton:checked {{"
-            f"  background-color: {COLOR_ACCENT};"
-            f"  color: #ffffff;"
-            f"}}"
-        )
         layout.addWidget(self._autotrack_btn)
 
         return w
 
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet(f"background-color: {COLOR_BG_DARK};")
         layout = QVBoxLayout(w)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -796,8 +763,8 @@ class PadConfigTab(QWidget):
         layout.addWidget(self._stack)
 
         placeholder = QLabel("Connect to device and select an input")
+        placeholder.setObjectName("placeholder_label")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: 13px;")
         self._stack.addWidget(placeholder)
 
         detail = self._build_detail()
@@ -880,7 +847,6 @@ class PadConfigTab(QWidget):
 
     def _build_curve_panel(self) -> QGroupBox:
         box = QGroupBox("VELOCITY CURVE")
-        box.setStyleSheet(self._group_style())
         vl = QVBoxLayout(box)
 
         self._curve_combo = QComboBox()
@@ -892,9 +858,6 @@ class PadConfigTab(QWidget):
 
         self._curve_desc = QLabel("")
         self._curve_desc.setWordWrap(True)
-        self._curve_desc.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
-        )
         vl.addWidget(self._curve_desc)
 
         self._curve_widget = VelocityCurveWidget()
@@ -906,30 +869,24 @@ class PadConfigTab(QWidget):
 
         # Velocity bar — right-aligned inside the group box
         vel_col = QWidget()
+        vel_col.setObjectName("vel_col")
+        vel_col.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         vcl = QVBoxLayout(vel_col)
         vcl.setContentsMargins(0, 0, 0, 0)
         vcl.setSpacing(2)
 
         self._vel_bar = QProgressBar()
+        self._vel_bar.setObjectName("vel_bar")
         self._vel_bar.setRange(0, 127)
         self._vel_bar.setValue(0)
         self._vel_bar.setTextVisible(False)
         self._vel_bar.setOrientation(Qt.Orientation.Vertical)
         self._vel_bar.setFixedWidth(18)
-        self._vel_bar.setStyleSheet(
-            f"QProgressBar {{ background: {COLOR_BG_INPUT};"
-            f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; }}"
-            f"QProgressBar::chunk {{ background: {COLOR_ACCENT};"
-            f" border-radius: 2px; }}"
-        )
         vcl.addWidget(self._vel_bar, stretch=1)
 
         self._vel_lbl = QLabel("—")
         self._vel_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._vel_lbl.setFixedWidth(28)
-        self._vel_lbl.setStyleSheet(
-            f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
-        )
         vcl.addWidget(self._vel_lbl)
 
         curve_row.addWidget(vel_col)
@@ -939,16 +896,19 @@ class PadConfigTab(QWidget):
 
     def _build_hitlog_panel(self) -> QGroupBox:
         box = QGroupBox("HIT LOG")
-        box.setStyleSheet(self._group_style())
         vl = QVBoxLayout(box)
 
         hdr = QHBoxLayout()
         hdr.addStretch()
-        clear_btn = QPushButton(" Clear")
-        clear_btn.setFixedWidth(70)
+        clear_btn = QPushButton()
+        clear_btn.setFixedWidth(32)
+        clear_btn.setFixedHeight(28)
+        clear_btn.setToolTip("Clear hit log")
         clear_btn.clicked.connect(self._clear_hitlog)
         if _QTA:
-            clear_btn.setIcon(qta.icon('fa5s.trash-alt', color='#888888'))
+            clear_btn.setIcon(qta.icon('fa5s.eraser', color='#6b6b6b'))
+        else:
+            clear_btn.setText("")
         hdr.addWidget(clear_btn)
         vl.addLayout(hdr)
 
@@ -959,7 +919,6 @@ class PadConfigTab(QWidget):
 
     def _build_trigger_panel(self) -> QGroupBox:
         box = QGroupBox("TRIGGER SETTINGS")
-        box.setStyleSheet(self._group_style())
 
         outer = QHBoxLayout(box)
         outer.setSpacing(4)
@@ -990,11 +949,7 @@ class PadConfigTab(QWidget):
             val_lbl = QLabel("0")
             val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             val_lbl.setFixedWidth(50)
-            val_lbl.setStyleSheet(
-                f"color: {COLOR_TEXT_PRIMARY}; font-size: {FONT_VALUE_SIZE}px;"
-                f" background: {COLOR_BG_INPUT}; border: 1px solid {COLOR_BORDER};"
-                f" border-radius: 3px; padding: 1px 4px;"
-            )
+            val_lbl.setObjectName("slider_value")
             col_layout.addWidget(val_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
             self._slider_value_labels[key] = val_lbl
 
@@ -1005,28 +960,6 @@ class PadConfigTab(QWidget):
             slider.setFixedWidth(30)
             slider.setInvertedAppearance(False)
             slider.setInvertedControls(True)
-            slider.setStyleSheet(
-                f"QSlider::groove:vertical {{"
-                f"  background: {COLOR_BG_CARD};"
-                f"  width: 6px;"
-                f"  border-radius: 3px;"
-                f"}}"
-                f"QSlider::handle:vertical {{"
-                f"  background: {COLOR_ACCENT};"
-                f"  border: none;"
-                f"  height: 14px;"
-                f"  width: 14px;"
-                f"  margin: 0 -4px;"
-                f"  border-radius: 7px;"
-                f"}}"
-                f"QSlider::add-page:vertical {{"
-                f"  background: {COLOR_ACCENT};"
-                f"  border-radius: 3px;"
-                f"}}"
-                f"QSlider::sub-page:vertical {{"
-                f"  background: {COLOR_BG_CARD};"
-                f"}}"
-            )
             slider.valueChanged.connect(
                 lambda val, k=key, lbl=val_lbl: self._on_slider_changed(k, val, lbl)
             )
@@ -1035,9 +968,6 @@ class PadConfigTab(QWidget):
 
             param_lbl = QLabel(label_text)
             param_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            param_lbl.setStyleSheet(
-                f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
-            )
             col_layout.addWidget(param_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
             outer.addWidget(col)
@@ -1049,29 +979,12 @@ class PadConfigTab(QWidget):
     def _make_note_combo(self) -> QComboBox:
         combo = QComboBox()
         combo.setMinimumWidth(200)
-        combo.setStyleSheet(
-            f"QComboBox {{ background: {COLOR_BG_INPUT};"
-            f" color: {COLOR_TEXT_PRIMARY};"
-            f" border: 1px solid {COLOR_BORDER};"
-            f" border-radius: 3px; padding: 2px 6px; }}"
-            f"QComboBox::drop-down {{ border: none; }}"
-            f"QComboBox QAbstractItemView {{"
-            f" background: {COLOR_BG_PANEL};"
-            f" color: {COLOR_TEXT_PRIMARY};"
-            f" selection-background-color: {COLOR_ACCENT}; }}"
-        )
         for note, name in GM_PERCUSSION.items():
             combo.addItem(f"{name} ({note})", note)
         return combo
 
     def _build_midi_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
-        tabs.setStyleSheet(
-            f"QTabWidget::pane {{ background: {COLOR_BG_PANEL}; border: 1px solid {COLOR_BORDER}; }}"
-            f"QTabBar::tab {{ background: {COLOR_BG_CARD}; color: {COLOR_TEXT_SECONDARY};"
-            f"  padding: 4px 12px; }}"
-            f"QTabBar::tab:selected {{ background: {COLOR_BG_PANEL}; color: {COLOR_TEXT_PRIMARY}; }}"
-        )
         midi_tab = self._build_midi_panel()
         tabs.addTab(midi_tab, "MIDI")
         for name in ("Options", "Advanced"):
@@ -1093,25 +1006,13 @@ class PadConfigTab(QWidget):
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        spin_style = (
-            f"QSpinBox {{ background: {COLOR_BG_INPUT}; color: {COLOR_TEXT_PRIMARY};"
-            f" border: 1px solid {COLOR_BORDER}; border-radius: 3px; padding: 2px 4px; }}"
-            f"QSpinBox::up-button, QSpinBox::down-button {{"
-            f" width: 16px; background: {COLOR_BG_CARD}; border: none; }}"
-        )
-
         def _lbl(text: str) -> QLabel:
-            l = QLabel(text)
-            l.setStyleSheet(
-                f"color: {COLOR_TEXT_SECONDARY}; font-size: {FONT_LABEL_SIZE}px;"
-            )
-            return l
+            return QLabel(text)
 
         def _ch_spin() -> QSpinBox:
             s = QSpinBox()
             s.setRange(1, 16)
             s.setFixedWidth(55)
-            s.setStyleSheet(spin_style)
             return s
 
         # Row 0: Head note + channel (always visible)
@@ -1147,7 +1048,6 @@ class PadConfigTab(QWidget):
         self._spin_midi_cc_num = QSpinBox()
         self._spin_midi_cc_num.setRange(0, 127)
         self._spin_midi_cc_num.setFixedWidth(70)
-        self._spin_midi_cc_num.setStyleSheet(spin_style)
         self._lbl_cc_ch        = _lbl("CC Channel")
         self._spin_midi_cc_ch  = _ch_spin()
 
@@ -1172,12 +1072,8 @@ class PadConfigTab(QWidget):
         outer.addStretch()
 
         self._midi_monitor = QLabel("—")
+        self._midi_monitor.setObjectName("midi_monitor")
         self._midi_monitor.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._midi_monitor.setStyleSheet(
-            f"color: {COLOR_ACCENT}; font-size: 13px; font-weight: bold;"
-            f" background: {COLOR_BG_CARD}; border: 1px solid {COLOR_BORDER};"
-            f" border-radius: 3px; padding: 4px 8px;"
-        )
         self._midi_monitor.setFixedHeight(36)
         outer.addWidget(self._midi_monitor)
 
@@ -1265,24 +1161,6 @@ class PadConfigTab(QWidget):
             self._preset_model_combo.setCurrentIndex(model_idx)
 
         self.status_message.emit(f"Preset '{name}' saved.", 3000)
-
-    @staticmethod
-    def _group_style() -> str:
-        return (
-            f"QGroupBox {{"
-            f"  background-color: {COLOR_BG_PANEL};"
-            f"  border: 1px solid {COLOR_BORDER};"
-            f"  border-radius: 6px;"
-            f"  margin-top: 12px;"
-            f"  font-size: {FONT_TITLE_SIZE}px;"
-            f"  color: {COLOR_TEXT_SECONDARY};"
-            f"}}"
-            f"QGroupBox::title {{"
-            f"  subcontrol-origin: margin;"
-            f"  left: 8px;"
-            f"  padding: 0 4px;"
-            f"}}"
-        )
 
     # ------------------------------------------------------------------
     # Event overrides
@@ -1523,24 +1401,8 @@ class PadConfigTab(QWidget):
     def _update_zone_visibility(self, is_dual: bool, is_hihat: bool) -> None:
         # Rim sliders: always visible, disabled for single-zone pads
         for key in ("_rim_thresh", "_rim_sens"):
-            col, slider = self._param_widgets[key]
+            _, slider = self._param_widgets[key]
             slider.setEnabled(is_dual)
-            lbl = self._slider_value_labels.get(key)
-            val_color    = COLOR_TEXT_PRIMARY if is_dual else COLOR_TEXT_DISABLED
-            border_color = COLOR_BORDER
-            bg_color     = COLOR_BG_INPUT if is_dual else COLOR_BG_DARK
-            if lbl:
-                lbl.setStyleSheet(
-                    f"color: {val_color}; font-size: {FONT_VALUE_SIZE}px;"
-                    f" background: {bg_color}; border: 1px solid {border_color};"
-                    f" border-radius: 3px; padding: 1px 4px;"
-                )
-            for widget in col.findChildren(QLabel):
-                if widget is not lbl:
-                    widget.setStyleSheet(
-                        f"color: {COLOR_TEXT_SECONDARY if is_dual else COLOR_TEXT_DISABLED};"
-                        f" font-size: {FONT_LABEL_SIZE}px;"
-                    )
 
         # MIDI rim fields: hide for single-zone (these are in the MIDI panel)
         for widget in self._rim_midi_widgets:

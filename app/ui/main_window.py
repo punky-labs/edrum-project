@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         if isinstance(self._transport, EmulatorTransport):
             self._emulator_window = EmulatorWindow(self._transport)
             self._act_launch_emulator.setEnabled(True)
+            self._emulator_window.show()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -169,6 +170,7 @@ class MainWindow(QMainWindow):
 
         # Single toggle button — Connect when disconnected, Disconnect when connected
         self._btn_connect_toggle = QPushButton("Connect")
+        self._btn_connect_toggle.setObjectName("btn_connect_toggle")
         self._btn_connect_toggle.setFixedWidth(130)
         self._btn_connect_toggle.clicked.connect(self._on_connect_toggle)
         self._btn_connect_toggle.setToolTip("Connect to selected MIDI port")
@@ -179,7 +181,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         self._status_dot = QLabel("●")
-        self._status_dot.setStyleSheet("color: #e74c3c; font-size: 16px; padding: 0 4px;")
+        self._status_dot.setObjectName("status_dot")
         self._status_dot.setToolTip("Not connected")
         tb.addWidget(self._status_dot)
 
@@ -380,7 +382,6 @@ class MainWindow(QMainWindow):
         self._act_connect.setEnabled(False)
         self._act_disconnect.setEnabled(True)
         self._act_identify.setEnabled(True)
-        self._status_dot.setStyleSheet("color: #2ecc71; font-size: 16px; padding: 0 4px;")
         self._status_dot.setToolTip(f"Connected: {port_name}")
         self._conn_widget.set_connected(port_name)
         self.statusBar().showMessage(f"Connected to {port_name}")
@@ -397,7 +398,6 @@ class MainWindow(QMainWindow):
         self._act_connect.setEnabled(True)
         self._act_disconnect.setEnabled(False)
         self._act_identify.setEnabled(False)
-        self._status_dot.setStyleSheet("color: #e74c3c; font-size: 16px; padding: 0 4px;")
         self._status_dot.setToolTip("Not connected")
         self._conn_widget.set_disconnected()
         self.statusBar().showMessage("Disconnected")
