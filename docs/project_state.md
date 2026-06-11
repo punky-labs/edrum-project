@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-11
+Last updated: 2026-06-11 (session 2)
 
 ## Hardware
 - Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
@@ -63,6 +63,32 @@ Last updated: 2026-06-11
 - Bug fixes: hit log listener registers on connect (not tab switch);
   emulator window closes cleanly on main window close
 
+## Main Window Architecture — Refactored
+- No top-level QTabWidget — PadConfigTab is set directly as central widget
+- Clean single-view layout in user mode; no redundant tab chrome
+- Dev mode: Presets Editor and Debug Console are floating QMainWindow
+  instances launched from Dev menu (lazy creation, persist until app close)
+- Dev menu items (dev mode only): Launch Emulator, Presets Editor…,
+  Debug Console…
+- closeEvent cleans up all floating windows
+
+## Left Panel Layout (current)
+- "INPUTS" section label
+- 2×2 pad card grid (inputs 0–3)
+- HLine separator  ← expansion inputs will insert here (inputs 4–7, deferred)
+- HLine separator
+- Hi-Hat Controller button (full width, 56px tall, icon + label)
+- addStretch()
+- AUTOTRACK button
+
+## Hi-Hat Controller Button
+- QPushButton#hihat_controller_btn — checkable, full width, 56px height
+- Icon from hihat-control.svg via asset_loader (recoloured on select)
+- Clicking populates right panel stack page 2 (hi-hat placeholder for now)
+- Selecting a pad card unchecks the hi-hat button and vice versa
+- _refresh_hihat_btn() updates icon colour: teal when checked, secondary grey otherwise
+- Right panel stack: 0=placeholder, 1=pad detail, 2=hi-hat detail (placeholder)
+
 ## BOAL Design System — Implemented
 - Stylesheet architecture: app/assets/styles/boal_base.qss (design system)
   + app/assets/styles/edrum.qss (product overrides)
@@ -118,8 +144,15 @@ Last updated: 2026-06-11
   QFontDatabase.addApplicationFont() in theme.py; remove Segoe UI fallback
 - **Autotrack button**: currently too visually prominent (full-width, teal);
   needs to be small and quiet — low priority cosmetic
-- **Tab chrome**: consider removing QTabWidget in user mode (single tab
-  is redundant); replace with direct layout
+- **Hi-hat controller UI**: right panel stack page 2 is a placeholder;
+  needs calibration panel (min/max range), CC mapping, open/close thresholds,
+  live position indicator; firmware implementation also pending
+- **Expansion board**: 4 more jacks (inputs 4–7), same hardware as base;
+  left panel grid expands to 2×4; expansion inputs slot in above hi-hat
+  separator; firmware and protocol changes required
+- **Tab chrome**: single-tab QTabWidget in per-pad MIDI/Options/Advanced
+  section — Options and Advanced are placeholder/disabled; revisit when
+  those panels are implemented
 - **BOAL brand**: colour palette and identity exploration deferred;
   ClickBox product concept live in Notion
 

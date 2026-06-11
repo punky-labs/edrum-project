@@ -10,7 +10,7 @@ log = logging.getLogger("edrum.pad_config")
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QObject, QPoint, QSize,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPolygon
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -132,8 +132,7 @@ _DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
 _HIHAT_TYPES     = {PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW}
 
 # Input 4 is hardwired to the hi-hat controller jack (A0 on RP2040)
-_HIHAT_INPUT_ID   = 4
-_HIHAT_INPUT_TYPE = PAD_TYPE_HIHAT_CC
+_HIHAT_INPUT_ID = 4
 
 _ICON_SIZE = 56   # logical pixels for card icons
 
@@ -705,14 +704,12 @@ class PadConfigTab(QWidget):
         grid.setSpacing(6)
         self._cards: list[InputCard] = []
 
-        # Create all 5 cards (inputs 0-4 only)
-        for i in range(5):
+        for i in range(4):
             card = InputCard(i)
             card.set_name(self._pad_names.get(i, "Unassigned"))
             card.clicked.connect(self._on_card_clicked)
             self._cards.append(card)
 
-        # Pad inputs 0-3 in 2x2 grid
         grid.addWidget(self._cards[0], 0, 0)
         grid.addWidget(self._cards[1], 0, 1)
         grid.addWidget(self._cards[2], 1, 0)
@@ -720,18 +717,29 @@ class PadConfigTab(QWidget):
 
         layout.addLayout(grid)
 
-        # Separator line between pads and hi-hat
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {COLOR_BORDER};")
-        layout.addWidget(sep)
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.HLine)
+        sep1.setStyleSheet(f"color: {COLOR_BORDER};")
+        layout.addWidget(sep1)
 
-        # Hi-hat controller card — full width
-        hihat_grid = QGridLayout()
-        hihat_grid.setSpacing(6)
-        hihat_grid.addWidget(self._cards[4], 0, 0)
-        hihat_grid.addWidget(QWidget(), 0, 1)   # empty slot beside hi-hat
-        layout.addLayout(hihat_grid)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet(f"color: {COLOR_BORDER};")
+        layout.addWidget(sep2)
+
+        self._hihat_btn = QPushButton()
+        self._hihat_btn.setObjectName("hihat_controller_btn")
+        self._hihat_btn.setCheckable(True)
+        self._hihat_btn.setFixedHeight(56)
+        self._hihat_btn.setToolTip("Hi-Hat Controller")
+        self._hihat_btn.setText("  Hi-Hat Controller")
+        self._hihat_btn.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        pixmap = load_pad_icon("Hi-Hat Controller", 28, COLOR_TEXT_SECONDARY)
+        if pixmap:
+            self._hihat_btn.setIcon(QIcon(pixmap))
+            self._hihat_btn.setIconSize(QSize(28, 28))
+        self._hihat_btn.clicked.connect(self._on_hihat_btn_clicked)
+        layout.addWidget(self._hihat_btn)
 
         layout.addStretch()
 
@@ -758,17 +766,22 @@ class PadConfigTab(QWidget):
         header.addWidget(self._loading_lbl)
         layout.addLayout(header)
 
-        # Stacked: placeholder vs detail
+        # Stacked: placeholder (0) / pad detail (1) / hi-hat detail (2)
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
 
         placeholder = QLabel("Connect to device and select an input")
         placeholder.setObjectName("placeholder_label")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._stack.addWidget(placeholder)
+        self._stack.addWidget(placeholder)           # index 0
 
         detail = self._build_detail()
-        self._stack.addWidget(detail)
+        self._stack.addWidget(detail)                # index 1
+
+        hihat_placeholder = QLabel("Hi-Hat Controller — coming soon")
+        hihat_placeholder.setObjectName("placeholder_label")
+        hihat_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._stack.addWidget(hihat_placeholder)     # index 2
 
         self._stack.setCurrentIndex(0)
         return w
@@ -1197,15 +1210,13 @@ class PadConfigTab(QWidget):
         self._transport.remove_listener("pad_config")
         self._transport.remove_listener("refresh_worker")
         self._stack.setCurrentIndex(0)
+        self._hihat_btn.setChecked(False)
+        self._refresh_hihat_btn()
         self._loaded = False
         self._dirty  = False
 
     def set_active(self, active: bool) -> None:
-        self._active_tab = active
-        if active and self._transport.is_connected():
-            self._transport.add_listener("pad_config", self._on_sysex)
-        else:
-            self._transport.remove_listener("pad_config")
+        pass
 
     # ------------------------------------------------------------------
     # SysEx callback (runs on rtmidi thread)
@@ -1247,17 +1258,12 @@ class PadConfigTab(QWidget):
         self._configs = configs
         self._loaded  = True
 
-        for i in range(5):
+        for i in range(4):
             cfg       = configs.get(i, {})
             pad_type  = cfg.get("pad_type", 0)
             type_name = PAD_TYPE_NAMES.get(pad_type, "")
             self._cards[i].set_status(cfg, type_name)
             self._cards[i].set_reserved(cfg.get("_status", 0) == INPUT_RESERVED)
-
-        # Input 4 is always the hi-hat controller — lock its type
-        hihat_card = self._cards[_HIHAT_INPUT_ID]
-        hihat_card.set_reserved(False)
-        hihat_card.set_status({"_status": INPUT_ACTIVE}, "Hi-Hat Controller")
 
         if self._selected_id is not None:
             self._populate_detail(self._selected_id)
@@ -1277,8 +1283,24 @@ class PadConfigTab(QWidget):
             self._cards[self._selected_id].set_selected(False)
         self._selected_id = input_id
         self._cards[input_id].set_selected(True)
+        self._hihat_btn.setChecked(False)
+        self._refresh_hihat_btn()
         self._stack.setCurrentIndex(1)
         self._populate_detail(input_id)
+
+    def _on_hihat_btn_clicked(self) -> None:
+        if self._selected_id is not None:
+            self._cards[self._selected_id].set_selected(False)
+            self._selected_id = None
+        self._hihat_btn.setChecked(True)
+        self._stack.setCurrentIndex(2)
+        self._refresh_hihat_btn()
+
+    def _refresh_hihat_btn(self) -> None:
+        color = COLOR_ACCENT if self._hihat_btn.isChecked() else COLOR_TEXT_SECONDARY
+        pixmap = load_pad_icon("Hi-Hat Controller", 28, color)
+        if pixmap:
+            self._hihat_btn.setIcon(QIcon(pixmap))
 
     # ------------------------------------------------------------------
     # Detail population
@@ -1562,7 +1584,8 @@ class PadConfigTab(QWidget):
             )
 
         if not is_selected and self._autotrack_btn.isChecked():
-            self._select_input(input_id)
+            if input_id < len(self._cards):
+                self._select_input(input_id)
 
     def _clear_hitlog(self) -> None:
         self._hitlog.clear()

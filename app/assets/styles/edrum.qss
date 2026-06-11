@@ -222,3 +222,28 @@ QLabel#placeholder_label {
     font-size: 13px;
     font-family: "IBM Plex Sans", sans-serif;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Hi-Hat controller button — left panel, below the 2×2 pad grid
+--------------------------------------------------------------------------- */
+
+QPushButton#hihat_controller_btn {
+    background-color: #1e1e1e;
+    color: #d8d4ce;
+    border: none;
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 500;
+    text-align: left;
+}
+
+QPushButton#hihat_controller_btn:hover {
+    background-color: #2a2a2a;
+}
+
+QPushButton#hihat_controller_btn:checked {
+    background-color: #1e1e1e;
+    color: #00aabb;
+}

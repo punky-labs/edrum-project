@@ -7,7 +7,7 @@ from typing import Optional
 log = logging.getLogger("edrum.main_window")
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -72,6 +71,8 @@ class MainWindow(QMainWindow):
         self._dev_mode = dev_mode
         self._identify_worker: Optional[_IdentifyWorker] = None
         self._emulator_window: Optional[EmulatorWindow]  = None
+        self._presets_window: Optional[QMainWindow] = None
+        self._debug_window: Optional[QMainWindow]   = None
 
         # Transport — must exist before _setup_central() builds tabs
         if "--emulator" in sys.argv:
@@ -88,7 +89,6 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_central()
         self._setup_status_bar()
-        self._setup_shortcuts()
 
         # Emulator window — created after UI so transport is fully wired
         if isinstance(self._transport, EmulatorTransport):
@@ -127,19 +127,20 @@ class MainWindow(QMainWindow):
         self._act_identify.triggered.connect(self._on_identify)
         dev_menu.addAction(self._act_identify)
 
-        self._act_show_debug: Optional[QAction] = None
-        if self._dev_mode:
-            debug_menu = mb.addMenu("&Debug")
-            self._act_show_debug = QAction("Show &Debug Tab", self)
-            self._act_show_debug.setCheckable(True)
-            self._act_show_debug.triggered.connect(self._toggle_debug_tab)
-            debug_menu.addAction(self._act_show_debug)
-
         dev_menu = mb.addMenu("De&v")
         self._act_launch_emulator = QAction("Launch &Emulator", self)
         self._act_launch_emulator.setEnabled(False)
         self._act_launch_emulator.triggered.connect(self._on_launch_emulator)
         dev_menu.addAction(self._act_launch_emulator)
+
+        if self._dev_mode:
+            dev_menu.addSeparator()
+            act_presets = QAction("Presets &Editor…", self)
+            act_presets.triggered.connect(self._on_launch_presets_editor)
+            dev_menu.addAction(act_presets)
+            act_debug = QAction("&Debug Console…", self)
+            act_debug.triggered.connect(self._on_launch_debug_console)
+            dev_menu.addAction(act_debug)
 
         help_menu = mb.addMenu("&Help")
         about_act = QAction("&About", self)
@@ -208,38 +209,15 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
 
     def _setup_central(self) -> None:
+        self._debug_tab = DebugTab()
         self._pad_config_tab = PadConfigTab(self._transport)
-        self._debug_tab      = DebugTab()
-
-        tabs = QTabWidget()
-        tabs.addTab(self._pad_config_tab, "Pad Config")   # always 0
-
-        self._PAD_CONFIG_IDX    = 0
-        self._PRESETS_EDITOR_IDX = -1
-        self._DEBUG_IDX          = -1
-
-        if self._dev_mode:
-            self._presets_editor_tab = PresetsTab()
-            tabs.addTab(self._presets_editor_tab, "Presets (Editor)")  # 2
-            tabs.addTab(self._debug_tab,           "Debug")             # 3
-            self._PRESETS_EDITOR_IDX = 2
-            self._DEBUG_IDX          = 3
-        # User mode: no Presets editor, no Debug tab — clean minimal UI
-
-        tabs.currentChanged.connect(self._on_tab_changed)
         self._pad_config_tab.status_message.connect(self.show_status)
-        self._tabs = tabs
-        self.setCentralWidget(tabs)
+        self.setCentralWidget(self._pad_config_tab)
 
     def _setup_status_bar(self) -> None:
         self._conn_widget = ConnectionWidget()
         self.statusBar().addPermanentWidget(self._conn_widget)
         self.statusBar().showMessage("Ready")
-
-    def _setup_shortcuts(self) -> None:
-        if self._dev_mode:
-            sc = QShortcut(QKeySequence("Ctrl+D"), self)
-            sc.activated.connect(self._toggle_debug_tab)
 
     # ------------------------------------------------------------------
     # Port management
@@ -248,6 +226,28 @@ class MainWindow(QMainWindow):
     def _on_launch_emulator(self) -> None:
         if self._emulator_window is not None:
             self._emulator_window.show()
+
+    def _on_launch_presets_editor(self) -> None:
+        if self._presets_window is None:
+            win = QMainWindow(self)
+            win.setWindowTitle("eDrum — Presets Editor")
+            win.resize(900, 600)
+            win.setCentralWidget(PresetsTab())
+            self._presets_window = win
+        self._presets_window.show()
+        self._presets_window.raise_()
+
+    def _on_launch_debug_console(self) -> None:
+        if self._debug_window is None:
+            win = QMainWindow(self)
+            win.setWindowTitle("eDrum — Debug Console")
+            win.resize(800, 500)
+            win.setCentralWidget(self._debug_tab)
+            self._debug_window = win
+            if self._transport.is_connected():
+                self._debug_tab.on_connected()
+        self._debug_window.show()
+        self._debug_window.raise_()
 
     def _refresh_ports(self) -> None:
         try:
@@ -281,23 +281,6 @@ class MainWindow(QMainWindow):
     def _send(self, msg: bytearray) -> None:
         self._transport.send(msg)
         self._debug_tab.log_tx(msg)
-
-    # ------------------------------------------------------------------
-    # Tab management
-    # ------------------------------------------------------------------
-
-    def _on_tab_changed(self, index: int) -> None:
-        self._pad_config_tab.set_active(index == self._PAD_CONFIG_IDX)
-        if self._act_show_debug is not None:
-            self._act_show_debug.setChecked(index == self._DEBUG_IDX)
-
-    def _toggle_debug_tab(self) -> None:
-        if not self._dev_mode:
-            return
-        if self._tabs.currentIndex() == self._DEBUG_IDX:
-            self._tabs.setCurrentIndex(self._PAD_CONFIG_IDX)
-        else:
-            self._tabs.setCurrentIndex(self._DEBUG_IDX)
 
     def _on_connect_toggle(self) -> None:
         if self._transport.is_connected():
@@ -463,6 +446,12 @@ class MainWindow(QMainWindow):
             self._identify_worker.wait(3000)
         if self._transport.is_connected():
             self._transport.disconnect()
+        if self._presets_window is not None:
+            self._presets_window.close()
+            self._presets_window = None
+        if self._debug_window is not None:
+            self._debug_window.close()
+            self._debug_window = None
         # Close emulator window if open — prevents process hanging on exit
         if self._emulator_window is not None:
             self._emulator_window.hide()
