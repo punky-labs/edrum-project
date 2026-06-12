@@ -21,7 +21,7 @@
   "1": {
     "pad_type": 1,
     "threshold": 512,
-    "velocity_curve": 1,
+    "velocity_curve": 3,
     "retrigger_time": 25,
     "crosstalk_group": 0,
     "head_sensitivity": 512,

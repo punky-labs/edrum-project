@@ -1,7 +1,67 @@
 # eDrum Project State
-Last updated: 2026-06-11 (session 3)
+Last updated: 2026-06-12
 
-## Hardware
+---
+
+## Product Vision
+
+**"Your sounds, your software, our hardware."**
+
+BOAL BT-1 is a trigger interface, not a drum module. Serious drummers
+already have better sounds in software (AD2, Superior Drummer, BFD) than
+any hardware module ships with. BT-1 connects their kit to their existing
+setup — beautifully designed, musician-first, no compromises.
+
+Competitive framing:
+- eDRUMin: powerful and affordable but technical and unglamorous
+- Roland/Alesis: bundle mediocre sounds with trigger hardware to justify price
+- BT-1: the well-designed, affordable trigger interface the market doesn't have
+
+---
+
+## BOAL Product Family
+
+| Product | Description | Status |
+|---------|-------------|--------|
+| **BT-1** | Drum trigger interface, USB MIDI, desktop config app | Stage 1 active |
+| **BT-1 Expand** | 4-input expansion board for BT-1 | Deferred (Phase 1B) |
+| **BT-1 Screen** | ESP32-S3 + 5" capacitive touch config companion | Concept (Phase 1C) |
+| **ClickBox** | Standalone click track box for drummers | Concept |
+
+**BT-1 Screen details:**
+- ESP32-S3 + 5" capacitive touchscreen, ~$90-100 AUD BOM
+- Stacks on top of BT-1, separable via magnetic connector
+- Connects via USB-C on mag connector (existing SysEx protocol,
+  no new BT-1 firmware needed)
+- Built-in LiPo charging — powers the BT-1 trigger unit wirelessly
+- BLE for ClickBox song library sync
+- Doubles as a ClickBox — one device, two jobs
+- Purpose-built LVGL touch UI (not a PyQt6 port)
+- Instant-on, low power, no OS
+- Unified design language with BT-1 family; different form factor to
+  ClickBox (ClickBox is body-worn, BT-1 family sits on desk/stand)
+- Fusion 360 case design exploration planned
+
+**Phase 2 (RPi standalone sound module) — dropped from active roadmap:**
+At $600-700 AUD BOM it competes with a secondhand laptop that performs
+better. BOAL's vision is trigger interface + user's existing software.
+
+**ClickBox details:**
+- Standalone click track box for drummers, completely hardware-independent
+- nRF52840 (BLE), eInk display with frontlight (readable in low light),
+  single NeoPixel LED on case for visual beat/section indication
+- "You should be listening, not looking" — screen is for song/setlist
+  navigation only; NeoPixel handles live beat/section feedback
+- Web app for song building, setlist management, community library
+- Song format: JSON tempo map + named sections + cue announcements
+- NeoPixel behaviour configurable per song in web app
+- Belt-clip, battery powered, different form factor to BT-1 family
+- Concept stage as of June 2026
+
+---
+
+## Hardware (BT-1 Stage 1)
+
 - Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
 - 4 stereo TRS jacks → 8 MCP3008 channels (4 jacks, dual-zone capable)
   - Tip = odd ADC channels (head/piezo)
@@ -10,7 +70,10 @@ Last updated: 2026-06-11 (session 3)
 - Currently: XIAO RP2040 installed on built PCB
 - Stage 2: XIAO ESP32-S3 for wireless satellite modules (deferred)
 
+---
+
 ## Working
+
 - RP2040 firmware boots cleanly, LittleFS config storage working
 - USB MIDI enumerates on Windows and Mac
 - SysEx protocol v0.2 — full read/write/save round-trip working
@@ -30,40 +93,16 @@ Last updated: 2026-06-11 (session 3)
 - PyQt app: full Pad Config tab working with emulator and real device
 - File logging: app/logs/edrum.log (rotating, 1MB x3)
 - Emulator: app/emulator/ — EmulatorTransport + EmulatorWindow,
-  launched via --emulator flag or Dev menu
+  launched via --emulator flag; auto-shows on startup
 - Auto-incrementing build number via PlatformIO pre-script
   (firmware/version.txt + scripts/increment_build.py)
   Displayed via 'h' serial command: [eDrum] Build N — ...
 
-## Stage 1 UI — Complete
-- 4 pad tiles (jacks 0-3) + hi-hat controller tile (jack 4)
-- Jack 4 locked as Hi-Hat Controller (not yet implemented in firmware)
-- VelocityCurveWidget: mathematically accurate drawn curves, live hit dot
-  (X=raw velocity, Y=MIDI output)
-- HitLogWidget: 3-colour bars (teal=head, orange=rim, grey=other pad)
-- Vertical sliders for all 7 trigger settings (rim sliders greyed for
-  single-zone pads)
-- GM percussion dropdowns for MIDI note selection
-- MIDI monitor strip showing last hit note/velocity/channel (monospace bold)
-- Pad names persist locally (app/pad_names.json)
-- Autotrack button functional — pad selection follows incoming hits
-- Presets system: category→model two-dropdown selector inline with
-  Name/Type; Apply populates UI only (no device write); Save Current…
-  saves to My Presets in app/presets.json
-- Dev mode: launch with --dev flag; enables Debug tab, Presets Editor tab,
-  manufacturer preset editing; user mode shows only Pad Config tab
-- QtAwesome icons on toolbar and key buttons (fa5s family)
-- Toolbar: single Connect/Disconnect toggle button with green/red tint;
-  Refresh and Save to Flash moved to toolbar (enabled only when connected)
-- Input cards: large dim numeral (28px, #3a3a3a) top-left as architectural
-  element; pad name below icon; no border; selected state = teal icon recolour
-- MIDI Mapping top-level tab removed; MIDI assignment lives in per-pad
-  detail panel
-- Emulator auto-launches on startup when --emulator flag is passed
-- Bug fixes: hit log listener registers on connect (not tab switch);
-  emulator window closes cleanly on main window close
+---
 
-## Main Window Architecture — Refactored
+## App UI Architecture (current)
+
+**Main window:**
 - No top-level QTabWidget — PadConfigTab is set directly as central widget
 - Clean single-view layout in user mode; no redundant tab chrome
 - Dev mode: Presets Editor and Debug Console are floating QMainWindow
@@ -71,62 +110,78 @@ Last updated: 2026-06-11 (session 3)
 - Dev menu items (dev mode only): Launch Emulator, Presets Editor…,
   Debug Console…
 - closeEvent cleans up all floating windows
+- Established pattern: dev tooling as optional floating windows from
+  Dev menu — keeps main UI clean; apply to all future dev tools
 
-## Left Panel Layout (current)
+**Left panel (top to bottom):**
 - "INPUTS" section label
 - 2×2 pad card grid (inputs 0–3)
-- HLine separator  ← expansion inputs will insert here (inputs 4–7, deferred)
+- HLine separator ← expansion inputs insert here (inputs 4–7, deferred)
 - HLine separator
-- Hi-Hat Controller button (full width, 56px tall, icon + label)
+- Hi-Hat Controller button (full width, 56px, icon + label, checkable)
 - addStretch()
 - AUTOTRACK button
 
-## Hi-Hat Controller Button
-- QPushButton#hihat_controller_btn — checkable, full width, 56px height
-- Icon from hihat-control.svg via asset_loader (recoloured on select)
-- Clicking populates right panel stack page 2 (hi-hat placeholder for now)
-- Selecting a pad card unchecks the hi-hat button and vice versa
-- _refresh_hihat_btn() updates icon colour: teal when checked, secondary grey otherwise
-## Right Panel Layout (current)
-- Velocity curve + hit log panels fill full height (minimum 220px each),
-  side by side with stretch=1 — primary live feedback area
-- Below: trigger settings sliders (stretch=0) + detail tabs (stretch=0)
-- Detail tabs: Config (index 0, default), MIDI (index 1),
-  Options (index 2, disabled), Advanced (index 3, disabled)
-- Config tab: Name + Type (grid row), Preset selector (hbox row)
-- MIDI tab: head/rim note assignments, channels, CC mapping, MIDI monitor
-- Loading spinner removed — status bar communicates loading state
-- Right panel stack: 0=placeholder, 1=pad detail, 2=hi-hat detail (placeholder)
+**Right panel:**
+- Velocity curve + hit log panels — full height, stretch=1, min 220px each
+- Trigger settings sliders — stretch=0
+- Detail tabs — stretch=0:
+  - Config (index 0, default): Name + Type, Preset selector
+  - MIDI (index 1): note assignments, channels, CC mapping, MIDI monitor
+  - Options (index 2, disabled placeholder)
+  - Advanced (index 3, disabled placeholder)
+- Right panel stack: 0=placeholder, 1=pad detail, 2=hi-hat (placeholder)
 
-## BOAL Design System — Implemented
-- Stylesheet architecture: app/assets/styles/boal_base.qss (design system)
+**Interface modes:**
+- Simple (default): clean pad grid, no dev tooling — musician-first
+- Advanced: Dev menu unlocked, debug tools accessible
+- Currently driven by --dev CLI flag
+- Planned: persistent QSettings preference, switchable in Settings menu
+
+---
+
+## BOAL Design System
+
+- Stylesheet: app/assets/styles/boal_base.qss (tokens + base widgets)
   + app/assets/styles/edrum.qss (product overrides)
-- Loaded and applied in app/ui/theme.py via app.setStyleSheet()
-- QPalette retained as fallback for widgets not covered by QSS
-- Token map documented at top of boal_base.qss — update hex values
-  there AND in theme.py colour constants together
-- Typography: IBM Plex Sans (UI labels), IBM Plex Mono (numeric readouts);
-  currently falling back to Segoe UI — font bundling pending
-- Colour palette: bg-base #141414, bg-surface #1e1e1e, bg-card #252525,
-  accent #00aabb (teal), accent-rim #cc6600 (orange), warm text #d8d4ce
-- No borders on inputs/combos/spinboxes — differentiated by background shade
-- No borders on cards — selected state via icon recolour only
+- Loaded via app.setStyleSheet() in theme.py
+- QPalette retained as fallback
+- Token map at top of boal_base.qss — update hex values there AND in
+  theme.py colour constants together
+- Typography: IBM Plex Sans (UI) + IBM Plex Mono (numeric readouts)
+  Currently falling back to Segoe UI — font bundling pending
+- Colour palette:
+  - bg-base #141414, bg-surface #1e1e1e, bg-card #252525
+  - accent #00aabb (teal), accent-rim #cc6600 (orange)
+  - warm text #d8d4ce, secondary #6b6b6b, disabled #3a3a3a
+- No borders on inputs/combos/cards — differentiated by background shade
+- Selected pad: teal icon recolour, no border
 - Group boxes: borderless, 10px radius, uppercase spaced title
 - Sliders: 4px groove, 12px round handle, filled track below handle
-- QSS dynamic properties on InputCard: selected/reserved drive icon colour
-  via _icon_color() → load_pad_icon() with COLOR_ACCENT / COLOR_TEXT_SECONDARY
-  / COLOR_TEXT_DISABLED
+- Design system extends to all future BOAL products — boal_base.qss
+  is the shared foundation
 
-## SVG Icon System — Implemented
-- app/assets/pads/ now contains SVG versions of all pad icons
+**SVG icon system:**
+- app/assets/pads/ — SVG versions of all pad icons
 - asset_loader.py: SVG preferred over PNG (tries .svg first, .png fallback)
-- Runtime recolouring via QPainter CompositionMode_SourceIn —
-  single SVG file rendered at any colour; cache keyed on (name, size, colour)
+- Runtime recolouring via QPainter CompositionMode_SourceIn
+- Cache keyed on (name, size, colour_hex)
 - SVG requirements: filled paths only (no strokes), transparent background
-- Icon colours: normal = #6b6b6b, selected = #00aabb, reserved = #3a3a3a
-- All icons exported from Affinity (or similar) with strokes expanded to fills
+- Icon colours: normal #6b6b6b, selected #00aabb, reserved #3a3a3a
+
+---
+
+## Planned Dev Tools (Advanced mode only, floating windows)
+
+- **Debug Console** — implemented; SysEx RX/TX monitor
+- **Presets Editor** — implemented; manufacturer preset management
+- **ADC Scope** — planned for hardware tuning phase; live ADC channel
+  visualiser using 'a' serial command (8 channels, 100ms interval)
+
+---
 
 ## Serial Debug Commands (firmware)
+
 - h — print help + build number
 - s — dump full config (all inputs, all DSP params)
 - a — toggle continuous ADC channel dump (100ms interval)
@@ -135,37 +190,10 @@ Last updated: 2026-06-11 (session 3)
 - n — send test note (C3, ch10)
 - r — reboot to bootloader (UF2 upload mode)
 
-## Pending — Next Sessions
-- **pdrum library review/rewrite**: biggest blocker for playable pads;
-  known gaps: rim detection (hardcoded `else if (1)`), dead choke code,
-  unused HelloDrum legacy members; no watchdog timer in firmware
-- **DSP tuning**: dial in threshold/sensitivity/mask per pad type;
-  validate rim detection on PD-7; requires hardware session
-- **Test all 4 jacks**: confirm consistent behaviour across jacks
-- **Hi-hat firmware**: A0 analog read, CC output, open/close thresholds,
-  min/max calibration (FSR-based custom controller)
-- **curves.py**: shared curve math module (VelocityCurveWidget + emulator)
-- **Move project out of Dropbox**: clone to C:\Dev\ to avoid file lock issues
-- **Watchdog timer**: add RP2040 hardware watchdog to prevent mid-session lockups
-- **Error handling hardening**: Windows MIDI/Serial crash scenarios,
-  graceful recovery from flash write interruption, factory reset via header pin button
-- **IBM Plex font bundling**: add font files to app/assets/fonts/, load via
-  QFontDatabase.addApplicationFont() in theme.py; remove Segoe UI fallback
-- **Autotrack button**: currently too visually prominent (full-width, teal);
-  needs to be small and quiet — low priority cosmetic
-- **Hi-hat controller UI**: right panel stack page 2 is a placeholder;
-  needs calibration panel (min/max range), CC mapping, open/close thresholds,
-  live position indicator; firmware implementation also pending
-- **Expansion board**: 4 more jacks (inputs 4–7), same hardware as base;
-  left panel grid expands to 2×4; expansion inputs slot in above hi-hat
-  separator; firmware and protocol changes required
-- **Tab chrome**: single-tab QTabWidget in per-pad MIDI/Options/Advanced
-  section — Options and Advanced are placeholder/disabled; revisit when
-  those panels are implemented
-- **BOAL brand**: colour palette and identity exploration deferred;
-  ClickBox product concept live in Notion
+---
 
 ## Protocol
+
 - SysEx v0.2, manufacturer ID 00 7D
 - Spec: docs/sysex_spec.md (authoritative)
 - NUM_INPUTS = 5 (4 jacks + 1 hi-hat)
@@ -173,7 +201,10 @@ Last updated: 2026-06-11 (session 3)
 - Link/unlink/input-status commands removed (02 08, 02 09, 02 0A)
 - 57 Python self-tests passing
 
+---
+
 ## Key Architecture Decisions
+
 - One PDrum instance per physical jack (not per ADC channel)
 - One InputConfig per jack; z2note/z2channel = rim zone of same jack
 - Tip = odd ADC channels = head/piezo; ring = even = rim/switch
@@ -184,7 +215,10 @@ Last updated: 2026-06-11 (session 3)
 - Python venv: app/venv (Windows), ~/edrum-venv (Mac)
 - PyQt6 pinned to 6.4.2 on Mac (Monterey compatibility)
 
-## Default DSP Values (as of refactor)
+---
+
+## Default DSP Values
+
 - threshold: 30, headSensitivity: 500, scanTime: 10, maskTime: 30
 - rimThreshold: 30, rimSensitivity: 200, velocityCurve: 0 (linear)
 - midiChannel: 10, zone2MidiChannel: 10
@@ -194,18 +228,23 @@ Last updated: 2026-06-11 (session 3)
 - Jack 3: note=51 (ride), z2=53 (ride bell)
 - Jack 4: note=44 (hi-hat pedal CC), stubbed
 
+---
+
 ## pdrum Library — Known Gaps (next major task)
-- Rim detection logic: `else if (1)` is a hardcoded placeholder — always
-  fires as head hit regardless of rim signal
+
+- Rim detection: `else if (1)` is hardcoded placeholder — always fires
+  as head hit regardless of rim signal
 - Choke detection: `else if (0)` — dead code, never reached
 - No watchdog timer integration
 - Unused HelloDrum legacy members: exTCRT, exFSR, pedalCC, hi-hat flags,
-  padtype[]/instrumentName[] arrays defined but never used by class
+  padtype[]/instrumentName[] arrays defined but never used
 - curve() uses pow() on every hit — candidate for lookup table
 - HelloDrum reference: github.com/RyoKosaka/HelloDrum-arduino-Library
-  (v0.7.7) — useful for known-good DSP parameter values per pad model
+
+---
 
 ## Known Issues / Gotchas
+
 - Windows WinMM: rtmidi callback silently drops SysEx — use polling
 - Windows WinMM: echoes sent SysEx back to input — echo filter in transport
 - RP2040 upload: 'r' serial command → bootloader, or picotool
@@ -214,15 +253,49 @@ Last updated: 2026-06-11 (session 3)
 - Changing NUM_INPUTS or InputConfig struct requires re-uploading filesystem
 - Mac SSH sessions cannot receive MIDI (no CoreMIDI run loop)
 - BLE MIDI SysEx dropped by macOS Monterey (use USB)
-- Dropbox sync causes file lock issues during Claude Code sessions
-  → plan to move project to C:\Dev\
 - PlatformIO build script: use env["PROJECT_DIR"] not __file__ (SCons context)
 - version.txt must not be empty — must contain an integer
+- MCP filesystem server: home desktop still points at old Dropbox path —
+  needs updating to D:\Dev\eDrum\edrum-project\ after migration
+
+---
+
+## Pending — Next Sessions
+
+**Firmware / hardware:**
+- pdrum library review/rewrite — rim detection, choke, watchdog timer
+- DSP tuning — threshold/sensitivity/mask per pad type on real hardware
+- Test all 4 jacks for consistent behaviour
+- Hi-hat firmware — A0 analog read, CC output, open/close thresholds
+- Watchdog timer — RP2040 hardware watchdog
+- Error handling — graceful recovery, factory reset via header pin
+
+**App:**
+- curves.py — shared curve math (VelocityCurveWidget + emulator)
+- IBM Plex font bundling — app/assets/fonts/, QFontDatabase.addApplicationFont()
+- Interface mode preference — replace --dev flag with persistent QSettings
+- Hi-hat controller UI — calibration panel, CC mapping, live position indicator
+- Autotrack button — currently too prominent, needs to be small/quiet
+- ADC Scope dev tool
+
+**Infrastructure:**
+- Migrate home desktop project out of Dropbox to D:\Dev\
+- Update MCP server config on home desktop after migration
+
+**Design / brand:**
+- BOAL colour palette and identity exploration
+- Fusion 360 case design for BT-1 family (stacking, mag connector)
+- BT-1 Screen hardware planning (ESP32-S3, 5" capacitive touch, LVGL)
+- ClickBox hardware planning (nRF52840, eInk + frontlight, NeoPixel)
+
+---
 
 ## Repo
+
 github.com/punky-labs/edrum-project
 
 ## Dev Environment
+
 - Windows: VS Code + PlatformIO + Claude Code CLI
 - MCP filesystem server: project root mounted for Claude Desktop
 - upload_protocol = picotool, upload_port = COM10 (XIAO RP2040)
