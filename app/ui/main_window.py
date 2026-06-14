@@ -48,6 +48,11 @@ except ImportError:
     from emulator.transport import EmulatorTransport  # type: ignore[no-redef]
     from emulator.window import EmulatorWindow        # type: ignore[no-redef]
 
+try:
+    from .scope_window import ScopeWindow
+except ImportError:
+    from ui.scope_window import ScopeWindow  # type: ignore[no-redef]
+
 
 class _IdentifyWorker(QThread):
     finished = pyqtSignal(dict)
@@ -73,6 +78,7 @@ class MainWindow(QMainWindow):
         self._emulator_window: Optional[EmulatorWindow]  = None
         self._presets_window: Optional[QMainWindow] = None
         self._debug_window: Optional[QMainWindow]   = None
+        self._scope_window: Optional[QMainWindow]   = None
 
         # Transport — must exist before _setup_central() builds tabs
         if "--emulator" in sys.argv:
@@ -141,6 +147,9 @@ class MainWindow(QMainWindow):
             act_debug = QAction("&Debug Console…", self)
             act_debug.triggered.connect(self._on_launch_debug_console)
             dev_menu.addAction(act_debug)
+            act_scope = QAction("ADC &Scope…", self)
+            act_scope.triggered.connect(self._on_launch_scope)
+            dev_menu.addAction(act_scope)
 
         help_menu = mb.addMenu("&Help")
         about_act = QAction("&About", self)
@@ -236,6 +245,12 @@ class MainWindow(QMainWindow):
             self._presets_window = win
         self._presets_window.show()
         self._presets_window.raise_()
+
+    def _on_launch_scope(self) -> None:
+        if self._scope_window is None:
+            self._scope_window = ScopeWindow(self)
+        self._scope_window.show()
+        self._scope_window.raise_()
 
     def _on_launch_debug_console(self) -> None:
         if self._debug_window is None:
@@ -452,6 +467,9 @@ class MainWindow(QMainWindow):
         if self._debug_window is not None:
             self._debug_window.close()
             self._debug_window = None
+        if self._scope_window is not None:
+            self._scope_window.close()
+            self._scope_window = None
         # Close emulator window if open — prevents process hanging on exit
         if self._emulator_window is not None:
             self._emulator_window.hide()
