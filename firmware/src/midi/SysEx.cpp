@@ -23,7 +23,7 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
     const size_t msgLen = 7 + payloadLen;
     uint8_t buf[320];
     if (msgLen > sizeof(buf)) {
-        Serial.printf("[SysEx TX] ERROR: payload too large (%u bytes)\n", (unsigned)payloadLen);
+        if (!g_serialQuiet) Serial.printf("[SysEx TX] ERROR: payload too large (%u bytes)\n", (unsigned)payloadLen);
         return;
     }
     buf[0] = 0xF0;
@@ -40,11 +40,13 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
     bleMidiSendSysEx(buf, msgLen);
 
     // Debug log (keep alongside USB send for now)
-    Serial.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
-    for (size_t i = 0; i < payloadLen; i++) {
-        Serial.printf(" %02X", payload[i]);
+    if (!g_serialQuiet) {
+        Serial.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
+        for (size_t i = 0; i < payloadLen; i++) {
+            Serial.printf(" %02X", payload[i]);
+        }
+        Serial.println(" F7");
     }
-    Serial.println(" F7");
 }
 
 static void sendAck(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow, uint8_t status) {
@@ -386,7 +388,7 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
 // ---- main dispatcher -------------------------------------------------------
 
 void sysexParse(const uint8_t* data, size_t len) {
-    Serial.printf("[SysEx RX] len=%u first bytes: %02X %02X %02X %02X %02X\n",
+    if (!g_serialQuiet) Serial.printf("[SysEx RX] len=%u first bytes: %02X %02X %02X %02X %02X\n",
         (unsigned)len,
         len>0?data[0]:0, len>1?data[1]:0,
         len>2?data[2]:0, len>3?data[3]:0,
@@ -401,7 +403,7 @@ void sysexParse(const uint8_t* data, size_t len) {
         return;
     }
     if (data[2] != SYSEX_DEV_HEAD) {
-        Serial.printf("[SysEx] Wrong device ID: %02X\n", data[2]);
+        if (!g_serialQuiet) Serial.printf("[SysEx] Wrong device ID: %02X\n", data[2]);
         return;
     }
 

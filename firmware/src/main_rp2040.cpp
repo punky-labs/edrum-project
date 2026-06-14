@@ -13,6 +13,7 @@
 #include "config/Config.h"
 #include "midi/SysEx.h"
 #include "pdrum/pdrum.h"
+#include "ring_buffer.h"
 
 // ---------------------------------------------------------------------------
 // USB MIDI
@@ -35,7 +36,6 @@ Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 enum LEDColor {
     BLACK, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE, ORANGE, PURPLE, PINK
 };
-
 
 static void setLED(LEDColor c) {
     uint32_t rgb;
@@ -61,15 +61,16 @@ static void setLED(LEDColor c) {
 // ---------------------------------------------------------------------------
 
 Adafruit_MCP3008 adc;
-volatile int pinVals[8];
 
-#define SMOOTHING 0.1f
-#define FLOORVAL  0
+#define ADC_PRINT_FLOOR 10
 
-static int smoothVal(int prev, int reading) {
-    if (reading < FLOORVAL) reading = 0;
-    return (int)(SMOOTHING * (float)prev + (1.0f - SMOOTHING) * (float)reading);
-}
+// ---------------------------------------------------------------------------
+// Ring buffer storage (declared in ring_buffer.h)
+// ---------------------------------------------------------------------------
+
+uint16_t          ringBuf[8][RING_BUF_SIZE];
+volatile uint32_t ringHead = 0;
+spin_lock_t*      ringLock = nullptr;
 
 // ---------------------------------------------------------------------------
 // PDrum instances
@@ -130,9 +131,19 @@ static void onSysEx(byte* data, unsigned size) {
 
 static void printHelp() {
     Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
+    Serial.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
 }
 
 static bool g_adcDump = false;
+bool g_serialQuiet = false;
+
+// Scope state
+static bool     g_scopeActive  = false;
+static uint8_t  g_scopeInput   = 0;
+static uint16_t g_scopeFloor   = 10;
+static bool     g_scopePending = false;
+static uint32_t g_scopeSnap    = 0;
+static bool     g_scopeIsRim   = false;
 
 static void handleSerial(char cmd) {
     switch (cmd) {
@@ -179,7 +190,37 @@ static void handleSerial(char cmd) {
         }
         case 'a': {
             g_adcDump = !g_adcDump;
+            if (g_adcDump && g_scopeActive) {
+                g_scopeActive  = false;
+                g_scopePending = false;
+                Serial.println("[SCOPE] Warning: scope disabled — ADC dump active");
+            }
+            g_serialQuiet = g_adcDump;
             Serial.println(g_adcDump ? "[ADC] Dump ON" : "[ADC] Dump OFF");
+            break;
+        }
+        case 'o': {
+            String args = Serial.readStringUntil('\n');
+            args.trim();
+            if (args.length() == 0) {
+                Serial.println("[SCOPE] Usage: o <input> <floor>  |  o off");
+            } else if (args.startsWith("off")) {
+                g_scopeActive  = false;
+                g_scopePending = false;
+                Serial.println("[SCOPE] Disabled");
+            } else {
+                int inp = -1, flr = 10;
+                if (sscanf(args.c_str(), "%d %d", &inp, &flr) >= 1
+                        && inp >= 0 && inp < NUM_INPUTS) {
+                    g_scopeActive  = true;
+                    g_scopeInput   = (uint8_t)inp;
+                    g_scopeFloor   = (uint16_t)flr;
+                    g_scopePending = false;
+                    Serial.printf("[SCOPE] Active: input=%d floor=%d\n", inp, flr);
+                } else {
+                    Serial.printf("[SCOPE] Error: input must be 0-%d\n", NUM_INPUTS - 1);
+                }
+            }
             break;
         }
         case 'h': {
@@ -201,6 +242,36 @@ static uint8_t rawToMidi(int raw, uint16_t threshold, uint16_t sens) {
     if (mapped < 0)   return 0;
     if (mapped > 127) return 127;
     return (uint8_t)mapped;
+}
+
+// ---------------------------------------------------------------------------
+// Scope capture dump — called after 100 post-hit samples have accumulated
+// ---------------------------------------------------------------------------
+
+static void scopeDump(int input, bool isRim) {
+    int8_t hc = kHeadCh[input];
+    int8_t rc = kRimCh[input];
+
+    static const uint32_t PRE   = 100;
+    static const uint32_t POST  = 100;
+    static const uint32_t TOTAL = PRE + POST;
+
+    int headPeak = 0, rimPeak = 0;
+    for (uint32_t t = 0; t < TOTAL; t++) {
+        uint32_t idx = g_scopeSnap - PRE + t;
+        if (hc >= 0) { int v = (int)ringBufRead((uint8_t)hc, idx); if (v > headPeak) headPeak = v; }
+        if (rc >= 0) { int v = (int)ringBufRead((uint8_t)rc, idx); if (v > rimPeak)  rimPeak  = v; }
+    }
+
+    Serial.printf("[SCOPE] input=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
+        input, (int)hc, (int)rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
+    Serial.println("T,H,R");
+    for (uint32_t t = 0; t < TOTAL; t++) {
+        uint32_t idx = g_scopeSnap - PRE + t;
+        int h = (hc >= 0) ? (int)ringBufRead((uint8_t)hc, idx) : 0;
+        int r = (rc >= 0) ? (int)ringBufRead((uint8_t)rc, idx) : 0;
+        Serial.printf("%d,%d,%d\n", (int)t, h, r);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,20 +335,38 @@ void loop() {
     }
 
     static unsigned long lastAdcPrint = 0;
-        if (g_adcDump && millis() - lastAdcPrint >= 100) {
-            lastAdcPrint = millis();
-            Serial.printf("[ADC] 0:%4d 1:%4d 2:%4d 3:%4d 4:%4d 5:%4d 6:%4d 7:%4d\n",
-                pinVals[0], pinVals[1], pinVals[2], pinVals[3],
-                pinVals[4], pinVals[5], pinVals[6], pinVals[7]);
+    if (g_adcDump && millis() - lastAdcPrint >= 100) {
+        lastAdcPrint = millis();
+        uint32_t snap = ringHead;
+        bool anyAboveFloor = false;
+        for (int ch = 0; ch < 8; ch++) {
+            if (ringBufRead((uint8_t)ch, snap - 1) > ADC_PRINT_FLOOR) {
+                anyAboveFloor = true;
+                break;
+            }
         }
+        if (anyAboveFloor) {
+            Serial.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
+                ringBufRead(0, snap-1), ringBufRead(1, snap-1),
+                ringBufRead(2, snap-1), ringBufRead(3, snap-1),
+                ringBufRead(4, snap-1), ringBufRead(5, snap-1),
+                ringBufRead(6, snap-1), ringBufRead(7, snap-1));
+        }
+    }
+
+    // Fire pending scope dump once 100 post-hit samples have accumulated
+    if (g_scopePending && (ringHead - g_scopeSnap) >= 100) {
+        scopeDump((int)g_scopeInput, g_scopeIsRim);
+        g_scopePending = false;
+    }
 
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!drums[i]) continue;
 
         int8_t hc = kHeadCh[i];
         int8_t rc = kRimCh[i];
-        int headVal = (hc >= 0) ? (int)pinVals[hc] : 0;
-        int rimVal  = (rc >= 0) ? (int)pinVals[rc]  : 0;
+        int headVal = (hc >= 0) ? (int)ringBufRead((uint8_t)hc, ringHead - 1) : 0;
+        int rimVal  = (rc >= 0) ? (int)ringBufRead((uint8_t)rc, ringHead - 1) : 0;
 
         drums[i]->sensing(headVal, rimVal);
 
@@ -290,12 +379,19 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
-                          i, note, vel, raw_vel, ch);
+            if (!g_adcDump) Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
+                         i, note, vel, raw_vel, ch);
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
             uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_HEAD, raw_vel, vel };
             sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
                               SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
+                    && (drums[i]->velocityRaw    >= g_scopeFloor
+                     || drums[i]->velocityRimRaw >= g_scopeFloor)) {
+                g_scopePending = true;
+                g_scopeSnap    = ringHead;
+                g_scopeIsRim   = false;
+            }
         } else if (drums[i]->hitRim) {
             byte note    = drums[i]->noteRim;
             byte vel     = (byte)constrain(drums[i]->velocityRim, 0, 127);
@@ -305,12 +401,19 @@ void loop() {
                                      g_inputs[i].rimSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
-                          i, note, vel, raw_vel, ch);
+            if (!g_adcDump) Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
+                         i, note, vel, raw_vel, ch);
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
             uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
             sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
                               SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
+                    && (drums[i]->velocityRaw    >= g_scopeFloor
+                     || drums[i]->velocityRimRaw >= g_scopeFloor)) {
+                g_scopePending = true;
+                g_scopeSnap    = ringHead;
+                g_scopeIsRim   = true;
+            }
         }
     }
 }
@@ -322,10 +425,13 @@ void loop() {
 void setup1() {
     // SCK=2, MOSI=3, MISO=4, CS=1
     adc.begin(2, 3, 4, 1);
+    ringBufInit();
 }
 
 void loop1() {
+    uint16_t samples[8];
     for (int ch = 0; ch < 8; ch++) {
-        pinVals[ch] = smoothVal((int)pinVals[ch], adc.readADC(ch));
+        samples[ch] = (uint16_t)adc.readADC(ch);
     }
+    ringBufWrite(samples);
 }

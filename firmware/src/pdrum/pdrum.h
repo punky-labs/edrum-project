@@ -10,6 +10,8 @@
 #ifndef PDrum_h
 #define PDrum_h
 
+#define SPIKE_THRESHOLD 200
+
 #include "Arduino.h"
 
 const static char *padtype[] = {
@@ -107,8 +109,11 @@ private:
   unsigned long time_hit_pedal_2;
 
   int curve(int velocityRaw, int threshold, int sensRaw, byte curveType);
-  
 
+  int prevPiezoValue     = 0;
+  int prevPrevPiezoValue = 0;
+  int prevRimValue       = 0;
+  int prevPrevRimValue   = 0;
 };
 
 

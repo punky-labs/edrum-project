@@ -58,7 +58,20 @@ void PDrum::sensing(int piezoValue, int rimValue)
   int RimThreshold = rimThreshold;
   int RimSensitivity = rimSensitivity;
 
-  //Serial.println(piezoValue);
+  // Spike rejection — discard single-sample outliers
+  if (abs(piezoValue - prevPiezoValue) > SPIKE_THRESHOLD &&
+      abs(piezoValue - prevPrevPiezoValue) > SPIKE_THRESHOLD) {
+      piezoValue = prevPiezoValue;
+  }
+  prevPrevPiezoValue = prevPiezoValue;
+  prevPiezoValue     = piezoValue;
+
+  if (abs(rimValue - prevRimValue) > SPIKE_THRESHOLD &&
+      abs(rimValue - prevPrevRimValue) > SPIKE_THRESHOLD) {
+      rimValue = prevRimValue;
+  }
+  prevPrevRimValue = prevRimValue;
+  prevRimValue     = rimValue;
 
   hit = false;
   hitRim = false;

@@ -6,6 +6,8 @@
 #define MAX_PRESETS     16
 #define PRESET_NAME_LEN 16
 
+extern bool g_serialQuiet;
+
 struct __attribute__((packed)) InputConfig {
     uint8_t  padType;
     uint16_t threshold;      // 0–1023 (ADC range); encode as 2x 7-bit bytes in SysEx

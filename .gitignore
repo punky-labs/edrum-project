@@ -15,3 +15,6 @@ app/test_midi.py
 
 # App logs (runtime artefacts)
 app/logs/
+
+# Reference libraries (local only, not part of build)
+firmware/reference/

@@ -1,3 +1,3 @@
 @echo off
 call app\venv\Scripts\activate
-python app\main.py  --dev
+python app\main.py  --dev --emulator
