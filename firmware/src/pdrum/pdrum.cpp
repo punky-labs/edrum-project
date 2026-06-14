@@ -50,7 +50,7 @@ PDrum::PDrum(byte pin1, byte pin2)
 //
 // 
 //
-void PDrum::sensing(int piezoValue, int rimValue)
+void PDrum::sensing(int piezoValue, int rimValue, uint32_t currentRingHead)
 {
 
   int Threshold = headThreshold;
@@ -91,6 +91,7 @@ void PDrum::sensing(int piezoValue, int rimValue)
       velocity = piezoValue; //first peak
       velocityRim = rimValue;
       loopTimes = 1;         //start scan trigger
+      triggerSnap = currentRingHead; // snapshot ring buffer position at threshold crossing
     }
   }
 

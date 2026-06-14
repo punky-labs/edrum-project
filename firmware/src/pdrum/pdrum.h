@@ -46,6 +46,7 @@ public:
   int velocityRim;
   int velocityRaw;     // pre-curve head velocity (ADC units, 0-1023)
   int velocityRimRaw;  // pre-curve rim velocity (ADC units, 0-1023)
+  uint32_t triggerSnap = 0;  // ringHead value at threshold crossing — for scope capture
   int velocityCup;
   byte pedalCC;
 
@@ -89,7 +90,7 @@ public:
   byte pin_1;
   byte pin_2;
 
-  void sensing(int piezoValue, int rimValue);
+  void sensing(int piezoValue, int rimValue, uint32_t currentRingHead = 0);
 
 private:
   int piezoValue;

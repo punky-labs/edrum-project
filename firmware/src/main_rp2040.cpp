@@ -368,7 +368,7 @@ void loop() {
         int headVal = (hc >= 0) ? (int)ringBufRead((uint8_t)hc, ringHead - 1) : 0;
         int rimVal  = (rc >= 0) ? (int)ringBufRead((uint8_t)rc, ringHead - 1) : 0;
 
-        drums[i]->sensing(headVal, rimVal);
+        drums[i]->sensing(headVal, rimVal, ringHead);
 
         if (drums[i]->hit) {
             byte note    = drums[i]->noteHead;
@@ -389,7 +389,7 @@ void loop() {
                     && (drums[i]->velocityRaw    >= g_scopeFloor
                      || drums[i]->velocityRimRaw >= g_scopeFloor)) {
                 g_scopePending = true;
-                g_scopeSnap    = ringHead;
+                g_scopeSnap    = drums[i]->triggerSnap;
                 g_scopeIsRim   = false;
             }
         } else if (drums[i]->hitRim) {
@@ -411,7 +411,7 @@ void loop() {
                     && (drums[i]->velocityRaw    >= g_scopeFloor
                      || drums[i]->velocityRimRaw >= g_scopeFloor)) {
                 g_scopePending = true;
-                g_scopeSnap    = ringHead;
+                g_scopeSnap    = drums[i]->triggerSnap;
                 g_scopeIsRim   = true;
             }
         }
