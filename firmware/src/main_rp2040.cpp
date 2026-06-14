@@ -132,6 +132,8 @@ static void onSysEx(byte* data, unsigned size) {
 static void printHelp() {
     Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
     Serial.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
+    Serial.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
+    Serial.println("  params: thresh sens scan mask retrig");
 }
 
 static bool g_adcDump = false;
@@ -225,6 +227,32 @@ static void handleSerial(char cmd) {
         }
         case 'h': {
             printHelp();
+            break;
+        }
+        case 'w': {
+            String args = Serial.readStringUntil('\n');
+            args.trim();
+            int inp = -1, val = -1;
+            char param[16] = {};
+            if (sscanf(args.c_str(), "%d %15s %d", &inp, param, &val) == 3
+                    && inp >= 0 && inp < NUM_INPUTS && val >= 0) {
+                String p = String(param);
+                bool ok = true;
+                if      (p == "thresh")  { g_inputs[inp].threshold       = (uint16_t)val; }
+                else if (p == "sens")    { g_inputs[inp].headSensitivity  = (uint16_t)val; }
+                else if (p == "scan")    { g_inputs[inp].scanTime         = (uint16_t)val; }
+                else if (p == "mask")    { g_inputs[inp].maskTime         = (uint16_t)val; }
+                else if (p == "retrig")  { g_inputs[inp].retriggerTime    = (uint16_t)val; }
+                else { Serial.printf("[w] Unknown param '%s'\n", param); ok = false; }
+                if (ok) {
+                    applyConfig();
+                    g_save_requested = true;
+                    Serial.printf("[w] input=%d %s=%d OK\n", inp, param, val);
+                }
+            } else {
+                Serial.println("[w] Usage: w <input> <param> <value>");
+                Serial.println("[w] params: thresh sens scan mask retrig");
+            }
             break;
         }
         default:

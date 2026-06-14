@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-12
+Last updated: 2026-06-14
 
 ---
 
@@ -175,8 +175,56 @@ better. BOAL's vision is trigger interface + user's existing software.
 
 - **Debug Console** — implemented; SysEx RX/TX monitor
 - **Presets Editor** — implemented; manufacturer preset management
-- **ADC Scope** — planned for hardware tuning phase; live ADC channel
-  visualiser using 'a' serial command (8 channels, 100ms interval)
+- **ADC Scope** — implemented (app/ui/scope_window.py); see ADC Scope section below
+
+---
+
+## ADC Scope Tool
+
+Fully implemented dev-mode floating window (app/ui/scope_window.py).
+Opened from Dev menu → ADC Scope…
+
+**Architecture:**
+- Independent serial connection (115200 baud) to RP2040 USB CDC
+- _SerialReader(QThread): state-machine parser for [SCOPE]/T,H,R/CSV protocol
+- pyqtgraph chart: head (teal #2dd4bf) and rim (orange #fb923c) traces
+- Overlays: Floor line, Trigger marker, Threshold line, Scan region, Mask region
+- Session log: one row per capture, click to replot
+- Serial output panel: all non-scope firmware output displayed live
+- Serial input bar: send any command directly to firmware
+- Load Settings button: sends 's' command, parses config for selected input,
+  overlays threshold/scan/mask/retrig values on graph
+- Arm/Disarm: single toggle button, teal when armed
+- Auto-save: timestamped CSVs to app/logs/scope/
+- Export CSV: full session log
+- Copy from serial output: select lines + Ctrl+C or right-click → Copy
+
+**Firmware scope protocol:**
+- 'o <input> <floor>' — arm scope on input, floor=noise gate
+- 'o off' — disarm scope
+- 'w <input> <param> <value>' — set DSP param live via serial
+  params: thresh, sens, scan, mask, retrig
+  (applies immediately via applyConfig() + deferred LittleFS save)
+- Scope captures 200 samples: 100 pre-trigger + 100 post-trigger
+- Trigger snapshot taken at threshold crossing (triggerSnap field in PDrum),
+  not at scan end — gives accurate pre-trigger view of attack
+- g_serialQuiet flag suppresses [HIT]/[RIM]/[SysEx] prints during ADC dump
+
+**Key findings from scope sessions (CY-5 cymbal on input 0):**
+- CY-5 head and rim piezos are strongly coupled — both channels activate
+  on any strike. Amplitude ratio alone is insufficient for discrimination.
+- Time-of-first-peak is a more reliable discriminator for this pad type:
+  rim hit → orange leads; head hit → teal leads
+- Cymbal resonance produces rhythmic oscillations lasting 20ms+
+  after the initial strike — mask time needs to cover full decay
+- Choke/grip signature is completely distinct from a hit:
+  sustained plateau on rim channel, head stays at noise floor,
+  slow rise/flat top vs sharp spike/fast decay of a hit
+- PDX-12 mesh pad: head/rim channels very well isolated (10:1 ratio on
+  head hits), amplitude discrimination works well for this pad type
+- PD-7 rubber pad: very clean sharp transient, fast decay
+- Current pdrum discrimination algorithm (difference-based) unreliable
+  for CY-5 — ratio-based and/or time-of-peak approach needed
 
 ---
 
@@ -185,6 +233,9 @@ better. BOAL's vision is trigger interface + user's existing software.
 - h — print help + build number
 - s — dump full config (all inputs, all DSP params)
 - a — toggle continuous ADC channel dump (100ms interval)
+- o <input> <floor> — arm scope capture on input
+- o off — disarm scope
+- w <input> <param> <value> — set DSP param live (thresh/sens/scan/mask/retrig)
 - p — send SysEx ping
 - i — send SysEx identify request
 - n — send test note (C3, ch10)
@@ -214,6 +265,11 @@ better. BOAL's vision is trigger interface + user's existing software.
   changing NUM_INPUTS invalidates saved config (resets to defaults, correct)
 - Python venv: app/venv (Windows), ~/edrum-venv (Mac)
 - PyQt6 pinned to 6.4.2 on Mac (Monterey compatibility)
+- Ring buffer architecture: Core 1 writes raw ADC to ringBuf[8][1024],
+  Core 0 reads for sensing — clean separation, no smoothing on Core 1
+- Spike rejection in pdrum::sensing() replaces EWMA smoothing
+- Scope serial connection is independent of MIDI transport — both can
+  coexist but avoid simultaneous heavy traffic (WinMM USB hiccup risk)
 
 ---
 
@@ -232,14 +288,26 @@ better. BOAL's vision is trigger interface + user's existing software.
 
 ## pdrum Library — Known Gaps (next major task)
 
-- Rim detection: `else if (1)` is hardcoded placeholder — always fires
-  as head hit regardless of rim signal
-- Choke detection: `else if (0)` — dead code, never reached
+- Rim discrimination: current difference-based algorithm unreliable,
+  especially for coupled piezos (CY-5). Needs ratio-based and/or
+  time-of-first-peak approach. Full waveform data now available via
+  ring buffer to support smarter algorithms.
+- Choke detection: signal signature now confirmed via scope (sustained
+  rim plateau, flat head channel). Ready to implement.
+- PAD_TYPE_PIEZO_SWITCH not yet implemented — PD-7/CY-5 switch-type rim
+  needs inverted detection logic (voltage drop, not spike)
 - No watchdog timer integration
 - Unused HelloDrum legacy members: exTCRT, exFSR, pedalCC, hi-hat flags,
   padtype[]/instrumentName[] arrays defined but never used
 - curve() uses pow() on every hit — candidate for lookup table
 - HelloDrum reference: github.com/RyoKosaka/HelloDrum-arduino-Library
+
+**Algorithm improvements planned (priority order):**
+1. Ratio-based head/rim discrimination (replaces difference-based)
+2. Time-of-first-peak discriminator for strongly-coupled pads (CY-5)
+3. Choke detection — sustained rim plateau detection, send note-off
+4. PAD_TYPE_PIEZO_SWITCH — inverted rim detection for switch-type pads
+5. Autocalibrate — derive thresh/scan/mask from captured waveform data
 
 ---
 
@@ -262,13 +330,14 @@ better. BOAL's vision is trigger interface + user's existing software.
 
 ## Pending — Next Sessions
 
-**Firmware / hardware:**
-- pdrum library review/rewrite — rim detection, choke, watchdog timer
-- DSP tuning — threshold/sensitivity/mask per pad type on real hardware
-- Test all 4 jacks for consistent behaviour
-- Hi-hat firmware — A0 analog read, CC output, open/close thresholds
-- Watchdog timer — RP2040 hardware watchdog
-- Error handling — graceful recovery, factory reset via header pin
+**Firmware / hardware (priority order):**
+1. pdrum algorithm rewrite — ratio-based discrimination, time-of-peak,
+   choke detection, PAD_TYPE_PIEZO_SWITCH (see pdrum Known Gaps above)
+2. Per-pad-type default presets — CY-5, PDX-8/12, PD-7, KD-80 starting values
+3. Test all 4 jacks for consistent behaviour
+4. Hi-hat firmware — A0 analog read, CC output, open/close thresholds
+5. Watchdog timer — RP2040 hardware watchdog
+6. Error handling — graceful recovery, factory reset via header pin
 
 **App:**
 - curves.py — shared curve math (VelocityCurveWidget + emulator)
@@ -276,7 +345,9 @@ better. BOAL's vision is trigger interface + user's existing software.
 - Interface mode preference — replace --dev flag with persistent QSettings
 - Hi-hat controller UI — calibration panel, CC mapping, live position indicator
 - Autotrack button — currently too prominent, needs to be small/quiet
-- ADC Scope dev tool
+- Scope window: fix Ctrl+C copy (focus issue on QListWidget)
+- Scope window: MIDI transport warning when scope serial connected
+- Autocalibrate feature (deferred — needs algorithm work first)
 
 **Infrastructure:**
 - Migrate home desktop project out of Dropbox to D:\Dev\
