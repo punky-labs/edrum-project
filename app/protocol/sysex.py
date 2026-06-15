@@ -69,22 +69,21 @@ PAD_SET_SCAN       = 0x0C
 PAD_SET_MASK       = 0x0D
 PAD_SET_RIM_SENS   = 0x0E
 PAD_SET_RIM_THRESH = 0x0F
+PAD_SET_CHOKE_EN   = 0x10   # Set chokeEnabled for PIEZO_SWITCH_CHOKE pads
 
 # Pad type values
-PAD_TYPE_PIEZO        = 0x00   # Single piezo (head only)
-PAD_TYPE_PIEZO_RIM    = 0x01   # Piezo + switch (head + rim)
-PAD_TYPE_RIM_ONLY     = 0x02   # Switch only
-PAD_TYPE_HIHAT_CC     = 0x03   # Hi-hat continuous controller
-PAD_TYPE_HIHAT_SW     = 0x04   # Hi-hat open/close switch
-PAD_TYPE_DUAL_PIEZO   = 0x05   # Dual piezo (e.g. mesh head)
+PAD_TYPE_DUAL_PIEZO         = 0x00   # Head piezo + rim piezo (PDX-8, PDX-12)
+PAD_TYPE_PIEZO_SWITCH_CHOKE = 0x01   # Head piezo + rim switch as choke (CY-5, PD-7, cymbals)
+PAD_TYPE_SINGLE_PIEZO       = 0x02   # Head piezo only (KD-80)
+PAD_TYPE_HIHAT_CC           = 0x03   # Hi-hat continuous controller
+PAD_TYPE_HIHAT_SW           = 0x04   # Hi-hat open/close switch
 
 PAD_TYPE_NAMES: dict[int, str] = {
-    PAD_TYPE_PIEZO:      "Single Piezo",
-    PAD_TYPE_PIEZO_RIM:  "Piezo + Switch",
-    PAD_TYPE_RIM_ONLY:   "Switch Only",
-    PAD_TYPE_HIHAT_CC:   "Hi-Hat (Continuous)",
-    PAD_TYPE_HIHAT_SW:   "Hi-Hat (Switch)",
-    PAD_TYPE_DUAL_PIEZO: "Dual Piezo",
+    PAD_TYPE_DUAL_PIEZO:         "Dual Piezo",
+    PAD_TYPE_PIEZO_SWITCH_CHOKE: "Piezo + Switch (Choke)",
+    PAD_TYPE_SINGLE_PIEZO:       "Single Piezo",
+    PAD_TYPE_HIHAT_CC:           "Hi-Hat (Continuous)",
+    PAD_TYPE_HIHAT_SW:           "Hi-Hat (Switch)",
 }
 
 # Velocity curve values
@@ -352,18 +351,32 @@ def build_set_mask_time(input_id: int, ms: int,
     return _build(CAT_PAD, PAD_SET_MASK, [input_id, hi, lo], device_id)
 
 
-def build_set_rim_sensitivity(input_id: int, value: int,
-                              device_id: int = DEV_HEAD) -> bytearray:
+def build_set_rim_ratio_threshold(input_id: int, value: int,
+                                   device_id: int = DEV_HEAD) -> bytearray:
+    """Set rimRatioThreshold for DUAL_PIEZO pads (reuses PAD_SET_RIM_SENS slot)."""
     _check_input_id(input_id)
     hi, lo = encode_14bit(value)
     return _build(CAT_PAD, PAD_SET_RIM_SENS, [input_id, hi, lo], device_id)
 
 
-def build_set_rim_threshold(input_id: int, value: int,
-                            device_id: int = DEV_HEAD) -> bytearray:
+def build_set_choke_threshold(input_id: int, value: int,
+                               device_id: int = DEV_HEAD) -> bytearray:
+    """Set chokeThreshold for PIEZO_SWITCH_CHOKE pads (reuses PAD_SET_RIM_THRESH slot)."""
     _check_input_id(input_id)
     hi, lo = encode_14bit(value)
     return _build(CAT_PAD, PAD_SET_RIM_THRESH, [input_id, hi, lo], device_id)
+
+
+def build_set_choke_enabled(input_id: int, enabled: bool,
+                             device_id: int = DEV_HEAD) -> bytearray:
+    """Set chokeEnabled for PIEZO_SWITCH_CHOKE pads."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_SET_CHOKE_EN, [input_id, 1 if enabled else 0], device_id)
+
+
+# Aliases — these now target the new firmware parameters
+build_set_rim_sensitivity = build_set_rim_ratio_threshold
+build_set_rim_threshold   = build_set_choke_threshold
 
 
 # ---------------------------------------------------------------------------
@@ -456,23 +469,24 @@ def parse_pad_config_response(payload: bytes) -> dict:
     02 07 -> {input_id, pad_type, pad_type_name, threshold,
              velocity_curve, curve_name, retrigger_time, crosstalk_group,
              head_sensitivity, scan_time, mask_time,
-             rim_sensitivity, rim_threshold}
+             rim_ratio_threshold, choke_threshold, choke_enabled}
     """
-    _require_len(payload, 18, "pad_config_response")
+    _require_len(payload, 19, "pad_config_response")
     return {
-        "input_id":         payload[0],
-        "pad_type":         payload[1],
-        "pad_type_name":    PAD_TYPE_NAMES.get(payload[1], f"0x{payload[1]:02X}"),
-        "threshold":        decode_14bit(payload[2], payload[3]),
-        "velocity_curve":   payload[4],
-        "curve_name":       CURVE_NAMES.get(payload[4], f"0x{payload[4]:02X}"),
-        "retrigger_time":   decode_14bit(payload[5], payload[6]),
-        "crosstalk_group":  payload[7],
-        "head_sensitivity": decode_14bit(payload[8],  payload[9]),
-        "scan_time":        decode_14bit(payload[10], payload[11]),
-        "mask_time":        decode_14bit(payload[12], payload[13]),
-        "rim_sensitivity":  decode_14bit(payload[14], payload[15]),
-        "rim_threshold":    decode_14bit(payload[16], payload[17]),
+        "input_id":            payload[0],
+        "pad_type":            payload[1],
+        "pad_type_name":       PAD_TYPE_NAMES.get(payload[1], f"0x{payload[1]:02X}"),
+        "threshold":           decode_14bit(payload[2],  payload[3]),
+        "velocity_curve":      payload[4],
+        "curve_name":          CURVE_NAMES.get(payload[4], f"0x{payload[4]:02X}"),
+        "retrigger_time":      decode_14bit(payload[5],  payload[6]),
+        "crosstalk_group":     payload[7],
+        "head_sensitivity":    decode_14bit(payload[8],  payload[9]),
+        "scan_time":           decode_14bit(payload[10], payload[11]),
+        "mask_time":           decode_14bit(payload[12], payload[13]),
+        "rim_ratio_threshold": decode_14bit(payload[14], payload[15]),
+        "choke_threshold":     decode_14bit(payload[16], payload[17]),
+        "choke_enabled":       bool(payload[18]),
     }
 
 
@@ -692,31 +706,32 @@ if __name__ == "__main__":
     _check("14-bit round-trips to 50",   decode_14bit(p[1], p[2]) == 50)
 
     # ── Pad config response parser ────────────────────────────────────────────
-    print("\nPad config response parser (02 07) — 18 bytes:")
+    print("\nPad config response parser (02 07) — 19 bytes:")
     thi, tlo = encode_14bit(750)
     rhi, rlo = encode_14bit(50)
     shi, slo = encode_14bit(1000)
     sch, scl = encode_14bit(10)
     mhi, mlo = encode_14bit(30)
-    rshi, rslo = encode_14bit(200)
-    rthi, rtlo = encode_14bit(30)
+    rrhi, rrlo = encode_14bit(40)
+    cthi, ctlo = encode_14bit(80)
     fake = bytes([
-        3, PAD_TYPE_PIEZO_RIM, thi, tlo, CURVE_EXPRESSIVE, rhi, rlo, 1,
-        shi, slo, sch, scl, mhi, mlo, rshi, rslo, rthi, rtlo
+        3, PAD_TYPE_DUAL_PIEZO, thi, tlo, CURVE_EXPRESSIVE, rhi, rlo, 1,
+        shi, slo, sch, scl, mhi, mlo, rrhi, rrlo, cthi, ctlo, 1
     ])
     result = parse_pad_config_response(fake)
-    _check("input_id == 3",              result["input_id"]         == 3)
-    _check("pad_type == PIEZO_RIM",      result["pad_type"]         == PAD_TYPE_PIEZO_RIM)
-    _check("threshold == 750",           result["threshold"]        == 750)
-    _check("curve == EXPRESSIVE",        result["velocity_curve"]   == CURVE_EXPRESSIVE)
-    _check("curve_name == 'Expressive'", result["curve_name"]       == "Expressive")
-    _check("retrigger_time == 50",       result["retrigger_time"]   == 50)
-    _check("crosstalk_group == 1",       result["crosstalk_group"]  == 1)
-    _check("head_sensitivity == 1000",   result["head_sensitivity"] == 1000)
-    _check("scan_time == 10",            result["scan_time"]        == 10)
-    _check("mask_time == 30",            result["mask_time"]        == 30)
-    _check("rim_sensitivity == 200",     result["rim_sensitivity"]  == 200)
-    _check("rim_threshold == 30",        result["rim_threshold"]    == 30)
+    _check("input_id == 3",                  result["input_id"]            == 3)
+    _check("pad_type == DUAL_PIEZO",         result["pad_type"]            == PAD_TYPE_DUAL_PIEZO)
+    _check("threshold == 750",               result["threshold"]           == 750)
+    _check("curve == EXPRESSIVE",            result["velocity_curve"]      == CURVE_EXPRESSIVE)
+    _check("curve_name == 'Expressive'",     result["curve_name"]          == "Expressive")
+    _check("retrigger_time == 50",           result["retrigger_time"]      == 50)
+    _check("crosstalk_group == 1",           result["crosstalk_group"]     == 1)
+    _check("head_sensitivity == 1000",       result["head_sensitivity"]    == 1000)
+    _check("scan_time == 10",                result["scan_time"]           == 10)
+    _check("mask_time == 30",                result["mask_time"]           == 30)
+    _check("rim_ratio_threshold == 40",      result["rim_ratio_threshold"] == 40)
+    _check("choke_threshold == 80",          result["choke_threshold"]     == 80)
+    _check("choke_enabled is True",          result["choke_enabled"]       is True)
 
     # ── Link / unlink ─────────────────────────────────────────────────────────
     print("\nLink inputs (02 08):")

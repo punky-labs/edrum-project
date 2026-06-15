@@ -398,14 +398,15 @@ class ScopeWindow(QMainWindow):
         )
         pw.addItem(self._floor_line)
 
-        # Trigger at sample 100 (centre of the 200-sample window)
+        # Trigger at sample 100 (centre of the 200-sample window) = ~10.7ms
         self._trigger_line = pg.InfiniteLine(
-            pos=100, angle=90,
+            pos=100 * 0.107, angle=90,
             pen=pg.mkPen(color="#888888", width=1, style=Qt.PenStyle.DashLine),
             label="Trigger",
             labelOpts={"color": "#888888", "position": 0.9},
         )
         pw.addItem(self._trigger_line)
+        pw.getPlotItem().getAxis("bottom").setLabel("Time (ms)")
 
         # Threshold line (from pad config)
         self._thresh_line = pg.InfiniteLine(
@@ -421,8 +422,8 @@ class ScopeWindow(QMainWindow):
         self._scan_region = pg.LinearRegionItem(
             values=[100, 110],
             orientation="vertical",
-            brush=pg.mkBrush(color=(100, 200, 180, 25)),
-            pen=pg.mkPen(color=(100, 200, 180, 80), width=1),
+            brush=pg.mkBrush(color=(100, 200, 180, 60)),
+            pen=pg.mkPen(color=(100, 200, 180, 180), width=1),
             movable=False,
         )
         self._scan_region.setVisible(False)
@@ -432,8 +433,8 @@ class ScopeWindow(QMainWindow):
         self._mask_region = pg.LinearRegionItem(
             values=[100, 130],
             orientation="vertical",
-            brush=pg.mkBrush(color=(251, 146, 60, 20)),
-            pen=pg.mkPen(color=(251, 146, 60, 60), width=1),
+            brush=pg.mkBrush(color=(251, 146, 60, 40)),
+            pen=pg.mkPen(color=(251, 146, 60, 120), width=1),
             movable=False,
         )
         self._mask_region.setVisible(False)
@@ -647,18 +648,16 @@ class ScopeWindow(QMainWindow):
         self._thresh_line.setValue(thresh)
         self._thresh_line.setVisible(True)
 
-        # Convert scan/mask ms → approximate sample count
-        # Core 1 samples all 8 channels; MCP3008 ~75k SPS total → ~9375 SPS per channel
-        # ≈ 0.107 ms per sample → samples = ms / 0.107
-        MS_PER_SAMPLE = 0.107
-        scan_samples  = int(scan   / MS_PER_SAMPLE)
-        mask_samples  = int(mask   / MS_PER_SAMPLE)
-        trigger_pos   = 100   # trigger line is always at sample 100
+        # Chart is now in ms — use ms values directly
+        trigger_ms = 100 * 0.107   # trigger line position in ms
 
-        self._scan_region.setRegion([trigger_pos, trigger_pos + scan_samples])
+        scan_end = trigger_ms + scan
+        mask_end = trigger_ms + mask
+
+        self._scan_region.setRegion([trigger_ms, scan_end])
         self._scan_region.setVisible(True)
 
-        self._mask_region.setRegion([trigger_pos, trigger_pos + mask_samples])
+        self._mask_region.setRegion([scan_end, mask_end])
         self._mask_region.setVisible(True)
 
     def _copy_serial_output(self) -> None:
@@ -684,7 +683,8 @@ class ScopeWindow(QMainWindow):
         if not _PG:
             return
         meta, head, rim = self._captures[idx]
-        xs = list(range(len(head)))
+        MS_PER_SAMPLE = 0.107
+        xs = [i * MS_PER_SAMPLE for i in range(len(head))]
         self._head_curve.setData(xs, head)
         self._rim_curve.setData(xs, rim)
 
@@ -698,12 +698,19 @@ class ScopeWindow(QMainWindow):
             f"decision={decision}\nhead_peak={head_peak}\nrim_peak={rim_peak}"
         )
 
-        max_x = xs[-1] if xs else 200
+        max_x = xs[-1] if xs else 200 * MS_PER_SAMPLE
         all_y = head + rim
         max_y = max(all_y) if all_y else 1023
         self._annotation.setPos(max_x, max_y)
 
         self._floor_line.setValue(self._floor_spin.value())
+
+        # Update trigger line and overlays to ms coordinates
+        trigger_ms = 100 * MS_PER_SAMPLE
+        self._trigger_line.setValue(trigger_ms)
+        self._plot_widget.getPlotItem().getAxis("bottom").setLabel("Time (ms)")
+        if self._pad_config:
+            self._apply_pad_config(self._pad_config)
 
     def _on_log_item_clicked(self, item: QListWidgetItem) -> None:
         idx = item.data(Qt.ItemDataRole.UserRole)

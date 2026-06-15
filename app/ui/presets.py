@@ -5,8 +5,7 @@ Loads/saves app/presets.json. Provides helpers for the UI.
 
 Preset schema per entry:
   pad_type, threshold, head_sensitivity, scan_time, mask_time,
-  rim_threshold, rim_sensitivity
-  (all int)
+  rim_ratio_threshold, choke_threshold (all int), choke_enabled (bool)
 """
 from __future__ import annotations
 

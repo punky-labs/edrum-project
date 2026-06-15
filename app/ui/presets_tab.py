@@ -45,9 +45,9 @@ except ImportError:
     )
 
 try:
-    from ..protocol.sysex import PAD_TYPE_NAMES, PAD_TYPE_PIEZO
+    from ..protocol.sysex import PAD_TYPE_NAMES, PAD_TYPE_DUAL_PIEZO
 except ImportError:
-    from protocol.sysex import PAD_TYPE_NAMES, PAD_TYPE_PIEZO  # type: ignore[no-redef]
+    from protocol.sysex import PAD_TYPE_NAMES, PAD_TYPE_DUAL_PIEZO  # type: ignore[no-redef]
 
 
 class PresetsTab(QWidget):
@@ -305,7 +305,7 @@ class PresetsTab(QWidget):
             return
         name = name.strip()
         defaults: dict = {
-            "pad_type":         PAD_TYPE_PIEZO,
+            "pad_type":         PAD_TYPE_DUAL_PIEZO,
             "threshold":        100,
             "head_sensitivity": 800,
             "scan_time":        10,

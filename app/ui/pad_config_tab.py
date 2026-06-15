@@ -12,6 +12,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPolygon
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -64,18 +65,19 @@ try:
         CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
         NUM_INPUTS,
         PAD_TYPE_NAMES, CURVE_NAMES,
-        PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
+        PAD_TYPE_DUAL_PIEZO, PAD_TYPE_PIEZO_SWITCH_CHOKE, PAD_TYPE_SINGLE_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
         ZONE_HEAD, ZONE_RIM,
         PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
         PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
+        PAD_SET_CHOKE_EN,
         MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
         SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
         build_set_pad_type, build_set_threshold, build_set_velocity_curve,
         build_set_retrigger_time, build_set_head_sensitivity,
         build_set_scan_time, build_set_mask_time,
-        build_set_rim_sensitivity, build_set_rim_threshold,
+        build_set_rim_ratio_threshold, build_set_choke_threshold, build_set_choke_enabled,
         build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
         build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
@@ -87,18 +89,19 @@ except ImportError:
         CAT_PAD, CAT_MIDI, CAT_STATUS, CAT_SYS,
         NUM_INPUTS,
         PAD_TYPE_NAMES, CURVE_NAMES,
-        PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO,
+        PAD_TYPE_DUAL_PIEZO, PAD_TYPE_PIEZO_SWITCH_CHOKE, PAD_TYPE_SINGLE_PIEZO,
         PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW,
         ZONE_HEAD, ZONE_RIM,
         PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
         PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
+        PAD_SET_CHOKE_EN,
         MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
         SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
         build_set_pad_type, build_set_threshold, build_set_velocity_curve,
         build_set_retrigger_time, build_set_head_sensitivity,
         build_set_scan_time, build_set_mask_time,
-        build_set_rim_sensitivity, build_set_rim_threshold,
+        build_set_rim_ratio_threshold, build_set_choke_threshold, build_set_choke_enabled,
         build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
         build_save_to_flash,
         parse_pad_config_response, parse_midi_mapping_response,
@@ -128,7 +131,8 @@ try:
 except ImportError:
     _QTA = False
 
-_DUAL_ZONE_TYPES = {PAD_TYPE_PIEZO_RIM, PAD_TYPE_DUAL_PIEZO}
+_DUAL_ZONE_TYPES = {PAD_TYPE_DUAL_PIEZO}
+_CHOKE_TYPES     = {PAD_TYPE_PIEZO_SWITCH_CHOKE}
 _HIHAT_TYPES     = {PAD_TYPE_HIHAT_CC, PAD_TYPE_HIHAT_SW}
 
 # Input 4 is hardwired to the hi-hat controller jack (A0 on RP2040)
@@ -216,13 +220,13 @@ def gm_note_display(note: int) -> str:
 
 # (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, suffix)
 _TRIGGER_BUILDERS: dict[str, tuple] = {
-    "_thresh":     (build_set_threshold,        CAT_PAD, PAD_SET_THRESH,     "threshold",        0, 1023, ""),
-    "_sens":       (build_set_head_sensitivity, CAT_PAD, PAD_SET_SENS,       "head_sensitivity", 0, 1023, ""),
-    "_scan":       (build_set_scan_time,        CAT_PAD, PAD_SET_SCAN,       "scan_time",        0, 100,  " ms"),
-    "_mask":       (build_set_mask_time,        CAT_PAD, PAD_SET_MASK,       "mask_time",        0, 500,  " ms"),
-    "_retrig":     (build_set_retrigger_time,   CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",   0, 1000, " ms"),
-    "_rim_thresh": (build_set_rim_threshold,    CAT_PAD, PAD_SET_RIM_THRESH, "rim_threshold",    0, 1023, ""),
-    "_rim_sens":   (build_set_rim_sensitivity,  CAT_PAD, PAD_SET_RIM_SENS,   "rim_sensitivity",  0, 1023, ""),
+    "_thresh":       (build_set_threshold,           CAT_PAD, PAD_SET_THRESH,     "threshold",           0,  100,  ""),
+    "_sens":         (build_set_head_sensitivity,    CAT_PAD, PAD_SET_SENS,       "head_sensitivity",    0, 1023,  ""),
+    "_scan":         (build_set_scan_time,           CAT_PAD, PAD_SET_SCAN,       "scan_time",           1,   10,  " ms"),
+    "_mask":         (build_set_mask_time,           CAT_PAD, PAD_SET_MASK,       "mask_time",          10,  150,  " ms"),
+    "_retrig":       (build_set_retrigger_time,      CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",      0,  200,  " ms"),
+    "_rim_ratio":    (build_set_rim_ratio_threshold, CAT_PAD, PAD_SET_RIM_SENS,   "rim_ratio_threshold", 0,  100,  ""),
+    "_choke_thresh": (build_set_choke_threshold,     CAT_PAD, PAD_SET_RIM_THRESH, "choke_threshold",     0,  200,  ""),
 }
 
 
@@ -598,7 +602,7 @@ class _RefreshWorker(QThread):
 
         def on_pad(msg: dict) -> None:
             if (msg["cmd_high"] == CAT_PAD and msg["cmd_low"] == 0x07
-                    and len(msg["payload"]) >= 18
+                    and len(msg["payload"]) >= 19
                     and msg["payload"][0] == input_id):
                 pad_cfg.update(parse_pad_config_response(msg["payload"]))
                 event2.set()
@@ -916,13 +920,13 @@ class PadConfigTab(QWidget):
         outer.setContentsMargins(8, 16, 8, 8)
 
         params = [
-            ("Threshold",         "_thresh"),
-            ("Sensitivity",       "_sens"),
-            ("Scan Time\n(ms)",   "_scan"),
-            ("Double-Hit\n(ms)",  "_mask"),
-            ("Retrigger\n(ms)",   "_retrig"),
-            ("Rim\nThreshold",    "_rim_thresh"),
-            ("Rim\nSensitivity",  "_rim_sens"),
+            ("Threshold",       "_thresh"),
+            ("Sensitivity",     "_sens"),
+            ("Scan\n(ms)",      "_scan"),
+            ("Mask\n(ms)",      "_mask"),
+            ("Retrigger\n(ms)", "_retrig"),
+            ("Rim\nRatio",      "_rim_ratio"),
+            ("Choke\nThresh",   "_choke_thresh"),
         ]
 
         self._param_widgets: dict[str, tuple[QWidget, QWidget]] = {}
@@ -964,6 +968,12 @@ class PadConfigTab(QWidget):
             outer.addWidget(col)
             self._param_widgets[key] = (col, slider)
 
+        self._choke_enabled_cb = QCheckBox("Choke")
+        self._choke_enabled_cb.setToolTip(
+            "Enable choke detection (PIEZO_SWITCH_CHOKE pads only)"
+        )
+        self._choke_enabled_cb.stateChanged.connect(self._on_choke_enabled_changed)
+        outer.addWidget(self._choke_enabled_cb)
         outer.addStretch()
         return box
 
@@ -1130,8 +1140,10 @@ class PadConfigTab(QWidget):
             self._set_slider("_sens",       preset.get("head_sensitivity", 0))
             self._set_slider("_scan",       preset.get("scan_time", 0))
             self._set_slider("_mask",       preset.get("mask_time", 0))
-            self._set_slider("_rim_thresh", preset.get("rim_threshold", 0))
-            self._set_slider("_rim_sens",   preset.get("rim_sensitivity", 0))
+            self._set_slider("_rim_ratio",    preset.get("rim_ratio_threshold", 40))
+            self._set_slider("_choke_thresh", preset.get("choke_threshold", 50))
+            choke_en = preset.get("choke_enabled", True)
+            self._choke_enabled_cb.setChecked(choke_en)
 
             type_idx = self._type_combo.findData(pad_type)
             if type_idx >= 0:
@@ -1140,9 +1152,7 @@ class PadConfigTab(QWidget):
             for widget in self._all_editable_widgets():
                 widget.blockSignals(False)
 
-        is_dual  = pad_type in _DUAL_ZONE_TYPES
-        is_hihat = pad_type in _HIHAT_TYPES
-        self._update_zone_visibility(is_dual, is_hihat)
+        self._update_zone_visibility(pad_type)
         self.status_message.emit(
             "Preset applied — review settings and Save to Flash to write.", 5000
         )
@@ -1154,13 +1164,14 @@ class PadConfigTab(QWidget):
         name = name.strip()
 
         values = {
-            "pad_type":         self._type_combo.currentData(),
-            "threshold":        self._slider_thresh.value(),
-            "head_sensitivity": self._slider_sens.value(),
-            "scan_time":        self._slider_scan.value(),
-            "mask_time":        self._slider_mask.value(),
-            "rim_threshold":    self._slider_rim_thresh.value(),
-            "rim_sensitivity":  self._slider_rim_sens.value(),
+            "pad_type":            self._type_combo.currentData(),
+            "threshold":           self._slider_thresh.value(),
+            "head_sensitivity":    self._slider_sens.value(),
+            "scan_time":           self._slider_scan.value(),
+            "mask_time":           self._slider_mask.value(),
+            "rim_ratio_threshold": self._slider_rim_ratio.value(),
+            "choke_threshold":     self._slider_choke_thresh.value(),
+            "choke_enabled":       self._choke_enabled_cb.isChecked(),
         }
         save_user_preset(name, values)
         self._preset_data = load_presets()
@@ -1335,14 +1346,10 @@ class PadConfigTab(QWidget):
         cfg = self._configs.get(input_id, {})
 
         pad_type = cfg.get("pad_type", 0)
-        is_dual  = pad_type in _DUAL_ZONE_TYPES
-        is_hihat = pad_type in _HIHAT_TYPES
 
         # Input 4 is always hi-hat regardless of what the device has stored
         if input_id == _HIHAT_INPUT_ID:
             pad_type = PAD_TYPE_HIHAT_CC
-            is_dual  = False
-            is_hihat = True
 
         # Block all interactive widgets to prevent cascade writes during load
         for widget in self._all_editable_widgets():
@@ -1379,8 +1386,13 @@ class PadConfigTab(QWidget):
             self._set_slider("_scan",       cfg.get("scan_time", 0))
             self._set_slider("_mask",       cfg.get("mask_time", 0))
             self._set_slider("_retrig",     cfg.get("retrigger_time", 0))
-            self._set_slider("_rim_thresh", cfg.get("rim_threshold", 0))
-            self._set_slider("_rim_sens",   cfg.get("rim_sensitivity", 0))
+            self._set_slider("_rim_ratio",    cfg.get("rim_ratio_threshold", 40))
+            self._set_slider("_choke_thresh", cfg.get("choke_threshold", 50))
+
+            choke_en = cfg.get("choke_enabled", True)
+            self._choke_enabled_cb.blockSignals(True)
+            self._choke_enabled_cb.setChecked(choke_en)
+            self._choke_enabled_cb.blockSignals(False)
 
             # Head MIDI
             note = cfg.get("midi_note", 38)
@@ -1407,7 +1419,7 @@ class PadConfigTab(QWidget):
         self._curve_widget.clear_hit()
 
         # Visibility
-        self._update_zone_visibility(is_dual, is_hihat)
+        self._update_zone_visibility(pad_type)
 
         self._midi_monitor.setText("—")
 
@@ -1416,23 +1428,31 @@ class PadConfigTab(QWidget):
             self._name_combo, self._type_combo, self._curve_combo,
             self._slider_thresh, self._slider_sens, self._slider_scan,
             self._slider_mask, self._slider_retrig,
-            self._slider_rim_thresh, self._slider_rim_sens,
+            self._slider_rim_ratio, self._slider_choke_thresh, self._choke_enabled_cb,
             self._combo_midi_head_note, self._spin_midi_head_ch,
             self._combo_midi_rim_note,  self._spin_midi_rim_ch,
             self._spin_midi_cc_num,     self._spin_midi_cc_ch,
         ]
 
-    def _update_zone_visibility(self, is_dual: bool, is_hihat: bool) -> None:
-        # Rim sliders: always visible, disabled for single-zone pads
-        for key in ("_rim_thresh", "_rim_sens"):
-            _, slider = self._param_widgets[key]
-            slider.setEnabled(is_dual)
+    def _update_zone_visibility(self, pad_type: int) -> None:
+        is_dual  = pad_type in _DUAL_ZONE_TYPES
+        is_choke = pad_type in _CHOKE_TYPES
+        is_hihat = pad_type in _HIHAT_TYPES
 
-        # MIDI rim fields: hide for single-zone (these are in the MIDI panel)
+        # Rim ratio slider: DUAL_PIEZO only
+        col, _ = self._param_widgets["_rim_ratio"]
+        col.setVisible(is_dual)
+
+        # Choke threshold slider + checkbox: PIEZO_SWITCH_CHOKE only
+        col, _ = self._param_widgets["_choke_thresh"]
+        col.setVisible(is_choke)
+        self._choke_enabled_cb.setVisible(is_choke)
+
+        # MIDI rim fields: DUAL_PIEZO only
         for widget in self._rim_midi_widgets:
             widget.setVisible(is_dual)
 
-        # MIDI CC fields: show for hi-hat types only
+        # MIDI CC fields: hi-hat types only
         for widget in self._hihat_midi_widgets:
             widget.setVisible(is_hihat)
 
@@ -1460,6 +1480,15 @@ class PadConfigTab(QWidget):
         msg = fn(self._selected_id, value)
         self._enqueue_write(self._selected_id, param, msg, ack_hi, ack_lo)
 
+    def _on_choke_enabled_changed(self, state: int) -> None:
+        if self._selected_id is None:
+            return
+        enabled = bool(state)
+        msg = build_set_choke_enabled(self._selected_id, enabled)
+        self._enqueue_write(
+            self._selected_id, "choke_enabled", msg, CAT_PAD, PAD_SET_CHOKE_EN
+        )
+
     def _on_type_changed(self, index: int) -> None:
         if self._selected_id is None:
             return
@@ -1468,9 +1497,7 @@ class PadConfigTab(QWidget):
         pad_type = self._type_combo.itemData(index)
         if pad_type is None:
             return
-        is_dual  = pad_type in _DUAL_ZONE_TYPES
-        is_hihat = pad_type in _HIHAT_TYPES
-        self._update_zone_visibility(is_dual, is_hihat)
+        self._update_zone_visibility(pad_type)
         msg = build_set_pad_type(self._selected_id, pad_type)
         self._enqueue_write(self._selected_id, "pad_type", msg, CAT_PAD, PAD_SET_TYPE)
 

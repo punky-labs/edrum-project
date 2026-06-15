@@ -1,127 +1,78 @@
 {
   "Drum": {
-    "Roland \u2014 PD-8": {
-      "pad_type": 1,
-      "threshold": 100,
-      "head_sensitivity": 800,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 50,
-      "rim_sensitivity": 400
-    },
-    "Roland \u2014 PDX-8": {
-      "pad_type": 1,
-      "threshold": 120,
-      "head_sensitivity": 850,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 60,
-      "rim_sensitivity": 450
-    },
-    "Roland \u2014 PD-85": {
-      "pad_type": 1,
-      "threshold": 110,
-      "head_sensitivity": 820,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 55,
-      "rim_sensitivity": 420
-    },
-    "Roland \u2014 KD-8": {
+    "Roland PDX-8": {
       "pad_type": 0,
-      "threshold": 150,
-      "head_sensitivity": 900,
-      "scan_time": 15,
+      "threshold": 20,
+      "head_sensitivity": 800,
+      "scan_time": 3,
+      "mask_time": 40,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 50,
+      "choke_enabled": false
+    },
+    "Roland PDX-12": {
+      "pad_type": 0,
+      "threshold": 20,
+      "head_sensitivity": 800,
+      "scan_time": 3,
+      "mask_time": 40,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 50,
+      "choke_enabled": false
+    },
+    "Roland KD-80": {
+      "pad_type": 2,
+      "threshold": 20,
+      "head_sensitivity": 800,
+      "scan_time": 3,
       "mask_time": 50,
-      "rim_threshold": 0,
-      "rim_sensitivity": 0
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 50,
+      "choke_enabled": false
     },
-    "Alesis \u2014 Strike Pro mesh": {
+    "Roland PD-7": {
       "pad_type": 1,
-      "threshold": 100,
+      "threshold": 20,
       "head_sensitivity": 800,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 50,
-      "rim_sensitivity": 400
-    },
-    "Generic \u2014 Single Piezo": {
-      "pad_type": 0,
-      "threshold": 100,
-      "head_sensitivity": 800,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 0,
-      "rim_sensitivity": 0
-    },
-    "Generic \u2014 Dual Piezo": {
-      "pad_type": 1,
-      "threshold": 100,
-      "head_sensitivity": 800,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 50,
-      "rim_sensitivity": 400
+      "scan_time": 3,
+      "mask_time": 20,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 80,
+      "choke_enabled": true
     }
   },
   "Cymbal": {
-    "Roland \u2014 CY-8": {
-      "pad_type": 2,
-      "threshold": 80,
-      "head_sensitivity": 750,
-      "scan_time": 8,
-      "mask_time": 40,
-      "rim_threshold": 40,
-      "rim_sensitivity": 350
-    },
-    "Roland \u2014 CY-12": {
-      "pad_type": 2,
-      "threshold": 80,
-      "head_sensitivity": 750,
-      "scan_time": 8,
-      "mask_time": 40,
-      "rim_threshold": 40,
-      "rim_sensitivity": 350
-    },
-    "Roland \u2014 CY-13R": {
-      "pad_type": 2,
-      "threshold": 75,
-      "head_sensitivity": 730,
-      "scan_time": 8,
-      "mask_time": 40,
-      "rim_threshold": 38,
-      "rim_sensitivity": 340
-    },
-    "Roland \u2014 CY-14C": {
-      "pad_type": 2,
-      "threshold": 75,
-      "head_sensitivity": 730,
-      "scan_time": 8,
-      "mask_time": 40,
-      "rim_threshold": 38,
-      "rim_sensitivity": 340
-    },
-    "Generic \u2014 Dual Cymbal": {
-      "pad_type": 2,
-      "threshold": 80,
-      "head_sensitivity": 750,
-      "scan_time": 8,
-      "mask_time": 40,
-      "rim_threshold": 40,
-      "rim_sensitivity": 350
-    }
-  },
-  "Other": {
-    "Generic \u2014 Single Piezo (other)": {
-      "pad_type": 0,
-      "threshold": 100,
+    "Roland CY-5": {
+      "pad_type": 1,
+      "threshold": 20,
       "head_sensitivity": 800,
-      "scan_time": 10,
-      "mask_time": 30,
-      "rim_threshold": 0,
-      "rim_sensitivity": 0
+      "scan_time": 3,
+      "mask_time": 80,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 50,
+      "choke_enabled": true
+    },
+    "Lemon 13in Cymbal": {
+      "pad_type": 1,
+      "threshold": 20,
+      "head_sensitivity": 800,
+      "scan_time": 3,
+      "mask_time": 80,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 20,
+      "choke_enabled": true
+    },
+    "Lemon 15in Ride": {
+      "pad_type": 1,
+      "threshold": 20,
+      "head_sensitivity": 800,
+      "scan_time": 3,
+      "mask_time": 80,
+      "rim_ratio_threshold": 40,
+      "choke_threshold": 20,
+      "choke_enabled": true
     }
   },
-  "My Presets": {
-  }
+  "Other": {},
+  "My Presets": {}
 }
