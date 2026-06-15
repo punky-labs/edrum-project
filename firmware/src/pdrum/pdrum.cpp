@@ -121,10 +121,11 @@ void PDrum::sensing(int piezoValue, int rimValue, uint32_t currentRingHead)
   // DUAL_PIEZO — both channels velocity-sensitive; ratio discrimination
   // =========================================================================
   if (padType == 0) {
-    // Track which channel first exceeded threshold
+    // Only the head channel can initiate a scan.
+    // Rim channel is read during scan for discrimination but never starts one.
     if (loopTimes == 0) {
-      if (piezoValue > headThreshold || rimValue > headThreshold) {
-        if (time_hit - time_end < masktime) return;
+      if (piezoValue > headThreshold) {
+        if (millis() - time_end < masktime) return;
         time_hit = millis();
         velocity    = piezoValue;
         velocityRim = rimValue;

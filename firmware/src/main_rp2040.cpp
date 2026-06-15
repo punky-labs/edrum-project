@@ -29,7 +29,8 @@ MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 #define PIN_PWR   11
 #define NUMPIXELS 1
 
-volatile bool g_save_requested = false;
+volatile bool g_save_requested  = false;
+volatile bool g_apply_requested = false;
 
 Adafruit_NeoPixel pixels(NUMPIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
@@ -355,6 +356,11 @@ void loop() {
     if (mounted != wasMounted) {
         wasMounted = mounted;
         setLED(mounted ? GREEN : BLUE);
+    }
+
+    if (g_apply_requested) {
+        g_apply_requested = false;
+        applyConfig();
     }
 
     if (g_save_requested) {

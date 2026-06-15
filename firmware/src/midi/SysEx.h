@@ -94,3 +94,4 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
 
 
 extern volatile bool g_save_requested;
+extern volatile bool g_apply_requested;

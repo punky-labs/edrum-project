@@ -1477,6 +1477,9 @@ class PadConfigTab(QWidget):
         fn, ack_hi, ack_lo, param, *_ = _TRIGGER_BUILDERS[key]
         log.debug("Slider changed: input=%d key=%s value=%d",
                   self._selected_id, key, value)
+        # Update local cache so switching inputs doesn't revert display
+        cfg = self._configs.setdefault(self._selected_id, {})
+        cfg[param] = value
         msg = fn(self._selected_id, value)
         self._enqueue_write(self._selected_id, param, msg, ack_hi, ack_lo)
 
@@ -1484,6 +1487,7 @@ class PadConfigTab(QWidget):
         if self._selected_id is None:
             return
         enabled = bool(state)
+        self._configs.setdefault(self._selected_id, {})["choke_enabled"] = enabled
         msg = build_set_choke_enabled(self._selected_id, enabled)
         self._enqueue_write(
             self._selected_id, "choke_enabled", msg, CAT_PAD, PAD_SET_CHOKE_EN
@@ -1493,11 +1497,12 @@ class PadConfigTab(QWidget):
         if self._selected_id is None:
             return
         if self._selected_id == _HIHAT_INPUT_ID:
-            return   # type is locked for hi-hat input
+            return
         pad_type = self._type_combo.itemData(index)
         if pad_type is None:
             return
         self._update_zone_visibility(pad_type)
+        self._configs.setdefault(self._selected_id, {})["pad_type"] = pad_type
         msg = build_set_pad_type(self._selected_id, pad_type)
         self._enqueue_write(self._selected_id, "pad_type", msg, CAT_PAD, PAD_SET_TYPE)
 
@@ -1510,6 +1515,7 @@ class PadConfigTab(QWidget):
         c_name = CURVE_NAMES.get(curve, "")
         self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
         self._curve_widget.set_curve(curve)
+        self._configs.setdefault(self._selected_id, {})["velocity_curve"] = curve
         msg = build_set_velocity_curve(self._selected_id, curve)
         self._enqueue_write(self._selected_id, "velocity_curve", msg, CAT_PAD, PAD_SET_CURVE)
 
@@ -1520,6 +1526,9 @@ class PadConfigTab(QWidget):
         ch   = self._spin_midi_head_ch.value()
         if note is None:
             return
+        cfg = self._configs.setdefault(self._selected_id, {})
+        cfg["midi_note"]    = note
+        cfg["midi_channel"] = ch
         msg = build_set_note_mapping(self._selected_id, note, ch)
         self._enqueue_write(self._selected_id, "midi_note", msg, CAT_MIDI, MIDI_SET_NOTE)
 
@@ -1530,6 +1539,9 @@ class PadConfigTab(QWidget):
         ch   = self._spin_midi_rim_ch.value()
         if note is None:
             return
+        cfg = self._configs.setdefault(self._selected_id, {})
+        cfg["zone2_note"]    = note
+        cfg["zone2_channel"] = ch
         msg = build_set_zone2_mapping(self._selected_id, note, ch)
         self._enqueue_write(self._selected_id, "midi_z2", msg, CAT_MIDI, MIDI_SET_Z2)
 
@@ -1538,6 +1550,9 @@ class PadConfigTab(QWidget):
             return
         cc_num = self._spin_midi_cc_num.value()
         cc_ch  = self._spin_midi_cc_ch.value()
+        cfg = self._configs.setdefault(self._selected_id, {})
+        cfg["cc_number"]  = cc_num
+        cfg["cc_channel"] = cc_ch
         msg = build_set_cc_mapping(self._selected_id, cc_num, cc_ch)
         self._enqueue_write(self._selected_id, "midi_cc", msg, CAT_MIDI, MIDI_SET_CC)
 

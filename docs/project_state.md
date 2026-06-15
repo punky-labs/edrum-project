@@ -448,7 +448,19 @@ the full picture. Summary of remaining gaps:
 7. Scope window: fix Ctrl+C copy, MIDI transport warning
 8. Autocalibrate (deferred — needs algorithm work first)
 
-**Infrastructure:**
+**Advanced articulations (deferred — Stage 1.5):**
+- Cross-stick: requires separate `rimThreshold` parameter for DUAL_PIEZO pads.
+  Rim channel should be able to initiate a scan independently when head is below
+  headThreshold but rim exceeds rimThreshold. Three-path logic:
+  head+rim both above threshold → ratio discrimination → HEAD or RIM;
+  head only → HEAD; rim only → cross-stick RIM note.
+  Needs rimThreshold added back to InputConfig for DUAL_PIEZO type.
+- Ride bell triggering: Lemon Ride has two jacks — second jack carries switch
+  for bell. Needs two inputs allocated to one instrument, config model change.
+  Likely shares architecture with cross-stick rimThreshold work.
+- Both features share a natural implementation milestone: add rimThreshold back
+  to InputConfig as a DUAL_PIEZO-specific parameter alongside the existing
+  rimRatioThreshold.
 - Migrate home desktop project out of Dropbox to D:\Dev\
 - Update MCP server config on home desktop after migration
 

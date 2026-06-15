@@ -94,30 +94,35 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
         case SYSEX_PAD_SET_TYPE:
             if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].padType = p[1];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_THRESH:
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].threshold = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_CURVE:
             if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].velocityCurve = p[1];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_RETRIG:
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].retriggerTime = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_XTALK:
             if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].crosstalkGroup = p[1];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
@@ -194,30 +199,35 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
         case SYSEX_PAD_SET_SENS:
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].headSensitivity = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_SCAN:
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].scanTime = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_MASK:
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].maskTime = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_RIM_SENS:  // now: rim ratio threshold (DUAL_PIEZO)
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].rimRatioThreshold = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
         case SYSEX_PAD_SET_RIM_THRESH:  // now: choke threshold (PIEZO_SWITCH_CHOKE)
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].chokeThreshold = decode14(p[1], p[2]);
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
@@ -236,6 +246,7 @@ static void handleMidi(uint8_t deviceId, uint8_t cmd,
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].midiNote    = p[1];
             g_inputs[p[0]].midiChannel = p[2];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
             break;
 
@@ -243,6 +254,7 @@ static void handleMidi(uint8_t deviceId, uint8_t cmd,
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].zone2MidiNote    = p[1];
             g_inputs[p[0]].zone2MidiChannel = p[2];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
             break;
 
@@ -250,6 +262,7 @@ static void handleMidi(uint8_t deviceId, uint8_t cmd,
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_ERROR); return; }
             g_inputs[p[0]].ccNumber  = p[1];
             g_inputs[p[0]].ccChannel = p[2];
+            g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_MIDI, cmd, SYSEX_ACK_OK);
             break;
 
