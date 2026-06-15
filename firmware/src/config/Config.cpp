@@ -14,15 +14,16 @@ static void presetPath(uint8_t id, char* buf) {
 static InputConfig defaultInput(uint8_t idx) {
     InputConfig c = {};
     c.linkedInput      = 0xFF;
-    c.padType          = 0;
-    c.threshold        = 30;
+    c.padType          = 1;    // PIEZO_SWITCH_CHOKE (safest default)
+    c.threshold        = 20;
     c.velocityCurve    = 0;
     c.retriggerTime    = 50;
-    c.headSensitivity  = 500;
-    c.scanTime         = 10;
-    c.maskTime         = 30;
-    c.rimSensitivity   = 200;
-    c.rimThreshold     = 30;
+    c.headSensitivity  = 800;
+    c.scanTime         = 3;
+    c.maskTime         = 80;
+    c.rimRatioThreshold = 40;  // ratio*100: rim/head > 0.40 = rim hit
+    c.chokeThreshold   = 50;
+    c.chokeEnabled     = true;
     c.crosstalkGroup   = 0;
     c.midiChannel      = 10;
     c.zone2MidiChannel = 10;

@@ -132,9 +132,9 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
             encode14(c.headSensitivity, &sens_hi,    &sens_lo);
             encode14(c.scanTime,        &scan_hi,    &scan_lo);
             encode14(c.maskTime,        &mask_hi,    &mask_lo);
-            encode14(c.rimSensitivity,  &rsens_hi,   &rsens_lo);
-            encode14(c.rimThreshold,    &rthresh_hi, &rthresh_lo);
-            uint8_t buf[18] = {
+            encode14(c.rimRatioThreshold, &rsens_hi,   &rsens_lo);
+            encode14(c.chokeThreshold,    &rthresh_hi, &rthresh_lo);
+            uint8_t buf[19] = {
                 p[0],
                 c.padType,
                 thresh_hi, thresh_lo,
@@ -144,10 +144,11 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
                 sens_hi,    sens_lo,
                 scan_hi,    scan_lo,
                 mask_hi,    mask_lo,
-                rsens_hi,   rsens_lo,
-                rthresh_hi, rthresh_lo
+                rsens_hi,   rsens_lo,    // rimRatioThreshold (was rimSensitivity slot)
+                rthresh_hi, rthresh_lo,  // chokeThreshold (was rimThreshold slot)
+                (uint8_t)(c.chokeEnabled ? 1 : 0)
             };
-            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP, buf, 18);
+            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP, buf, 19);
             break;
         }
 
@@ -208,15 +209,15 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
-        case SYSEX_PAD_SET_RIM_SENS:
+        case SYSEX_PAD_SET_RIM_SENS:  // now: rim ratio threshold (DUAL_PIEZO)
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
-            g_inputs[p[0]].rimSensitivity = decode14(p[1], p[2]);
+            g_inputs[p[0]].rimRatioThreshold = decode14(p[1], p[2]);
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
-        case SYSEX_PAD_SET_RIM_THRESH:
+        case SYSEX_PAD_SET_RIM_THRESH:  // now: choke threshold (PIEZO_SWITCH_CHOKE)
             if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
-            g_inputs[p[0]].rimThreshold = decode14(p[1], p[2]);
+            g_inputs[p[0]].chokeThreshold = decode14(p[1], p[2]);
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
@@ -348,8 +349,8 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
                 encode14(c.headSensitivity, &sens_hi,    &sens_lo);
                 encode14(c.scanTime,        &scan_hi,    &scan_lo);
                 encode14(c.maskTime,        &mask_hi,    &mask_lo);
-                encode14(c.rimSensitivity,  &rsens_hi,   &rsens_lo);
-                encode14(c.rimThreshold,    &rthresh_hi, &rthresh_lo);
+                encode14(c.rimRatioThreshold, &rsens_hi,   &rsens_lo);
+                encode14(c.chokeThreshold,    &rthresh_hi, &rthresh_lo);
                 buf[pos++] = c.padType;
                 buf[pos++] = thresh_hi;
                 buf[pos++] = thresh_lo;

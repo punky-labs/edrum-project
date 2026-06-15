@@ -87,15 +87,16 @@ static const int8_t kRimCh[NUM_INPUTS]  = { 0, 2, 4, 6, -1 };
 static void applyConfig() {
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!drums[i]) continue;
-        drums[i]->noteHead        = g_inputs[i].midiNote;
-        drums[i]->noteRim         = g_inputs[i].zone2MidiNote;
-        drums[i]->headThreshold   = g_inputs[i].threshold;
-        drums[i]->headSensitivity = g_inputs[i].headSensitivity;
-        drums[i]->scantime        = g_inputs[i].scanTime;
-        drums[i]->masktime        = g_inputs[i].maskTime;
-        drums[i]->rimThreshold    = g_inputs[i].rimThreshold;
-        drums[i]->rimSensitivity  = g_inputs[i].rimSensitivity;
-        drums[i]->curvetype       = g_inputs[i].velocityCurve;
+        drums[i]->padType           = g_inputs[i].padType;
+        drums[i]->rimRatioThreshold = g_inputs[i].rimRatioThreshold;
+        drums[i]->chokeThreshold    = g_inputs[i].chokeThreshold;
+        drums[i]->chokeEnabled      = g_inputs[i].chokeEnabled;
+        drums[i]->headThreshold     = g_inputs[i].threshold;
+        drums[i]->headSensitivity   = g_inputs[i].headSensitivity;
+        drums[i]->scantime          = g_inputs[i].scanTime;
+        drums[i]->masktime          = g_inputs[i].maskTime;
+        drums[i]->curvetype         = g_inputs[i].velocityCurve;
+        drums[i]->noteHead          = g_inputs[i].midiNote;
     }
 }
 
@@ -133,7 +134,7 @@ static void printHelp() {
     Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
     Serial.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
     Serial.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
-    Serial.println("  params: thresh sens scan mask retrig");
+    Serial.println("  params: thresh sens scan mask retrig type ratio chokethresh choke");
 }
 
 static bool g_adcDump = false;
@@ -166,13 +167,17 @@ static void handleSerial(char cmd) {
         case 's': {
             Serial.println("[Config]");
             for (int i = 0; i < NUM_INPUTS; i++) {
-                Serial.printf("  [%d] note=%d ch=%d z2note=%d z2ch=%d"
-              " thresh=%d sens=%d scan=%d mask=%d curve=%d retrig=%d\n",
+                Serial.printf("  [%d] type=%d note=%d ch=%d z2note=%d z2ch=%d"
+              " thresh=%d sens=%d scan=%d mask=%d"
+              " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d\n",
                     i,
+                    g_inputs[i].padType,
                     g_inputs[i].midiNote,    g_inputs[i].midiChannel,
                     g_inputs[i].zone2MidiNote, g_inputs[i].zone2MidiChannel,
                     g_inputs[i].threshold,   g_inputs[i].headSensitivity,
                     g_inputs[i].scanTime,    g_inputs[i].maskTime,
+                    g_inputs[i].rimRatioThreshold, g_inputs[i].chokeThreshold,
+                    (int)g_inputs[i].chokeEnabled,
                     g_inputs[i].velocityCurve, g_inputs[i].retriggerTime);
             }
             break;
@@ -238,11 +243,15 @@ static void handleSerial(char cmd) {
                     && inp >= 0 && inp < NUM_INPUTS && val >= 0) {
                 String p = String(param);
                 bool ok = true;
-                if      (p == "thresh")  { g_inputs[inp].threshold       = (uint16_t)val; }
-                else if (p == "sens")    { g_inputs[inp].headSensitivity  = (uint16_t)val; }
-                else if (p == "scan")    { g_inputs[inp].scanTime         = (uint16_t)val; }
-                else if (p == "mask")    { g_inputs[inp].maskTime         = (uint16_t)val; }
-                else if (p == "retrig")  { g_inputs[inp].retriggerTime    = (uint16_t)val; }
+                if      (p == "thresh")     { g_inputs[inp].threshold         = (uint16_t)val; }
+                else if (p == "sens")       { g_inputs[inp].headSensitivity   = (uint16_t)val; }
+                else if (p == "scan")       { g_inputs[inp].scanTime          = (uint16_t)val; }
+                else if (p == "mask")       { g_inputs[inp].maskTime          = (uint16_t)val; }
+                else if (p == "retrig")     { g_inputs[inp].retriggerTime     = (uint16_t)val; }
+                else if (p == "type")       { g_inputs[inp].padType           = (uint8_t)val;  }
+                else if (p == "ratio")      { g_inputs[inp].rimRatioThreshold = (uint16_t)val; }
+                else if (p == "chokethresh"){ g_inputs[inp].chokeThreshold    = (uint16_t)val; }
+                else if (p == "choke")      { g_inputs[inp].chokeEnabled      = (bool)val;     }
                 else { Serial.printf("[w] Unknown param '%s'\n", param); ok = false; }
                 if (ok) {
                     applyConfig();
@@ -251,7 +260,7 @@ static void handleSerial(char cmd) {
                 }
             } else {
                 Serial.println("[w] Usage: w <input> <param> <value>");
-                Serial.println("[w] params: thresh sens scan mask retrig");
+                Serial.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke");
             }
             break;
         }
@@ -291,8 +300,8 @@ static void scopeDump(int input, bool isRim) {
         if (rc >= 0) { int v = (int)ringBufRead((uint8_t)rc, idx); if (v > rimPeak)  rimPeak  = v; }
     }
 
-    Serial.printf("[SCOPE] input=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
-        input, (int)hc, (int)rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
+    Serial.printf("[SCOPE] input=%d pad_type=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
+        input, (int)g_inputs[input].padType, (int)hc, (int)rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
     Serial.println("T,H,R");
     for (uint32_t t = 0; t < TOTAL; t++) {
         uint32_t idx = g_scopeSnap - PRE + t;
@@ -421,12 +430,12 @@ void loop() {
                 g_scopeIsRim   = false;
             }
         } else if (drums[i]->hitRim) {
-            byte note    = drums[i]->noteRim;
+            byte note    = g_inputs[i].zone2MidiNote;
             byte vel     = (byte)constrain(drums[i]->velocityRim, 0, 127);
             byte ch      = g_inputs[i].zone2MidiChannel;
             byte raw_vel = rawToMidi(drums[i]->velocityRimRaw,
-                                     g_inputs[i].rimThreshold,
-                                     g_inputs[i].rimSensitivity);
+                                     g_inputs[i].threshold,
+                                     g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
             if (!g_adcDump) Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
@@ -442,6 +451,15 @@ void loop() {
                 g_scopeSnap    = drums[i]->triggerSnap;
                 g_scopeIsRim   = true;
             }
+        }
+
+        // Choke — PIEZO_SWITCH_CHOKE pads only
+        if (drums[i]->chokeDetected) {
+            drums[i]->chokeDetected = false;
+            byte note = g_inputs[i].midiNote;
+            byte ch   = g_inputs[i].midiChannel;
+            MIDI.sendNoteOff(note, 0, ch);
+            if (!g_serialQuiet) Serial.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
         }
     }
 }

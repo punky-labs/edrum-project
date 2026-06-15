@@ -16,8 +16,9 @@ struct __attribute__((packed)) InputConfig {
     uint16_t headSensitivity;  // upper ADC bound for velocity scaling; default 1000
     uint16_t scanTime;         // peak scan window ms; default 10
     uint16_t maskTime;         // post-hit ignore window ms; default 30
-    uint16_t rimSensitivity;   // rim/zone-2 sensitivity; default 200
-    uint16_t rimThreshold;     // rim/zone-2 threshold; default 30
+    uint16_t rimRatioThreshold;  // DUAL_PIEZO: ratio*100 threshold (e.g. 40 = 0.40 ratio)
+    uint16_t chokeThreshold;     // PIEZO_SWITCH_CHOKE: ADC units for switch detection
+    bool     chokeEnabled;       // PIEZO_SWITCH_CHOKE: enable choke detection
     uint8_t  crosstalkGroup;
     uint8_t  midiNote;
     uint8_t  midiChannel;

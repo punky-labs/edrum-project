@@ -1,9 +1,10 @@
 /*
-  "HELLO DRUM LIBRARY" Ver.0.7.7
-  
+  Based on
+  "HELLO DRUM LIBRARY"
+
   by Ryo Kosaka
 
-  GitHub : https://github.com/RyoKosaka/PDrum-arduino-Library
+  GitHub : https://github.com/RyoKosaka/HelloDrum-arduino-Library
   Blog : https://open-e-drums.tumblr.com/
 */
 
@@ -14,100 +15,46 @@
 
 #include "Arduino.h"
 
-const static char *padtype[] = {
-    "Single Piezo", //0
-    "Dual Piezo",   //1
-    "Dual Cymbal",   //2
-};
-
-const static char *instrumentName[] = {
-    "Kick",       //0
-    "Snare",      //1
-    "HiHat",      //2
-    "Tom 1",      //3
-    "Tom 2",      //4
-    "Tom 3",      //5
-    "Tom 4",      //6
-    "Ride",       //7
-    "Crash 1",   //8
-    "Crash 2",   //9
-    "HH Pedal",   //10
-};
-
-
 class PDrum
 {
 public:
   PDrum(byte pin1, byte pin2);
-
-  const char *getName();
 
   int velocity;
   int velocityRim;
   int velocityRaw;     // pre-curve head velocity (ADC units, 0-1023)
   int velocityRimRaw;  // pre-curve rim velocity (ADC units, 0-1023)
   uint32_t triggerSnap = 0;  // ringHead value at threshold crossing — for scope capture
-  int velocityCup;
-  byte pedalCC;
 
-  //  int exValue;
-  byte exTCRT = 0;
-  byte exFSR = 0;
   bool hit;
-  bool openHH = false;
-  bool closeHH = false;
   bool hitRim;
-  bool hitCup;
   bool choke;
-  bool sensorFlag;
-  bool moving;
-  bool pedalVelocityFlag = false;
-  bool pedalFlag = true;
-  bool settingHHC = false;
-  bool chokeFlag;
 
-  byte value;
+  // Pad-type sensing parameters
+  uint8_t  padType;             // 0=DUAL_PIEZO, 1=PIEZO_SWITCH_CHOKE, 2=SINGLE_PIEZO
+  uint16_t rimRatioThreshold;   // DUAL_PIEZO: ratio*100 threshold
+  uint16_t chokeThreshold;      // PIEZO_SWITCH_CHOKE: ADC switch threshold
+  bool     chokeEnabled;        // PIEZO_SWITCH_CHOKE: enable choke
+  bool     chokeDetected;       // set true when choke confirmed — Core 0 reads and clears
 
-  byte noteHead;
-  byte noteRim;
-  byte noteCup;
-  byte noteEdge;
-  byte noteOpen;
-  byte noteClose;
-  byte noteOpenEdge;
-  byte noteCloseEdge;
-  byte noteCross;
+  byte     noteHead;
   uint16_t headThreshold;
-  byte threshold2;
   uint16_t scantime;
   uint16_t masktime;
   uint16_t headSensitivity;
-  byte curvetype;
-  uint16_t rimThreshold;
-  uint16_t rimSensitivity;
-  byte type;
-  byte padname;
-  byte pin_1;
-  byte pin_2;
+  byte     curvetype;
+  byte     pin_1;
+  byte     pin_2;
 
   void sensing(int piezoValue, int rimValue, uint32_t currentRingHead = 0);
 
 private:
-  int piezoValue;
-  int rimValue;
-  int sensorValue;
-  int TCRT;
-  int fsr;
-  int fsr_prev;
-  int firstSensorValue;
-  int lastSensorValue;
-  int peakSensorValue;
-  int loopTimes = 0;
+  int           loopTimes = 0;
   unsigned long time_hit;
   unsigned long time_end;
-  unsigned long time_choke;
-  unsigned long time_hit_pedal_1;
-  unsigned long time_hit_pedal_2;
+
+  uint8_t firstPeakChannel;    // 0=head, 1=rim — which crossed threshold first
+  uint8_t chokeHoldSamples;    // consecutive samples switch has been above chokeThreshold
 
   int curve(int velocityRaw, int threshold, int sensRaw, byte curveType);
 

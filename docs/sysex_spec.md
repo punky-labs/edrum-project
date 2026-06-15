@@ -53,7 +53,7 @@ Example: value 1000 (0x03E8) → `07 68`
 | `02 04` | `[INPUT_ID] [RETRIG_HI] [RETRIG_LO]` | Set retrigger time | Time in ms, 14-bit split |
 | `02 05` | `[INPUT_ID] [XTALK_GROUP]` | Set crosstalk group | Inputs in same group suppress each other |
 | `02 06` | `[INPUT_ID]` | Get pad config | Request current config for one input |
-| `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RSENS_HI] [RSENS_LO] [RTHRESH_HI] [RTHRESH_LO]` | Pad config response | Full config dump for one input (18 bytes) |
+| `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RRATIO_HI] [RRATIO_LO] [CHOKETHRESH_HI] [CHOKETHRESH_LO] [CHOKE_EN]` | Pad config response | Full config dump for one input (19 bytes). `RRATIO` = DUAL_PIEZO rim ratio threshold (ratio×100). `CHOKETHRESH` = PIEZO_SWITCH_CHOKE switch threshold (ADC units). `CHOKE_EN` = choke enabled (0/1). |
 | `02 0B` | `[INPUT_ID] [SENS_HI] [SENS_LO]` | Set head sensitivity | Upper ADC bound for velocity scaling, 14-bit split |
 | `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split |
 | `02 0D` | `[INPUT_ID] [MASK_HI] [MASK_LO]` | Set mask time | Post-hit ignore window in ms, 14-bit split |

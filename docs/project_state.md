@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 ---
 
@@ -286,28 +286,124 @@ Opened from Dev menu → ADC Scope…
 
 ---
 
+## Pad Type Architecture (settled design — drives firmware + app)
+
+Three distinct pad types identified from waveform analysis across all
+tested pads. Each requires structurally different sensing logic.
+
+### DUAL_PIEZO (value: 0)
+Pads: Roland PDX-8, PDX-12
+- Head: piezo (tip channel), Rim: piezo (ring channel)
+- Both zones produce velocity-sensitive analog signals
+- Discrimination: ratio-based (rimPeak/headPeak) + time-of-first-peak
+  as tiebreaker for ambiguous soft hits (PDX-8 soft rim = 1.3:1 ratio)
+- Hard head hit: head:rim ~10:1. Hard rim hit: rim:head ~3.8:1
+- Two independent MIDI notes (head note + rim note)
+- UI: full parameter set — rimRatioThreshold, z2note, z2channel visible
+
+### PIEZO_SWITCH_CHOKE (value: 1)
+Pads: Roland CY-5, Roland PD-7, Lemon Cymbal, Lemon Ride
+- Head: piezo (tip channel), Rim: mechanical switch (ring channel)
+- KEY INSIGHT: for cymbals/pads with a switch, the rim is NOT a second
+  zone — it is a CHOKE CONTROL. In standard MIDI percussion, bow and
+  edge of a cymbal map to the same note. The switch mutes the sound.
+- Switch channel sensing is completely different from piezo sensing:
+  - NOT peak scanning — monitoring for sustained signal above threshold
+  - Choke = signal stays elevated >5ms (slow rise, flat top plateau)
+  - Hit-induced switch transients (brief spikes) = ignored
+  - Choke action = MIDI note-off for this input's current note
+- Choke signature confirmed across CY-5, Lemon Cymbal, PD-7 via scope
+- Switch threshold varies by pad (CY-5 ~78, Lemon ~33, PD-7 ~105-185)
+  — chokeThreshold must be configurable
+- UI: hide rimSensitivity, rimThreshold, z2note, z2channel
+  Show: chokeEnabled (bool toggle), chokeThreshold (slider)
+
+### SINGLE_PIEZO (value: 2)
+Pads: Roland KD-80
+- Head: piezo (tip channel) only, no rim sensor
+- No zone discrimination logic at all
+- KD-80 bounce vs bury visible in waveform (future: technique detection)
+- UI: hide all rim/choke parameters
+
+### Observed parameter ranges from scope data
+| Parameter      | Current default | Recommended range | Notes                           |
+|---------------|----------------|-------------------|---------------------------------|
+| threshold     | 30             | 10–100            | Noise floor ~5-10 ADC units     |
+| sensitivity   | 500            | threshold–1023    | Hard hits reach 1023; 500 wastes|
+|               |                |                   | top half of velocity range      |
+| scanTime      | 10ms           | 1–10ms            | All peaks within 3ms of trigger |
+| maskTime      | 30ms           | 10–150ms          | Cymbal 80-100ms, mesh 40ms,     |
+|               |                |                   | rubber 20ms, kick 50ms          |
+
+### Starting preset values per pad
+| Pad           | Type                | thresh | sens | scan | mask | chokeThresh |
+|--------------|---------------------|--------|------|------|------|-------------|
+| Roland CY-5  | PIEZO_SWITCH_CHOKE  | 20     | 800  | 3    | 80   | 50          |
+| Lemon Cymbal | PIEZO_SWITCH_CHOKE  | 20     | 800  | 3    | 80   | 20          |
+| Lemon Ride   | PIEZO_SWITCH_CHOKE  | 20     | 800  | 3    | 80   | 20          |
+| Roland PD-7  | PIEZO_SWITCH_CHOKE  | 20     | 800  | 3    | 20   | 80          |
+| Roland PDX-8 | DUAL_PIEZO          | 20     | 800  | 3    | 40   | —           |
+| Roland PDX-12| DUAL_PIEZO          | 20     | 800  | 3    | 40   | —           |
+| Roland KD-80 | SINGLE_PIEZO        | 20     | 800  | 3    | 50   | —           |
+
+---
+
+## pdrum Library — Rewrite Plan
+
+Current difference-based algorithm is unreliable across all tested pads.
+Full rewrite with three separate sensing code paths required.
+
+**New InputConfig fields needed:**
+- `padType`: uint8_t (0=DUAL_PIEZO, 1=PIEZO_SWITCH_CHOKE, 2=SINGLE_PIEZO)
+- `rimRatioThreshold`: uint16_t (scaled integer, DUAL_PIEZO only —
+  replaces rimSensitivity; ratio = rimPeak*100/headPeak, threshold ~40)
+- `chokeThreshold`: uint16_t (ADC units, PIEZO_SWITCH_CHOKE only)
+- `chokeEnabled`: bool
+
+**Parameters to retire:** rimSensitivity (replaced by rimRatioThreshold),
+rimThreshold (absorbed into chokeThreshold)
+
+**Sensing logic per type:**
+
+DUAL_PIEZO:
+1. Spike rejection + peak tracking both channels during scan window
+2. Track which channel first exceeded threshold (firstPeakChannel)
+3. At scan end: ratio = rimPeak * 100 / headPeak
+4. RIM if ratio > rimRatioThreshold OR (ratio > 80 AND firstPeak==rim)
+5. HEAD otherwise
+
+PIEZO_SWITCH_CHOKE:
+1. Head channel: standard peak detection → hit + velocity (head note only)
+2. Switch channel: sustained signal monitor (NOT peak scan)
+   - Track consecutive samples above chokeThreshold
+   - If sustained >~5ms → set chokeDetected flag
+   - Core 0 reads flag → sends MIDI note-off for this input
+3. No rim MIDI note output
+
+SINGLE_PIEZO:
+1. Head channel only, standard peak detection
+2. No rim/switch logic
+
+**Legacy cleanup in same pass:**
+- Remove unused HelloDrum members (exTCRT, exFSR, pedalCC, hi-hat flags,
+  padtype[]/instrumentName[] arrays)
+- Replace curve() pow() with lookup table
+- Remove else-if(0) choke dead code
+
+**Note:** Changing InputConfig struct requires LittleFS filesystem
+re-upload (platformio run --target uploadfs) — config will reset to
+defaults. Expected and correct behaviour.
+
+---
+
 ## pdrum Library — Known Gaps (next major task)
 
-- Rim discrimination: current difference-based algorithm unreliable,
-  especially for coupled piezos (CY-5). Needs ratio-based and/or
-  time-of-first-peak approach. Full waveform data now available via
-  ring buffer to support smarter algorithms.
-- Choke detection: signal signature now confirmed via scope (sustained
-  rim plateau, flat head channel). Ready to implement.
-- PAD_TYPE_PIEZO_SWITCH not yet implemented — PD-7/CY-5 switch-type rim
-  needs inverted detection logic (voltage drop, not spike)
+See Pad Type Architecture and pdrum Rewrite Plan sections above for
+the full picture. Summary of remaining gaps:
 - No watchdog timer integration
-- Unused HelloDrum legacy members: exTCRT, exFSR, pedalCC, hi-hat flags,
-  padtype[]/instrumentName[] arrays defined but never used
-- curve() uses pow() on every hit — candidate for lookup table
+- Unused HelloDrum legacy members (cleanup in rewrite)
+- curve() pow() — replace with lookup table (in rewrite)
 - HelloDrum reference: github.com/RyoKosaka/HelloDrum-arduino-Library
-
-**Algorithm improvements planned (priority order):**
-1. Ratio-based head/rim discrimination (replaces difference-based)
-2. Time-of-first-peak discriminator for strongly-coupled pads (CY-5)
-3. Choke detection — sustained rim plateau detection, send note-off
-4. PAD_TYPE_PIEZO_SWITCH — inverted rim detection for switch-type pads
-5. Autocalibrate — derive thresh/scan/mask from captured waveform data
 
 ---
 
@@ -331,23 +427,26 @@ Opened from Dev menu → ADC Scope…
 ## Pending — Next Sessions
 
 **Firmware / hardware (priority order):**
-1. pdrum algorithm rewrite — ratio-based discrimination, time-of-peak,
-   choke detection, PAD_TYPE_PIEZO_SWITCH (see pdrum Known Gaps above)
-2. Per-pad-type default presets — CY-5, PDX-8/12, PD-7, KD-80 starting values
-3. Test all 4 jacks for consistent behaviour
+1. pdrum rewrite — three pad types, ratio discrimination, choke detection
+   See: Pad Type Architecture + pdrum Rewrite Plan sections above
+2. Update InputConfig + SysEx protocol for padType, rimRatioThreshold,
+   chokeThreshold, chokeEnabled — requires LittleFS re-upload after
+3. Test all pads with correct types assigned, validate preset values
 4. Hi-hat firmware — A0 analog read, CC output, open/close thresholds
 5. Watchdog timer — RP2040 hardware watchdog
-6. Error handling — graceful recovery, factory reset via header pin
 
-**App:**
-- curves.py — shared curve math (VelocityCurveWidget + emulator)
-- IBM Plex font bundling — app/assets/fonts/, QFontDatabase.addApplicationFont()
-- Interface mode preference — replace --dev flag with persistent QSettings
-- Hi-hat controller UI — calibration panel, CC mapping, live position indicator
-- Autotrack button — currently too prominent, needs to be small/quiet
-- Scope window: fix Ctrl+C copy (focus issue on QListWidget)
-- Scope window: MIDI transport warning when scope serial connected
-- Autocalibrate feature (deferred — needs algorithm work first)
+**App (priority order):**
+1. Pad type selector in Config tab — drives dynamic UI:
+   DUAL_PIEZO: show rimRatioThreshold, z2note, z2channel
+   PIEZO_SWITCH_CHOKE: show chokeEnabled, chokeThreshold; hide rim params
+   SINGLE_PIEZO: hide all rim/choke params
+2. Fix slider ranges per observed data (see parameter range table above)
+3. curves.py — shared curve math (VelocityCurveWidget + emulator)
+4. IBM Plex font bundling
+5. Interface mode preference — replace --dev flag with persistent QSettings
+6. Hi-hat controller UI
+7. Scope window: fix Ctrl+C copy, MIDI transport warning
+8. Autocalibrate (deferred — needs algorithm work first)
 
 **Infrastructure:**
 - Migrate home desktop project out of Dropbox to D:\Dev\
