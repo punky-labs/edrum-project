@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QFontDatabase, QPalette
 from PyQt6.QtWidgets import QApplication
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,7 @@ SLIDER_HEIGHT        = 160   # logical pixels for vertical trigger sliders
 # ---------------------------------------------------------------------------
 
 _STYLES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "styles")
+_FONTS_DIR  = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts")
 
 
 def _load_qss(*filenames: str) -> str:
@@ -67,8 +68,29 @@ def _load_qss(*filenames: str) -> str:
     return "\n".join(parts)
 
 
+def _load_fonts() -> None:
+    """Load bundled IBM Plex font files so QSS can reference them without
+    requiring the fonts to be installed on the host system."""
+    import logging
+    log = logging.getLogger("edrum.theme")
+    loaded = 0
+    for root, _dirs, files in os.walk(os.path.normpath(_FONTS_DIR)):
+        for filename in files:
+            if filename.lower().endswith((".ttf", ".otf")):
+                path = os.path.join(root, filename)
+                fid = QFontDatabase.addApplicationFont(path)
+                if fid < 0:
+                    log.warning("Failed to load font: %s", path)
+                else:
+                    loaded += 1
+    log.debug("Loaded %d bundled font file(s)", loaded)
+
+
 def apply_dark_theme(app: QApplication) -> None:
     """Apply the BOAL base palette + eDrum stylesheet to the QApplication."""
+
+    # Bundled fonts — must be loaded before setStyleSheet()
+    _load_fonts()
 
     # QPalette — fallback colours for widgets not covered by QSS
     palette = QPalette()

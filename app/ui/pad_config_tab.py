@@ -689,6 +689,7 @@ class PadConfigTab(QWidget):
         splitter.addWidget(left_panel)
 
         right_panel = self._build_right_panel()
+        right_panel.setMinimumWidth(500)
         splitter.addWidget(right_panel)
 
         splitter.setStretchFactor(0, 0)

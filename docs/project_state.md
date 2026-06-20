@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-15
+Last updated: 2026-06-15 (evening session)
 
 ---
 
@@ -69,6 +69,31 @@ better. BOAL's vision is trigger interface + user's existing software.
 - 1 mono jack → A0 directly on RP2040 (hi-hat controller, jack 4, stubbed)
 - Currently: XIAO RP2040 installed on built PCB
 - Stage 2: XIAO ESP32-S3 for wireless satellite modules (deferred)
+
+---
+
+## Current Hardware Test Status (as of 2026-06-15)
+
+Unit tested end-to-end on Windows (dev) and Mac (Addictive Drums VST).
+All four jacks active. USB MIDI working on both platforms.
+
+| Jack | Pad | Type | Status |
+|------|-----|------|--------|
+| 0 | Lemon 13" Cymbal | PIEZO_SWITCH_CHOKE | Working. Choke confirmed. Minor velocity tuning needed. |
+| 1 | Roland PDX-8 | DUAL_PIEZO | Working after mask bug fix. Rim discrimination functional. Fine tuning needed. |
+| 2 | Roland KD-80 | SINGLE_PIEZO | Working well. Near-flawless on Mac/AD2. |
+| 3 | Unassigned | — | Not yet tested. |
+
+**Key tuning insights from real-world testing:**
+- Sensitivity needs to match actual pad ADC output range, not default 800
+  (KD-80 needed ~60, Lemon cymbal ~200 — very pad-specific)
+- Mask time is critical: too short = retriggering, too long = missed fast hits
+- DUAL_PIEZO mask bug (time_hit vs millis()) caused all multiple-trigger
+  issues on mesh pads — now fixed
+- Scope tool essential for tuning — ms x-axis + scan/mask overlays
+  make parameter effects immediately visible
+- Some audio latency observed on Windows, likely DAW/driver pipeline;
+  Mac performance was clean
 
 ---
 
@@ -421,32 +446,36 @@ the full picture. Summary of remaining gaps:
 - version.txt must not be empty — must contain an integer
 - MCP filesystem server: home desktop still points at old Dropbox path —
   needs updating to D:\Dev\eDrum\edrum-project\ after migration
+- **[UNRESOLVED] Hard hit runaway:** On very hard hits (mainly mesh pads),
+  the unit occasionally enters a runaway state firing continuous MIDI notes.
+  Usually cleared by hitting the pad again; occasionally requires USB replug.
+  Suspected cause: ADC saturation at 1023 keeping signal above threshold
+  indefinitely, or loopTimes incrementing without scan-end condition firing.
+  Mitigation planned: watchdog in sensing loop — if loopTimes exceeds ~500
+  iterations, force-reset scan state.
+  To reproduce: arm scope on input 1, floor=50, hit as hard as possible
+  repeatedly; watch serial for continuous [HIT] lines; scope capture just
+  before runaway will show ADC behaviour.
 
 ---
 
 ## Pending — Next Sessions
 
 **Firmware / hardware (priority order):**
-1. pdrum rewrite — three pad types, ratio discrimination, choke detection
-   See: Pad Type Architecture + pdrum Rewrite Plan sections above
-2. Update InputConfig + SysEx protocol for padType, rimRatioThreshold,
-   chokeThreshold, chokeEnabled — requires LittleFS re-upload after
-3. Test all pads with correct types assigned, validate preset values
-4. Hi-hat firmware — A0 analog read, CC output, open/close thresholds
-5. Watchdog timer — RP2040 hardware watchdog
+1. Hard hit runaway watchdog — add loopTimes safety limit to sensing()
+2. Per-pad tuning session — dial in sensitivity/mask/scan for all tested pads
+   using scope tool; update presets.json with validated values
+3. Hi-hat firmware — A0 analog read, CC output, open/close thresholds
+4. Watchdog timer — RP2040 hardware watchdog (separate from sensing watchdog)
+5. Jack 3 — connect and test fourth pad input
 
 **App (priority order):**
-1. Pad type selector in Config tab — drives dynamic UI:
-   DUAL_PIEZO: show rimRatioThreshold, z2note, z2channel
-   PIEZO_SWITCH_CHOKE: show chokeEnabled, chokeThreshold; hide rim params
-   SINGLE_PIEZO: hide all rim/choke params
-2. Fix slider ranges per observed data (see parameter range table above)
-3. curves.py — shared curve math (VelocityCurveWidget + emulator)
-4. IBM Plex font bundling
-5. Interface mode preference — replace --dev flag with persistent QSettings
-6. Hi-hat controller UI
-7. Scope window: fix Ctrl+C copy, MIDI transport warning
-8. Autocalibrate (deferred — needs algorithm work first)
+1. curves.py — shared curve math (VelocityCurveWidget + emulator)
+2. IBM Plex font bundling
+3. Interface mode preference — replace --dev flag with persistent QSettings
+4. Hi-hat controller UI
+5. Scope window: fix Ctrl+C copy, MIDI transport warning
+6. Autocalibrate (deferred — needs algorithm work first)
 
 **Advanced articulations (deferred — Stage 1.5):**
 - Cross-stick: requires separate `rimThreshold` parameter for DUAL_PIEZO pads.
