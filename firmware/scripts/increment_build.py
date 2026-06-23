@@ -2,7 +2,7 @@ import os
 
 Import("env")
 
-version_file = os.path.join(env["PROJECT_DIR"], "version.txt")
+version_file = os.path.join(env["PROJECT_DIR"], "firmware\\version.txt")
 
 with open(version_file, "r") as f:
     build_num = int(f.read().strip())

@@ -371,6 +371,19 @@ void loop() {
                         SYSEX_STAT_ACK, ack, 3);
     }
 
+
+    // --- TEMP sample-rate measurement — remove after characterising ---
+    static unsigned long lastRatePrint = 0;
+    static uint32_t      lastRingHead  = 0;
+    if (millis() - lastRatePrint >= 1000) {
+        uint32_t now = ringHead;
+        uint32_t delta = now - lastRingHead;   // loops completed in ~1s
+        lastRingHead  = now;
+        lastRatePrint = millis();
+        Serial.printf("[RATE] %lu samples/sec/channel\n", (unsigned long)delta);
+    }
+
+
     MIDI.read();
 
     if (Serial.available()) {
