@@ -220,7 +220,7 @@ def gm_note_display(note: int) -> str:
 
 # (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, suffix)
 _TRIGGER_BUILDERS: dict[str, tuple] = {
-    "_thresh":       (build_set_threshold,           CAT_PAD, PAD_SET_THRESH,     "threshold",           0,  100,  ""),
+    "_thresh":       (build_set_threshold,           CAT_PAD, PAD_SET_THRESH,     "threshold",           0,  500,  ""),
     "_sens":         (build_set_head_sensitivity,    CAT_PAD, PAD_SET_SENS,       "head_sensitivity",    0, 1023,  ""),
     "_scan":         (build_set_scan_time,           CAT_PAD, PAD_SET_SCAN,       "scan_time",           1,   10,  " ms"),
     "_mask":         (build_set_mask_time,           CAT_PAD, PAD_SET_MASK,       "mask_time",          10,  150,  " ms"),
