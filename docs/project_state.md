@@ -1,5 +1,5 @@
 # eDrum Project State
-Last updated: 2026-06-15 (evening session)
+Last updated: 2026-06-28 (afternoon session)
 
 ---
 
@@ -60,68 +60,54 @@ better. BOAL's vision is trigger interface + user's existing software.
 
 ---
 
-## Hardware (BT-1 Stage 1)
+## Hardware (BT-1 Stage 1 — current dev unit)
 
-- Custom PCB, Seeeduino XIAO footprint, MCP3008 SPI ADC
-- 4 stereo TRS jacks → 8 MCP3008 channels (4 jacks, dual-zone capable)
-  - Tip = odd ADC channels (head/piezo)
-  - Ring = even ADC channels (rim/switch)
-- 1 mono jack → A0 directly on RP2040 (hi-hat controller, jack 4, stubbed)
-- Currently: XIAO RP2040 installed on built PCB
-- Stage 2: XIAO ESP32-S3 for wireless satellite modules (deferred)
+- Custom PCB, Seeeduino XIAO footprint
+- **ESP32-S3 now installed** (migrated from RP2040 as of 2026-06-28)
+- MCP3008 SPI ADC removed — direct connections to ESP32-S3 internal ADC
+  via jumper wires on PTH breakout pads (interim prototype only)
+- GPIO2–9 → 4 dual-zone inputs (head + rim per jack)
+- GPIO1 reserved for hi-hat controller (A0, not yet implemented)
+- ADC front-end: 1kΩ series resistors + BAT85 clamp diodes + 1MΩ pull-down
+  (22nF caps not yet fitted on interim board — target for next PCB spin)
+- 4 stereo TRS jacks → 8 ADC channels (4 jacks, dual-zone capable)
+  - Tip = head/piezo channel
+  - Ring = rim/switch channel
+- 1 mono jack → GPIO1 directly (hi-hat controller, jack 4, stubbed)
+- Stage 2: XIAO ESP32-S3 wireless satellite modules (architecture decided,
+  PCB designed, not yet manufactured)
 
 ---
 
-## Current Hardware Test Status (as of 2026-06-15)
+## Current Hardware Test Status (as of 2026-06-28)
 
-Unit tested end-to-end on Windows (dev) and Mac (Addictive Drums VST).
-All four jacks active. USB MIDI working on both platforms.
+Migrated to ESP32-S3 internal ADC. Threshold values require retuning
+for new ADC noise floor (slider max raised to 500 in app).
+Roland PD-7 confirmed triggering on new platform.
+All four jacks active. USB MIDI working on Windows.
 
 | Jack | Pad | Type | Status |
 |------|-----|------|--------|
-| 0 | Lemon 13" Cymbal | PIEZO_SWITCH_CHOKE | Working. Choke confirmed. Minor velocity tuning needed. |
-| 1 | Roland PDX-8 | DUAL_PIEZO | Working after mask bug fix. Rim discrimination functional. Fine tuning needed. |
-| 2 | Roland KD-80 | SINGLE_PIEZO | Working well. Near-flawless on Mac/AD2. |
-| 3 | Unassigned | — | Not yet tested. |
-
-**Key tuning insights from real-world testing:**
-- Sensitivity needs to match actual pad ADC output range, not default 800
-  (KD-80 needed ~60, Lemon cymbal ~200 — very pad-specific)
-- Mask time is critical: too short = retriggering, too long = missed fast hits
-- DUAL_PIEZO mask bug (time_hit vs millis()) caused all multiple-trigger
-  issues on mesh pads — now fixed
-- Scope tool essential for tuning — ms x-axis + scan/mask overlays
-  make parameter effects immediately visible
-- Some audio latency observed on Windows, likely DAW/driver pipeline;
-  Mac performance was clean
+| 0 | Lemon 13" Cymbal | PIEZO_SWITCH_CHOKE | Previously working — needs retuning for ESP32-S3 ADC |
+| 1 | Roland PDX-8 | DUAL_PIEZO | Previously working — needs retuning for ESP32-S3 ADC |
+| 2 | Roland KD-80 | SINGLE_PIEZO | Previously working — needs retuning for ESP32-S3 ADC |
+| 3 | Roland PD-7 | PIEZO_SWITCH_CHOKE | Confirmed triggering on ESP32-S3 — needs tuning |
 
 ---
 
 ## Working
 
-- RP2040 firmware boots cleanly, LittleFS config storage working
-- USB MIDI enumerates on Windows and Mac
+- ESP32-S3 firmware boots cleanly, USB MIDI enumerates on Windows
+- USB MIDI confirmed via MidiView — device name, note transmission working
+- LittleFS config storage working on ESP32-S3
 - SysEx protocol v0.2 — full read/write/save round-trip working
-- Real pad triggering validated: Roland PD-7 (piezo + rim switch) and
-  PDX-8 (mesh head) both triggering correctly on real hardware
-- Head and rim zone detection working — soft/hard hits produce correct
-  velocity range
-- All DSP parameters in firmware and protocol:
-  headSensitivity, threshold, scanTime, maskTime,
-  rimSensitivity, rimThreshold, velocityCurve, retriggerTime
-- 05 03 hit events: 4 bytes [INPUT_ID][ZONE][RAW_VEL][MIDI_VEL]
-- velocityRaw/velocityRimRaw captured in PDrum before curve applied
-- LittleFS: mounted once in configInit(), deferred save via
-  g_save_requested flag to prevent USB lockup during flash write
-- Python transport: polling thread (WinMM callback drops SysEx),
-  fan-out listener registry, echo filter for WinMM loopback
-- PyQt app: full Pad Config tab working with emulator and real device
-- File logging: app/logs/edrum.log (rotating, 1MB x3)
-- Emulator: app/emulator/ — EmulatorTransport + EmulatorWindow,
-  launched via --emulator flag; auto-shows on startup
-- Auto-incrementing build number via PlatformIO pre-script
-  (firmware/version.txt + scripts/increment_build.py)
-  Displayed via 'h' serial command: [eDrum] Build N — ...
+- Real pad triggering validated: Roland PD-7 confirmed on ESP32-S3
+- TriggerEngine abstraction layer in place — PDrumTrigger implements interface,
+  PDrum2Trigger stub ready for sensing rewrite drop-in
+- Platform-conditional ring_buffer.h (RP2040 spinlock / ESP32-S3 FreeRTOS portMUX)
+- Both [env:xiao_esp32s3_head] and [env:xiao_rp2040] build clean (0 warnings)
+- Python app connects to ESP32-S3, reads/writes config, threshold slider now 0–500
+- All previously working RP2040 features carry over (SysEx, LittleFS, app UI)
 
 ---
 
@@ -281,20 +267,28 @@ Opened from Dev menu → ADC Scope…
 
 ## Key Architecture Decisions
 
-- One PDrum instance per physical jack (not per ADC channel)
+- One TriggerEngine instance per physical jack (not per ADC channel)
 - One InputConfig per jack; z2note/z2channel = rim zone of same jack
-- Tip = odd ADC channels = head/piezo; ring = even = rim/switch
-- Stage 1: RP2040 + USB MIDI
-- Stage 2: ESP32-S3 satellites, BLE MIDI to head unit (deferred)
-- Config storage: LittleFS binary structs; blob size tied to NUM_INPUTS —
-  changing NUM_INPUTS invalidates saved config (resets to defaults, correct)
+- Tip = head/piezo channel; ring = rim/switch channel
+- **Stage 1 and Stage 2 both use XIAO ESP32-S3** (decided 2026-06-28)
+- **Wireless transport: ESP-NOW** (not BLE MIDI)
+  - ~1–2ms latency, connectionless, satellites invisible to phones/computers
+  - Pairing: broadcast-based handshake, MACs stored in LittleFS
+  - Head unit is sole external gateway
+  - Architecture: Config app ↔ USB MIDI SysEx ↔ Head unit ↔ ESP-NOW ↔ Satellites
+  - SysEx protocol rides inside ESP-NOW packets unchanged
+- Firmware: single shared codebase, compile-time flags
+  (DEVICE_MODE HEAD_UNIT or SATELLITE), PlatformIO env targets
+  [env:head_unit] and [env:satellite]
+- Sensing abstraction: TriggerEngine abstract base → PDrumTrigger (current)
+  → PDrum2Trigger (future). main_esp32s3.cpp uses TriggerEngine* array only.
+- ADC: ESP32-S3 internal ADC, GPIO2–9 (ADC1 only — ADC2 conflicts with radio)
+  Current: analogRead() on Core 0. Future: DMA continuous in PDrum2Trigger.
+- Config storage: LittleFS binary structs; blob size tied to NUM_INPUTS
 - Python venv: app/venv (Windows), ~/edrum-venv (Mac)
-- PyQt6 pinned to 6.4.2 on Mac (Monterey compatibility)
-- Ring buffer architecture: Core 1 writes raw ADC to ringBuf[8][1024],
-  Core 0 reads for sensing — clean separation, no smoothing on Core 1
-- Spike rejection in pdrum::sensing() replaces EWMA smoothing
-- Scope serial connection is independent of MIDI transport — both can
-  coexist but avoid simultaneous heavy traffic (WinMM USB hiccup risk)
+- Ring buffer: platform-conditional locking (RP2040 spinlock / FreeRTOS portMUX)
+- USB MIDI init order (ESP32-S3): ARDUINO_USB_CDC_ON_BOOT flags must be
+  removed from build_unflags/build_flags — leave at board defaults
 
 ---
 
@@ -461,13 +455,26 @@ the full picture. Summary of remaining gaps:
 
 ## Pending — Next Sessions
 
+**Immediate — PDrum2Trigger sensing rewrite (top priority):**
+- Implement PDrum2Trigger using Step 0 design doc (docs/sensing_rewrite_step0.md)
+- Band-pass IIR → power domain (squaring) → decay-model retrigger mask
+- DMA continuous sampling at 8kHz/channel replacing analogRead()
+- Three sensing code paths: DUAL_PIEZO, PIEZO_SWITCH_CHOKE, SINGLE_PIEZO
+- Drop-in replacement via TriggerEngine* — no main_esp32s3.cpp changes needed
+
 **Firmware / hardware (priority order):**
-1. Hard hit runaway watchdog — add loopTimes safety limit to sensing()
-2. Per-pad tuning session — dial in sensitivity/mask/scan for all tested pads
-   using scope tool; update presets.json with validated values
-3. Hi-hat firmware — A0 analog read, CC output, open/close thresholds
-4. Watchdog timer — RP2040 hardware watchdog (separate from sensing watchdog)
-5. Jack 3 — connect and test fourth pad input
+1. Retune all DSP params for ESP32-S3 ADC noise floor (all pads)
+2. Hi-hat firmware — GPIO1 analog read, CC output, open/close thresholds
+3. Watchdog timer — ESP32-S3 hardware watchdog
+4. Hard hit runaway — add loopTimes safety limit to sensing()
+5. 22nF caps on ADC front-end — next PCB spin
+
+**Satellite hardware (next PCB order):**
+- ESP32-S3 satellite PCB (THT prototype designed, ready to order from PCBWay)
+- 2× Neutrik NMJ6HFD2 jacks, 220k/220k battery voltage divider + 100nF cap,
+  RGB LED, I2C breakout pads, 400mAh LiPo
+- Wake-capable GPIO routing (EXT0/EXT1 or ULP) is a PCB design constraint
+- SMD version to follow once THT prototype validated
 
 **App (priority order):**
 1. curves.py — shared curve math (VelocityCurveWidget + emulator)
@@ -475,28 +482,17 @@ the full picture. Summary of remaining gaps:
 3. Interface mode preference — replace --dev flag with persistent QSettings
 4. Hi-hat controller UI
 5. Scope window: fix Ctrl+C copy, MIDI transport warning
-6. Autocalibrate (deferred — needs algorithm work first)
 
-**Advanced articulations (deferred — Stage 1.5):**
-- Cross-stick: requires separate `rimThreshold` parameter for DUAL_PIEZO pads.
-  Rim channel should be able to initiate a scan independently when head is below
-  headThreshold but rim exceeds rimThreshold. Three-path logic:
-  head+rim both above threshold → ratio discrimination → HEAD or RIM;
-  head only → HEAD; rim only → cross-stick RIM note.
-  Needs rimThreshold added back to InputConfig for DUAL_PIEZO type.
-- Ride bell triggering: Lemon Ride has two jacks — second jack carries switch
-  for bell. Needs two inputs allocated to one instrument, config model change.
-  Likely shares architecture with cross-stick rimThreshold work.
-- Both features share a natural implementation milestone: add rimThreshold back
-  to InputConfig as a DUAL_PIEZO-specific parameter alongside the existing
-  rimRatioThreshold.
-- Migrate home desktop project out of Dropbox to D:\Dev\
-- Update MCP server config on home desktop after migration
+**Stage 2 firmware (after PDrum2Trigger):**
+1. ESP-NOW transport layer (head unit central, satellites peripheral)
+2. Broadcast-based pairing handshake + LittleFS MAC storage
+3. Satellite sleep model: Active → Standby (~5min) → Deep sleep (~15min)
+   Coordinated by head unit, not per-unit independent
+4. RGB LED status on satellites
 
 **Design / brand:**
 - BOAL colour palette and identity exploration
-- Fusion 360 case design for BT-1 family (stacking, mag connector)
-- BT-1 Screen hardware planning (ESP32-S3, 5" capacitive touch, LVGL)
+- Fusion 360 case design for BT-1 family
 - ClickBox hardware planning (nRF52840, eInk + frontlight, NeoPixel)
 
 ---
@@ -507,9 +503,11 @@ github.com/punky-labs/edrum-project
 
 ## Dev Environment
 
-- Windows: VS Code + PlatformIO + Claude Code CLI
-- MCP filesystem server: project root mounted for Claude Desktop
-- upload_protocol = picotool, upload_port = COM10 (XIAO RP2040)
+- Windows: VS Code + PlatformIO (pioarduino platform) + Claude Code CLI
+- MCP filesystem server: D:\Dev\eDrum\edrum-project\ mounted for Claude Desktop
+- upload_protocol = esptool, upload_port = COM9 (XIAO ESP32-S3)
 - board_build.filesystem_size = 0.5m in platformio.ini
+- Platform pinned: pioarduino 53.03.11 (not 'stable' — causes cache mismatch)
 - Build number: firmware/version.txt (integer) +
   firmware/scripts/increment_build.py (PlatformIO extra_scripts pre:)
+- RP2040 build retained: [env:xiao_rp2040] still builds clean (0 warnings)
