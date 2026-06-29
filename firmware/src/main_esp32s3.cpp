@@ -1,9 +1,10 @@
-// XIAO ESP32-S3 dual-core eDrum firmware (head unit)
-// Hardware-validation port of main_rp2040.cpp:
-//   - internal ESP32-S3 ADC (analogRead) replaces the external MCP3008
-//   - NeoPixel status LED replaced with Serial log messages
-//   - RP2040 bootrom reset replaced with ESP.restart()
+// XIAO ESP32-S3 eDrum firmware (head unit)
+//
+// Sensing rewrite Stage 1: the analogRead() sampling loop and global ring_buffer
+// are replaced by the 3-layer pipeline
+//     AdcSampler (DMA) -> SampleStream (ring + demux) -> PDrum2Trigger -> MIDI.
 // The sensing layer is accessed only through the TriggerEngine interface.
+// USB / TinyUSB / Serial setup is unchanged.
 
 #include <Arduino.h>
 #include <LittleFS.h>
@@ -18,8 +19,9 @@
 #include "config/Config.h"
 #include "midi/SysEx.h"
 #include "sensing/TriggerEngine.h"
-#include "sensing/pdrum/PDrumTrigger.h"
-#include "ring_buffer.h"
+#include "sensing/pdrum2/PDrum2Trigger.h"
+#include "sensing/sampling/AdcSampler.h"
+#include "sensing/sampling/SampleStream.h"
 
 // FW_BUILD is injected by the RP2040 build's increment_build.py extra_script.
 // This env does not run that script, so provide a fallback so printHelp() builds.
@@ -35,24 +37,32 @@ Adafruit_USBD_MIDI usb_midi;
 MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 
 // ---------------------------------------------------------------------------
-// Config apply/save request flags (set by SysEx handlers, serviced on Core 0)
+// Config apply/save request flags (set by SysEx handlers, serviced in loop)
 // ---------------------------------------------------------------------------
 
 volatile bool g_save_requested  = false;
 volatile bool g_apply_requested = false;
 
 // ---------------------------------------------------------------------------
-// ADC — owned by Core 1
+// Sampling pipeline (Layers 1 + 2)
 // ---------------------------------------------------------------------------
 
 #define ADC_PRINT_FLOOR 10
 
-// ---------------------------------------------------------------------------
-// Ring buffer storage (declared in ring_buffer.h)
-// ---------------------------------------------------------------------------
+// All 8 ADC1 channels (head unit), in frame order. SampleStream channel index
+// == position in this array; GPIO -> stream-channel index is (gpio - kChannelGpios[0]).
+static const uint8_t kChannelGpios[8] = { 2, 3, 4, 5, 6, 7, 8, 9 };
 
-uint16_t          ringBuf[8][RING_BUF_SIZE];
-volatile uint32_t ringHead = 0;
+static AdcSampler   sampler;
+static SampleStream stream;
+
+// Per-input read cursors into the stream (one consumer = one cursor pair).
+static SampleStream::Cursor headCursor[NUM_INPUTS];
+static SampleStream::Cursor rimCursor[NUM_INPUTS];
+
+// Samples pulled per channel per loop iteration. Loop runs far faster than the
+// 8 kHz sample rate, so n is normally tiny; this is just the per-call ceiling.
+static const uint16_t kBlock = 256;
 
 // ---------------------------------------------------------------------------
 // Trigger engine instances
@@ -60,11 +70,15 @@ volatile uint32_t ringHead = 0;
 
 static TriggerEngine* triggers[NUM_INPUTS];
 
-// ADC channel per input: {headCh, rimCh}; -1 = no ADC channel (stub)
-// ESP32-S3 GPIO numbers used directly with analogRead().
-// Jacks 0-3: head/piezo + rim; Jack 4: hi-hat controller — stubbed, no channel.
+// ADC channel per input: {headGpio, rimGpio}; -1 = no channel (hi-hat stub).
+// Jacks 0-3: head/piezo + rim; Jack 4: hi-hat controller — stubbed.
 static const int8_t kHeadCh[NUM_INPUTS] = { 2, 4, 6, 8, -1 };
 static const int8_t kRimCh[NUM_INPUTS]  = { 3, 5, 7, 9, -1 };
+
+// Map a GPIO number to its SampleStream channel index (-1 if no channel).
+static inline int streamCh(int8_t gpio) {
+    return (gpio < 0) ? -1 : (int)gpio - (int)kChannelGpios[0];
+}
 
 static void applyConfig() {
     for (int i = 0; i < NUM_INPUTS; i++) {
@@ -252,7 +266,7 @@ static void handleSerial(char cmd) {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: map raw ADC value to 0-127, mirroring pdrum.cpp curve() map()
+// Helper: map raw ADC value to 0-127, mirroring pdrum curve() map()
 // ---------------------------------------------------------------------------
 
 static uint8_t rawToMidi(int raw, uint16_t threshold, uint16_t sens) {
@@ -264,59 +278,43 @@ static uint8_t rawToMidi(int raw, uint16_t threshold, uint16_t sens) {
 }
 
 // ---------------------------------------------------------------------------
-// Scope capture dump — called after 100 post-hit samples have accumulated
+// Scope capture dump — called after 100 post-hit samples have accumulated.
+// Reads the 100-pre / 100-post window through SampleStream::readWindow().
+// Output format is identical to before so the desktop ADC Scope tool still parses.
 // ---------------------------------------------------------------------------
 
 static void scopeDump(int input, bool isRim) {
-    int8_t hc = kHeadCh[input];
-    int8_t rc = kRimCh[input];
+    int hc = streamCh(kHeadCh[input]);
+    int rc = streamCh(kRimCh[input]);
 
     static const uint32_t PRE   = 100;
     static const uint32_t POST  = 100;
     static const uint32_t TOTAL = PRE + POST;
 
+    uint16_t headWin[TOTAL] = {};
+    uint16_t rimWin[TOTAL]  = {};
+    // SAFETY: callers guard g_scopeSnap >= PRE, but clamp here too (shared fn,
+    // unsigned math). If the snap is somehow < PRE, start at 0 rather than wrap.
+    uint32_t start = (g_scopeSnap >= PRE) ? (g_scopeSnap - PRE) : 0;
+    if (hc >= 0) stream.readWindow((uint8_t)hc, start, headWin, (uint16_t)TOTAL);
+    if (rc >= 0) stream.readWindow((uint8_t)rc, start, rimWin,  (uint16_t)TOTAL);
+
     int headPeak = 0, rimPeak = 0;
     for (uint32_t t = 0; t < TOTAL; t++) {
-        uint32_t idx = g_scopeSnap - PRE + t;
-        if (hc >= 0) { int v = (int)ringBufRead((uint8_t)hc, idx); if (v > headPeak) headPeak = v; }
-        if (rc >= 0) { int v = (int)ringBufRead((uint8_t)rc, idx); if (v > rimPeak)  rimPeak  = v; }
+        if (headWin[t] > headPeak) headPeak = headWin[t];
+        if (rimWin[t]  > rimPeak)  rimPeak  = rimWin[t];
     }
 
     Serial.printf("[SCOPE] input=%d pad_type=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
-        input, (int)g_inputs[input].padType, (int)hc, (int)rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
+        input, (int)g_inputs[input].padType, hc, rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
     Serial.println("T,H,R");
     for (uint32_t t = 0; t < TOTAL; t++) {
-        uint32_t idx = g_scopeSnap - PRE + t;
-        int h = (hc >= 0) ? (int)ringBufRead((uint8_t)hc, idx) : 0;
-        int r = (rc >= 0) ? (int)ringBufRead((uint8_t)rc, idx) : 0;
-        Serial.printf("%d,%d,%d\n", (int)t, h, r);
+        Serial.printf("%d,%d,%d\n", (int)t, (int)headWin[t], (int)rimWin[t]);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Core 1 — ADC sampling task (pinned to Core 1, launched from setup())
-// ---------------------------------------------------------------------------
-
-// ADC sampling — runs inline in loop() on Core 0.
-// analogRead() is not safe to call from Core 1 on ESP32-S3 (the Arduino ADC
-// driver assumes Core 0). For this hardware-validation pass we sample on
-// Core 0 before the sensing loop. DMA continuous sampling (Core 1) comes
-// with the PDrum2 sensing rewrite.
-static void sampleADC() {
-    uint16_t samples[8];
-    samples[0] = (uint16_t)analogRead(2);
-    samples[1] = (uint16_t)analogRead(3);
-    samples[2] = (uint16_t)analogRead(4);
-    samples[3] = (uint16_t)analogRead(5);
-    samples[4] = (uint16_t)analogRead(6);
-    samples[5] = (uint16_t)analogRead(7);
-    samples[6] = (uint16_t)analogRead(8);
-    samples[7] = (uint16_t)analogRead(9);
-    ringBufWrite(samples);
-}
-
-// ---------------------------------------------------------------------------
-// Core 0 — USB MIDI, config, sensing, output
+// setup / loop — USB MIDI, config, sampling pump, sensing, output
 // ---------------------------------------------------------------------------
 
 void setup() {
@@ -328,24 +326,34 @@ void setup() {
     MIDI.setHandleSystemExclusive(onSysEx);
     Serial.begin(115200);
     delay(2000);
+    // Short timeout so readStringUntil() in the serial command handlers ('o'/'w')
+    // can never block the main loop (which would stall pump() and the input
+    // drain, causing host write-timeouts). 20ms is ample for a line already in
+    // the USB-CDC buffer; if the rest of a line hasn't arrived, we bail fast.
+    Serial.setTimeout(20);
     Serial.println("[eDrum] Ready.");
-
     Serial.println("[LED] boot");
-
-    analogReadResolution(12);
-    analogSetAttenuation(ADC_11db);
-    ringBufInit();
 
     configInit();
     configLoad();
 
+    // Layer 1 + 2: continuous DMA sampling -> ring/demux.
+    if (!sampler.begin(kChannelGpios, 8, 8000)) {
+        Serial.println("[ADC] ERROR: AdcSampler.begin() failed");
+    }
+    stream.begin(&sampler);
+    Serial.printf("[ADC] configured %lu Hz/ch  (%lu Hz aggregate, %d ch)\n",
+                  (unsigned long)sampler.sampleRateHz(),
+                  (unsigned long)sampler.sampleRateHz() * sampler.numChannels(),
+                  (int)sampler.numChannels());
+
+    // Layer 3: one engine per input that has a head channel.
     for (int i = 0; i < NUM_INPUTS; i++) {
-        int8_t h = kHeadCh[i];
-        int8_t r = kRimCh[i];
-        triggers[i] = new PDrumTrigger(
-            (r >= 0) ? (byte)r : (byte)0,
-            (h >= 0) ? (byte)h : (byte)0
-        );
+        if (kHeadCh[i] < 0) { triggers[i] = nullptr; continue; }
+        triggers[i] = new PDrum2Trigger(
+            (byte)streamCh(kHeadCh[i]),
+            (byte)streamCh(kRimCh[i]));
+        triggers[i]->initialize(stream.sampleRateHz());
     }
     applyConfig();
 
@@ -354,8 +362,24 @@ void setup() {
 }
 
 void loop() {
-    // Sample ADC on Core 0 (analogRead not safe on Core 1)
-    sampleADC();
+    // Layer 2: pull all completed DMA frames into the ring buffer (advances head).
+    stream.pump();
+
+    // One-shot measured per-channel rate (driver-reported), printed ~1s after the
+    // first sample so we can confirm the configured-vs-delivered rate at boot.
+    static bool     s_rateDone = false;
+    static bool     s_rateInit = false;
+    static uint32_t s_rateT0   = 0;
+    static uint32_t s_rateHead = 0;
+    if (!s_rateDone) {
+        if (!s_rateInit && stream.writeHead() > 0) {
+            s_rateInit = true; s_rateT0 = millis(); s_rateHead = stream.writeHead();
+        } else if (s_rateInit && millis() - s_rateT0 >= 1000) {
+            Serial.printf("[ADC] measured %lu Hz/ch (delivered)\n",
+                          (unsigned long)(stream.writeHead() - s_rateHead));
+            s_rateDone = true;
+        }
+    }
 
     // Status: log on USB host mount/unmount transitions
     static bool wasMounted = false;
@@ -378,19 +402,6 @@ void loop() {
                         SYSEX_STAT_ACK, ack, 3);
     }
 
-
-    // --- TEMP sample-rate measurement — remove after characterising ---
-    static unsigned long lastRatePrint = 0;
-    static uint32_t      lastRingHead  = 0;
-    if (millis() - lastRatePrint >= 1000) {
-        uint32_t now = ringHead;
-        uint32_t delta = now - lastRingHead;   // loops completed in ~1s
-        lastRingHead  = now;
-        lastRatePrint = millis();
-        Serial.printf("[RATE] %lu samples/sec/channel\n", (unsigned long)delta);
-    }
-
-
     MIDI.read();
 
     if (Serial.available()) {
@@ -398,40 +409,62 @@ void loop() {
     }
 
     static unsigned long lastAdcPrint = 0;
-    if (g_adcDump && millis() - lastAdcPrint >= 100) {
+    if (g_adcDump && millis() - lastAdcPrint >= 100 && stream.writeHead() > 0) {
         lastAdcPrint = millis();
-        uint32_t snap = ringHead;
+        uint32_t latest = stream.writeHead() - 1;
+        uint16_t v[8] = {};
         bool anyAboveFloor = false;
         for (int ch = 0; ch < 8; ch++) {
-            if (ringBufRead((uint8_t)ch, snap - 1) > ADC_PRINT_FLOOR) {
-                anyAboveFloor = true;
-                break;
-            }
+            stream.readWindow((uint8_t)ch, latest, &v[ch], 1);
+            if (v[ch] > ADC_PRINT_FLOOR) anyAboveFloor = true;
         }
         if (anyAboveFloor) {
             Serial.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
-                ringBufRead(0, snap-1), ringBufRead(1, snap-1),
-                ringBufRead(2, snap-1), ringBufRead(3, snap-1),
-                ringBufRead(4, snap-1), ringBufRead(5, snap-1),
-                ringBufRead(6, snap-1), ringBufRead(7, snap-1));
+                v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
         }
     }
 
-    // Fire pending scope dump once 100 post-hit samples have accumulated
-    if (g_scopePending && (ringHead - g_scopeSnap) >= 100) {
-        scopeDump((int)g_scopeInput, g_scopeIsRim);
-        g_scopePending = false;
+    // Fire pending scope dump once 100 post-hit samples have accumulated.
+    // SAFETY (Stage 1): all index math is unsigned, so guard against underflow and
+    // stale/garbage snaps. Coordinate-accuracy is deferred to Stage 2 (processBlock
+    // rewrite); here we only guarantee the dump can never fire on a bad index and
+    // thus never flood/lock the serial link.
+    if (g_scopePending) {
+        uint32_t head = stream.writeHead();
+        bool snapValid = (g_scopeSnap <= head)                       // not in the future
+                      && (g_scopeSnap >= 100)                        // PRE window exists
+                      && (head - g_scopeSnap <= SampleStream::kDepth);// still in ring
+        if (!snapValid) {
+            // Bad/stale snap — abandon quietly rather than dump garbage.
+            g_scopePending = false;
+        } else if ((head - g_scopeSnap) >= 100) {
+            scopeDump((int)g_scopeInput, g_scopeIsRim);
+            g_scopePending = false;
+        }
     }
 
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!triggers[i]) continue;
 
-        int8_t hc = kHeadCh[i];
-        int8_t rc = kRimCh[i];
-        int headVal = (hc >= 0) ? (int)ringBufRead((uint8_t)hc, ringHead - 1) : 0;
-        int rimVal  = (rc >= 0) ? (int)ringBufRead((uint8_t)rc, ringHead - 1) : 0;
+        int hc = streamCh(kHeadCh[i]);
+        int rc = streamCh(kRimCh[i]);
+        if (hc < 0) continue;
 
-        triggers[i]->sensing(headVal, rimVal, ringHead);
+        static uint16_t headBuf[kBlock];
+        static uint16_t rimBuf[kBlock];
+
+        uint16_t n = stream.read((uint8_t)hc, headCursor[i], headBuf, kBlock);
+        if (rc >= 0) stream.read((uint8_t)rc, rimCursor[i], rimBuf, n);  // same count
+        if (n == 0) continue;
+
+        if (headCursor[i].overran || (rc >= 0 && rimCursor[i].overran)) {
+            if (!g_serialQuiet) Serial.printf("[WARN] i=%d sample overrun (consumer fell behind)\n", i);
+        }
+
+        triggers[i]->processBlock(headBuf, rc >= 0 ? rimBuf : nullptr, n);
+
+        // Absolute stream index of the last head sample in this block.
+        uint32_t blockEndIdx = headCursor[i].pos - 1;
 
         if (triggers[i]->hasHit()) {
             byte note    = triggers[i]->getNoteHead();
@@ -451,9 +484,13 @@ void loop() {
             if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
                     && (triggers[i]->getVelocityRaw()    >= g_scopeFloor
                      || triggers[i]->getVelocityRimRaw() >= g_scopeFloor)) {
-                g_scopePending = true;
-                g_scopeSnap    = triggers[i]->getTriggerSnap();
-                g_scopeIsRim   = false;
+                // SAFETY: only arm if the snap subtraction won't underflow.
+                uint32_t back = triggers[i]->getTriggerSnap();
+                if (back <= blockEndIdx) {
+                    g_scopePending = true;
+                    g_scopeSnap    = blockEndIdx - back;
+                    g_scopeIsRim   = false;
+                }
             }
         } else if (triggers[i]->hasHitRim()) {
             byte note    = g_inputs[i].zone2MidiNote;
@@ -473,9 +510,13 @@ void loop() {
             if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
                     && (triggers[i]->getVelocityRaw()    >= g_scopeFloor
                      || triggers[i]->getVelocityRimRaw() >= g_scopeFloor)) {
-                g_scopePending = true;
-                g_scopeSnap    = triggers[i]->getTriggerSnap();
-                g_scopeIsRim   = true;
+                // SAFETY: only arm if the snap subtraction won't underflow.
+                uint32_t back = triggers[i]->getTriggerSnap();
+                if (back <= blockEndIdx) {
+                    g_scopePending = true;
+                    g_scopeSnap    = blockEndIdx - back;
+                    g_scopeIsRim   = true;
+                }
             }
         }
 

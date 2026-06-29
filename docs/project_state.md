@@ -1,5 +1,56 @@
 # eDrum Project State
-Last updated: 2026-06-28 (afternoon session)
+Last updated: 2026-06-29 (sensing rewrite — Stage 1 complete)
+
+---
+
+## Sensing Rewrite — Status (2026-06-29)
+
+Replacing the simple peak-picker with an Edrumulus-derived power-domain engine.
+Full design in `docs/sensing_rewrite_step0.md` (params/decisions) and
+`docs/sensing_rewrite_step1_plan.md` (architecture/staging).
+
+**Stage 1 — COMPLETE (sensing pipeline proven).**
+The new 3-layer architecture is built and validated on hardware:
+- Layer 1 `AdcSampler` — owns ADC1 + `adc_continuous` DMA. Confirmed delivering
+  **8000 Hz/ch** on the XIAO ESP32-S3 head unit (8 ch, 64 kHz aggregate).
+- Layer 2 `SampleStream` — ring buffer (8 ch × 8192 ≈ 1.0 s), gapless cursor reads
+  with overrun detection, `readWindow()` for capture.
+- Layer 3 `PDrum2Trigger` — SINGLE_PIEZO **simple time-domain** detector (placeholder;
+  the real band-pass/decay engine is Stage 2). Sample-count timing, no millis().
+- `TriggerEngine` interface changed: `sensing()` → `initialize()` + `processBlock()`.
+- `main_esp32s3.cpp` rewritten to pump→read→processBlock; old `analogRead` loop and
+  global `ring_buffer.h` removed. PDrum v1 retired (no legacy to service).
+- KD-80 on jack 2 triggers cleanly via the new pipeline; velocities scale soft→hard.
+
+**Bugs fixed during Stage 1 review:**
+- `AdcSampler` ADC channel pattern masked `ch & 0x7` — collides ADC1 ch8/ch9
+  (GPIO9/10) with ch0/1. Would corrupt jack 3. Now assigns channel directly.
+- Scope snap index could unsigned-underflow → spurious dump. Guarded at arm + fire.
+- `Serial.setTimeout(20)` so `readStringUntil()` in the `o`/`w` handlers can't stall
+  the loop (which starved `pump()` and the input drain).
+
+**PARKED — the serial ADC Scope dev tool.**
+The scope graph does not work in the head firmware and is **deliberately shelved**,
+not debugged further. Root cause is the **USB MIDI / USB-CDC-serial coexistence**
+issue flagged in Step 0 §11: with `ARDUINO_USB_MODE=0` (TinyUSB owns USB for MIDI),
+the serial control channel the scope relies on is not reliably bidirectional —
+serial TX works (`[HIT]` lines appear) but host→device writes time out, so arming and
+capture are unreliable. The app no longer freezes (it catches the write timeout and
+warns), but the scope is non-functional under MIDI.
+Rationale for parking: the scope was always a dev/advanced-only tuning aid, never
+user-facing. Its purpose (observe signal + detector while tuning) only matters once
+the **real** Stage 2 detector exists. Revisit from a larger architectural view in
+Stage 2 — most likely as **raw capture over SysEx** (Step 0 §11), retiring the serial
+path entirely. It's also possible the need is met by other channels (the `05 03`
+hit-debug SysEx already works over MIDI) and a full scope proves unnecessary.
+
+**Stage 2 — NEXT (the real detection core).**
+Edrumulus-derived: band-pass IIR → square (power domain) → 3-segment decay-model
+retrigger mask → clip/overload correction → first-peak vs max-peak. Designed to
+**eliminate the hard-hit runaway** at the algorithm level (no watchdog band-aid).
+Seed presets (PDX8/CY5/Lemon/KD8/PD8) gathered in Step 0 §7. Add "scope via SysEx
+capture" as an explicit Stage 2 deliverable. Stage after: DUAL_PIEZO, then
+PIEZO_SWITCH_CHOKE.
 
 ---
 
@@ -510,4 +561,6 @@ github.com/punky-labs/edrum-project
 - Platform pinned: pioarduino 53.03.11 (not 'stable' — causes cache mismatch)
 - Build number: firmware/version.txt (integer) +
   firmware/scripts/increment_build.py (PlatformIO extra_scripts pre:)
-- RP2040 build retained: [env:xiao_rp2040] still builds clean (0 warnings)
+- Primary build env: [env:xiao_esp32s3_head] (COM13). RP2040 env [env:xiao_rp2040]
+  RETIRED (commented out) — the new `adc_continuous` DMA sampler is ESP32-S3-specific
+  and the RP2040 + MCP3008 path (~2 kHz, no continuous DMA) cannot run the engine.

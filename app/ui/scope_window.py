@@ -476,7 +476,11 @@ class ScopeWindow(QMainWindow):
         if not port:
             return
         try:
-            self._serial = serial.Serial(port, BAUD_RATE, timeout=0.1)
+            # write_timeout is essential: the reader QThread blocks on readline()
+            # on the same port object, and on Windows a GUI-thread write to a
+            # contended port can otherwise hang indefinitely and freeze the app.
+            # A bounded write_timeout turns that into a fast, catchable failure.
+            self._serial = serial.Serial(port, BAUD_RATE, timeout=0.1, write_timeout=0.5)
         except Exception as exc:
             log.error("Serial connect failed: %s", exc)
             return
@@ -516,7 +520,7 @@ class ScopeWindow(QMainWindow):
             # Arm
             inp   = self._input_spin.value()
             floor = self._floor_spin.value()
-            self._serial.write(f"o {inp} {floor}\n".encode())
+            self._safe_write(f"o {inp} {floor}\n".encode())
             self._armed = True
             self._arm_btn.setText("Armed ●")
             self._arm_btn.setStyleSheet(f"color: {_COLOR_HEAD};")
@@ -524,17 +528,34 @@ class ScopeWindow(QMainWindow):
                 self._floor_line.setValue(floor)
         else:
             # Disarm
-            self._serial.write(b"o off\n")
+            self._safe_write(b"o off\n")
             self._armed = False
             self._arm_btn.setText("Arm")
             self._arm_btn.setStyleSheet("")
+
+    def _safe_write(self, data: bytes) -> bool:
+        """Write to the serial port without ever letting a write timeout crash or
+        freeze the GUI. The reader QThread holds the same port; on Windows a
+        contended GUI-thread write can time out (SerialTimeoutException). We catch
+        it, log it, and return False rather than propagating."""
+        if not (self._serial and self._serial.is_open):
+            return False
+        try:
+            self._serial.write(data)
+            return True
+        except Exception as exc:  # SerialTimeoutException and friends
+            log.warning("serial write failed (%s): %r", exc, data)
+            self._serial_output_append(
+                f"⚠ serial write failed: {exc}", color=_COLOR_AMBER
+            )
+            return False
 
     def _on_params_changed(self) -> None:
         """Re-arm automatically if already connected and armed."""
         if self._serial and self._serial.is_open and self._armed:
             inp   = self._input_spin.value()
             floor = self._floor_spin.value()
-            self._serial.write(f"o {inp} {floor}\n".encode())
+            self._safe_write(f"o {inp} {floor}\n".encode())
             if _PG:
                 self._floor_line.setValue(floor)
 
@@ -543,7 +564,7 @@ class ScopeWindow(QMainWindow):
         if not (self._serial and self._serial.is_open):
             return
         self._reading_config = True
-        self._serial.write(b"s\n")
+        self._safe_write(b"s\n")
 
     def _on_serial_send(self) -> None:
         """Send whatever is in the serial input bar."""
@@ -552,7 +573,7 @@ class ScopeWindow(QMainWindow):
         text = self._serial_input.text().strip()
         if not text:
             return
-        self._serial.write(f"{text}\n".encode())
+        self._safe_write(f"{text}\n".encode())
         self._serial_input.clear()
 
     def _on_clear(self) -> None:

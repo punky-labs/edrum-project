@@ -253,4 +253,8 @@
  .pio/libdeps/xiao_esp32s3_head/MIDI\ Library/src/MIDI.hpp \
  firmware/src/config/Config.h firmware/src/midi/SysEx.h \
  firmware/src/sensing/TriggerEngine.h \
- firmware/src/sensing/pdrum/PDrumTrigger.h firmware/src/ring_buffer.h
+ firmware/src/sensing/pdrum2/PDrum2Trigger.h \
+ firmware/src/sensing/sampling/AdcSampler.h \
+ C:/Users/andre/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_adc/include/esp_adc/adc_continuous.h \
+ C:/Users/andre/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/hal/include/hal/adc_types.h \
+ firmware/src/sensing/sampling/SampleStream.h

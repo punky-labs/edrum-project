@@ -3,8 +3,13 @@
 
 class TriggerEngine {
 public:
-    // Call once per sample loop with current head and rim ADC values
-    virtual void sensing(int headVal, int rimVal, uint32_t ringHead = 0) = 0;
+    // One-time setup; Fs-dependent work (scan/mask sample counts, filters) here.
+    virtual void initialize(uint32_t sampleRateHz) = 0;
+
+    // Process a block of this engine's channel samples (gapless, from SampleStream).
+    // headBlock/rimBlock each carry `n` samples for the head and rim channels.
+    virtual void processBlock(const uint16_t* headBlock,
+                              const uint16_t* rimBlock, uint16_t n) = 0;
 
     // Hit detection results — valid after sensing() returns
     virtual bool hasHit()          const = 0;
@@ -18,7 +23,10 @@ public:
     virtual int  getVelocityRaw()  const = 0;
     virtual int  getVelocityRimRaw() const = 0;
 
-    // Scope support
+    // Scope support: distance (in samples) from the end of the most recently
+    // processed block back to the last reported hit's threshold crossing. The
+    // caller composes the SampleStream-absolute crossing index from the block-end
+    // index it already knows. Valid immediately after a processBlock() that set a hit.
     virtual uint32_t getTriggerSnap() const = 0;
 
     // Configuration — applied from g_inputs[] by applyConfig()
