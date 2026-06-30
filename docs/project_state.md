@@ -1,5 +1,51 @@
 # eDrum Project State
-Last updated: 2026-06-29 (sensing rewrite — Stage 1 complete)
+Last updated: 2026-06-30 (Stage 2a detection working on hardware; dev-process docs added)
+
+---
+
+## ⮕ START HERE — Working method & debugging (read first)
+
+The dev team is just Andrew + Claude. We adopted a methodical, anti-rabbit-hole
+process after a Stage 2a session burned hours/tokens on code-reading and guessing.
+**At the start of any eDrum debugging/dev task, read these:**
+- **`docs/debugging_method.md`** — the systematic process to follow when something
+  breaks (observe before theorising, instrument before changing, one variable at a
+  time, confirm fresh binary). Run this loop; don't freelance.
+- **`docs/dev_workflow_plan.md`** — the dev-tooling roadmap (WiFi telnet console, dev
+  config file, tuning file, Python sync script). The order of operations for tooling
+  we build next.
+
+### Hardware / debugging constraints (HARD-WON — current truth)
+- **Serial RX is DEAD under USB MIDI (`ARDUINO_USB_MODE=0`).** Serial TX works (boot
+  banner, ADC dump appear) but host→device input wedges. **Cannot drive the head
+  firmware interactively over serial.** Drive it via the app (SysEx over MIDI) or via
+  compile-time defaults + reflash. Interactive serial commands only work on the
+  `adc_diag` firmware.
+- **`adc_diag` firmware (`[env:xiao_adc_diag]`, MODE=1, native USB-CDC, no MIDI)** gives
+  clean bidirectional serial for raw-signal observation. Use it for pure-sensing work
+  where MIDI isn't needed. (`firmware/src/adc_diag.cpp`.)
+- **Stale pioarduino build cache silently flashes OLD binaries.** If behaviour is
+  unchanged after an edit, or weird/repeating: **full clean build**
+  (`pio run -e <env> -t clean`) before assuming the change was wrong. This cost hours.
+- **Boot build stamp** (`[eDrum] Build stamp: <date> <time>`) confirms the flashed
+  binary is fresh. Check it after every flash.
+- **Floating (unplugged) jacks read 12–17 noise** (high-impedance antenna pickup);
+  **populated jacks read ~4.** Empty jacks generate phantom hits. Disable unused inputs
+  (`InputConfig.enabled` / serial `w <i> enable 0`) or plug them when testing.
+- Future debug channel: **WiFi telnet/TCP console** (dev-build-only) replaces the dead
+  USB serial RX without clashing with MIDI. See `dev_workflow_plan.md`.
+
+### Stage 2a status (2026-06-30)
+- **The real Edrumulus detection core is ported and WORKS on hardware.** Clean velocity
+  scaling, good SNR (hit ~900 vs noise ~4–16). The long phantom-hit saga was NOT an
+  algorithm bug — it was floating jacks + stale cache.
+- DC-offset IIR added before band-pass + spike-cancel (the unipolar front-end needs it;
+  Edrumulus does this in `process()` before `process_sample`).
+- `InputConfig.enabled` per-channel enable added; boot build stamp added; `g_diagMode`
+  + `adc_diag.cpp` standalone diagnostic firmware added.
+- **Open (app-side, next): app hit log not displaying; settings persistence over SysEx.**
+  Firmware send/receive paths verified correct; issue is app-side or app↔device. Tackle
+  with the debugging_method (check app log `RX:`/`TX:`, confirm direction first).
 
 ---
 
