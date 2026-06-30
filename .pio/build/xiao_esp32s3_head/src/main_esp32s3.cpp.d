@@ -254,6 +254,8 @@
  firmware/src/config/Config.h firmware/src/midi/SysEx.h \
  firmware/src/sensing/TriggerEngine.h \
  firmware/src/sensing/pdrum2/PDrum2Trigger.h \
+ firmware/src/sensing/pdrum2/../FastWriteFIFO.h \
+ firmware/src/sensing/pdrum2/SpikeCancel.h \
  firmware/src/sensing/sampling/AdcSampler.h \
  C:/Users/andre/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_adc/include/esp_adc/adc_continuous.h \
  C:/Users/andre/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/hal/include/hal/adc_types.h \

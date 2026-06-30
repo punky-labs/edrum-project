@@ -10,6 +10,10 @@ extern bool g_serialQuiet;
 
 struct __attribute__((packed)) InputConfig {
     uint8_t  padType;
+    bool     enabled;        // false = input ignored entirely (no detection/MIDI).
+                             // Lets unpopulated jacks be silenced so a floating
+                             // (unplugged, high-impedance) input can't generate
+                             // phantom hits from antenna noise. Default true.
     uint16_t threshold;      // 0–1023 (ADC range); encode as 2x 7-bit bytes in SysEx
     uint8_t  velocityCurve;
     uint16_t retriggerTime;  // ms; encode as 2x 7-bit bytes in SysEx
@@ -27,6 +31,28 @@ struct __attribute__((packed)) InputConfig {
     uint8_t  ccNumber;
     uint8_t  ccChannel;
     uint8_t  linkedInput;    // 0xFF = no link, 0x00–0x08 = paired input ID
+
+    // ---- Tier-2 (Edrumulus) params — added Stage 2a. Stored in REAL units with a
+    // fixed-point convention so the engine runs without app/SysEx plumbing (that is
+    // Step 2 of the overall plan). Tune via serial `w` / presets until then.
+    // Fixed-point: *Ms and *Db fields are value×10 (one decimal); gradFact fields
+    // are integer ×1; clipCompAmpmapStep is value×100.
+    // NOTE: with these fields `threshold` and `headSensitivity` now carry the
+    // Edrumulus 0..31 velocity_threshold / velocity_sensitivity (not ADC units).
+    uint16_t preScanTimeMs;         // ms×10   (25  = 2.5 ms)
+    uint16_t firstPeakDiffThreshDb; // dB×10   (80  = 8.0 dB)
+    uint16_t decayLen1Ms;           // ms×10   (0)
+    uint16_t decayGradFact1;        // ×1      (200)
+    uint16_t decayLen2Ms;           // ms×10   (3500 = 350 ms)
+    uint16_t decayGradFact2;        // ×1      (450)
+    uint16_t decayLen3Ms;           // ms×10   (5000 = 500 ms)
+    uint16_t decayGradFact3;        // ×1      (45)
+    uint16_t decayFactDb;           // dB×10   (10  = 1.0 dB)
+    uint16_t maskTimeDecayFactDb;   // dB×10   (100 = 10.0 dB)
+    uint16_t decayEstDelayMs;       // ms×10   (70)  [stored, UNUSED until 2b]
+    uint16_t decayEstLenMs;         // ms×10   (40)  [stored, UNUSED until 2b]
+    uint16_t decayEstFactDb;        // dB×10   (160) [stored, UNUSED until 2b]
+    uint16_t clipCompAmpmapStep;    // ×100    (8   = 0.08) [stored, UNUSED until 2b]
 };
 
 struct __attribute__((packed)) Preset {

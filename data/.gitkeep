@@ -1,0 +1,16 @@
+# LittleFS data directory
+
+This directory is the source for the LittleFS filesystem image built for the
+ESP32-S3 head unit (`board_build.filesystem = littlefs` in platformio.ini).
+
+It is intentionally (almost) empty: the firmware does NOT ship any files in the
+image. `Config` writes its settings blob to LittleFS at runtime, and on first
+boot after the blob layout changes it resets to defaults. The build only needs
+this directory to EXIST so `mklittlefs` can build a valid (empty) image.
+
+This `.gitkeep` exists so the directory survives fresh checkouts — git does not
+track empty directories, and a missing `data/` causes:
+    warning: can't read source directory
+    *** [.pio\...\littlefs.bin] Error 1
+
+Do not delete this file unless you add other content to this directory.

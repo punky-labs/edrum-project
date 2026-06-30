@@ -154,4 +154,6 @@
  C:/Users/andre/.platformio/packages/framework-arduinoespressif32/cores/esp32/freertos_stats.h \
  C:/Users/andre/.platformio/packages/framework-arduinoespressif32/cores/esp32/io_pin_remap.h \
  C:/Users/andre/.platformio/packages/framework-arduinoespressif32/cores/esp32/Arduino.h \
- firmware/src/sensing/pdrum2/../TriggerEngine.h
+ firmware/src/sensing/pdrum2/../TriggerEngine.h \
+ firmware/src/sensing/pdrum2/../FastWriteFIFO.h \
+ firmware/src/sensing/pdrum2/SpikeCancel.h

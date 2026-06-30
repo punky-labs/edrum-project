@@ -14,13 +14,16 @@ static void presetPath(uint8_t id, char* buf) {
 static InputConfig defaultInput(uint8_t idx) {
     InputConfig c = {};
     c.linkedInput      = 0xFF;
+    c.enabled          = true;  // inputs active by default; disable unpopulated jacks
     c.padType          = 1;    // PIEZO_SWITCH_CHOKE (safest default)
-    c.threshold        = 20;
-    c.velocityCurve    = 0;
+    // Stage 2a: threshold/headSensitivity now carry Edrumulus velocity_threshold/
+    // velocity_sensitivity (0..31), NOT ADC units. KD8-derived defaults below.
+    c.threshold        = 8;    // velocity_threshold (0..31), KD8 global
+    c.velocityCurve    = 4;    // LOG2 (kick: less dynamic), KD8
     c.retriggerTime    = 50;
-    c.headSensitivity  = 800;
-    c.scanTime         = 3;
-    c.maskTime         = 80;
+    c.headSensitivity  = 2;    // velocity_sensitivity (0..31), KD8
+    c.scanTime         = 3;    // scan_time_ms (KD8 = 3.0)
+    c.maskTime         = 6;    // mask_time_ms (global = 6)
     c.rimRatioThreshold = 40;  // ratio*100: rim/head > 0.40 = rim hit
     c.chokeThreshold   = 50;
     c.chokeEnabled     = true;
@@ -29,6 +32,22 @@ static InputConfig defaultInput(uint8_t idx) {
     c.zone2MidiChannel = 10;
     c.ccNumber         = 4;
     c.ccChannel        = 10;
+
+    // Tier-2 Edrumulus params (KD8-derived, real units in fixed-point — see Config.h)
+    c.preScanTimeMs         = 25;    // 2.5 ms
+    c.firstPeakDiffThreshDb = 80;    // 8.0 dB
+    c.decayLen1Ms           = 0;     // 0 ms
+    c.decayGradFact1        = 200;
+    c.decayLen2Ms           = 3500;  // 350 ms
+    c.decayGradFact2        = 450;   // KD8
+    c.decayLen3Ms           = 5000;  // 500 ms (KD8)
+    c.decayGradFact3        = 45;    // KD8
+    c.decayFactDb           = 10;    // 1.0 dB
+    c.maskTimeDecayFactDb   = 100;   // 10.0 dB (KD8)
+    c.decayEstDelayMs       = 70;    // 7.0 ms  [unused until 2b]
+    c.decayEstLenMs         = 40;    // 4.0 ms  [unused until 2b]
+    c.decayEstFactDb        = 160;   // 16.0 dB [unused until 2b]
+    c.clipCompAmpmapStep    = 8;     // 0.08    [unused until 2b]
 
     switch (idx) {
         case 0:  c.midiNote = 36; c.zone2MidiNote = 36; break;  // kick

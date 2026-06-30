@@ -8,8 +8,11 @@ public:
 
     // Process a block of this engine's channel samples (gapless, from SampleStream).
     // headBlock/rimBlock each carry `n` samples for the head and rim channels.
-    virtual void processBlock(const uint16_t* headBlock,
-                              const uint16_t* rimBlock, uint16_t n) = 0;
+    // blockStartAbsIndex is the SampleStream-absolute frame index of headBlock[0],
+    // so the engine indexes detection in absolute sample space (no origin mismatch
+    // when the caller maps getTriggerSnap() back to the ring).
+    virtual void processBlock(const uint16_t* headBlock, const uint16_t* rimBlock,
+                              uint16_t n, uint32_t blockStartAbsIndex) = 0;
 
     // Hit detection results — valid after sensing() returns
     virtual bool hasHit()          const = 0;
@@ -41,6 +44,24 @@ public:
     virtual void setChokeThreshold(uint16_t v)       = 0;
     virtual void setChokeEnabled(bool v)             = 0;
     virtual uint8_t getNoteHead()    const           = 0;
+
+    // Tier-2 Edrumulus params (added Stage 2a). Default no-op so engines that don't
+    // use them need not implement them. Values are the fixed-point reals from
+    // InputConfig (see Config.h for the ×10 / ×1 / ×100 convention).
+    virtual void setPreScanTimeMs(uint16_t)          {}
+    virtual void setFirstPeakDiffThreshDb(uint16_t)  {}
+    virtual void setDecayLen1Ms(uint16_t)            {}
+    virtual void setDecayGradFact1(uint16_t)         {}
+    virtual void setDecayLen2Ms(uint16_t)            {}
+    virtual void setDecayGradFact2(uint16_t)         {}
+    virtual void setDecayLen3Ms(uint16_t)            {}
+    virtual void setDecayGradFact3(uint16_t)         {}
+    virtual void setDecayFactDb(uint16_t)            {}
+    virtual void setMaskTimeDecayFactDb(uint16_t)    {}
+    virtual void setDecayEstDelayMs(uint16_t)        {}
+    virtual void setDecayEstLenMs(uint16_t)          {}
+    virtual void setDecayEstFactDb(uint16_t)         {}
+    virtual void setClipCompAmpmapStep(uint16_t)     {}
 
     virtual ~TriggerEngine() = default;
 };

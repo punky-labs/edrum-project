@@ -1,146 +1,269 @@
 /*
-  PDrum2Trigger — Stage 1 implementation (SINGLE_PIEZO, time-domain peak detector).
+  PDrum2Trigger — Stage 2a implementation.
 
-  Detection is a simple sample-count state machine (no millis()):
-    IDLE     : watch head samples for value > headThreshold -> record crossing,
-               seed peak, enter SCANNING for scanSamples.
-    SCANNING : track the max sample; when scanSamples elapse, emit hit + velocity
-               (via the curve LUT) and enter MASKED for maskSamples.
-    MASKED   : ignore everything for maskSamples, then return to IDLE.
-
-  rimBlock is ignored in Stage 1 (SINGLE_PIEZO has no rim). The band-pass /
-  power-domain / decay model is Stage 2.
+  Detection core ported from Edrumulus (Volker Fischer, GPL-2.0):
+    Edrumulus::Pad::initialize()      -> buildDerived()
+    Edrumulus::Pad::process_sample()  -> processBlock() per-sample loop
+  Single head-sensor path only. Clip/overload correction, adaptive decay power
+  estimation, positional sensing, rim and choke are intentionally NOT ported here
+  (Stages 2b/2c/2d) — see the TODO markers in processBlock().
 */
 
 #include "PDrum2Trigger.h"
 #include "Arduino.h"
+#include <math.h>
 
-// Precomputed velocity-curve lookup tables [0..126] -> [1..127].
-// Ported verbatim from PDrumTrigger (RyoKosaka HelloDrum lineage) — Stage 1
-// reuses the existing curve approach; only the detector upstream changed.
-static const uint8_t kCurveExp1[127] = {   // curve 1 — Expressive (base 1.02)
-      1,  1,  1,  2,  2,  2,  2,  3,  3,  3,  3,  4,  4,  4,  5,  5,
-      5,  6,  6,  6,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10, 10, 11,
-     11, 11, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18,
-     19, 20, 20, 21, 21, 22, 23, 23, 24, 25, 25, 26, 27, 28, 28, 29,
-     30, 31, 32, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-     45, 46, 47, 48, 49, 51, 52, 53, 54, 56, 57, 58, 60, 61, 63, 64,
-     65, 67, 69, 70, 72, 73, 75, 77, 79, 80, 82, 84, 86, 88, 90, 92,
-     94, 96, 98,100,102,105,107,109,112,114,117,119,122,124,127,
-};
-static const uint8_t kCurveExp2[127] = {   // curve 2 — Sensitive (base 1.05)
-      1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
-      1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,
-      2,  2,  2,  2,  2,  2,  2,  3,  3,  3,  3,  3,  3,  3,  3,  3,
-      4,  4,  4,  4,  4,  4,  4,  5,  5,  5,  5,  6,  6,  6,  6,  7,
-      7,  7,  7,  8,  8,  9,  9,  9, 10, 10, 11, 11, 12, 12, 13, 13,
-     14, 15, 15, 16, 17, 18, 19, 20, 21, 21, 23, 24, 25, 26, 27, 29,
-     30, 31, 33, 35, 36, 38, 40, 42, 44, 46, 48, 51, 53, 56, 59, 61,
-     65, 68, 71, 75, 78, 82, 86, 90, 95,100,105,110,115,121,127,
-};
-static const uint8_t kCurveLog1[127] = {   // curve 3 — Punchy (base 0.98)
-      1,  4,  6,  9, 12, 14, 17, 19, 21, 24, 26, 28, 30, 33, 35, 37,
-     39, 41, 43, 45, 46, 48, 50, 52, 54, 55, 57, 58, 60, 62, 63, 65,
-     66, 68, 69, 70, 72, 73, 74, 76, 77, 78, 79, 80, 82, 83, 84, 85,
-     86, 87, 88, 89, 90, 91, 92, 93, 94, 94, 95, 96, 97, 98, 99, 99,
-    100,101,102,102,103,104,104,105,106,106,107,108,108,109,109,110,
-    111,111,112,112,113,113,114,114,115,115,116,116,116,117,117,118,
-    118,118,119,119,120,120,120,121,121,121,122,122,122,123,123,123,
-    123,124,124,124,125,125,125,125,126,126,126,126,127,127,127,
-};
-static const uint8_t kCurveLog2[127] = {   // curve 4 — Aggressive (base 0.95)
-      1,  7, 13, 19, 24, 30, 34, 39, 43, 48, 52, 55, 59, 62, 66, 69,
-     72, 74, 77, 80, 82, 84, 86, 88, 90, 92, 94, 96, 97, 99,100,101,
-    103,104,105,106,107,108,109,110,111,112,113,113,114,115,115,116,
-    116,117,117,118,118,119,119,120,120,120,121,121,121,122,122,122,
-    122,123,123,123,123,124,124,124,124,124,124,125,125,125,125,125,
-    125,125,125,125,125,126,126,126,126,126,126,126,126,126,126,126,
-    126,126,126,126,126,126,127,127,127,127,127,127,127,127,127,127,
-    127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,
-};
+// Band-pass filter coefficients (8 kHz design). Constant — from edrumulus.h.
+const float PDrum2Trigger::bp_filt_a_[4] =
+    { 0.6704579059531744f, -2.930427216820138f, 4.846289804288025f, -3.586239808116909f };
+const float PDrum2Trigger::bp_filt_b_[5] =
+    { 0.01658193166930305f, 0.0f, -0.0331638633386061f, 0.0f, 0.01658193166930305f };
 
 PDrum2Trigger::PDrum2Trigger(byte headCh, byte rimCh)
     : headCh_(headCh), rimCh_(rimCh) {}
 
+PDrum2Trigger::~PDrum2Trigger() {
+    if (decay_) { free(decay_); decay_ = nullptr; }
+}
+
 void PDrum2Trigger::initialize(uint32_t sampleRateHz) {
-    sampleRateHz_ = sampleRateHz ? sampleRateHz : 8000;
-    state_      = IDLE;
-    peak_       = 0;
-    scanRemain_ = 0;
-    maskRemain_ = 0;
-    procIndex_  = 0;
-    recomputeTiming();
+    Fs_        = sampleRateHz ? (int)sampleRateHz : 8000;
+    needsInit_ = true;
+    buildDerived();
 }
 
-void PDrum2Trigger::recomputeTiming() {
-    // ms -> samples (rounded), minimum 1 sample so a scan always makes progress.
-    scanSamples_ = (uint32_t)scanTimeMs_ * sampleRateHz_ / 1000UL;
-    maskSamples_ = (uint32_t)maskTimeMs_ * sampleRateHz_ / 1000UL;
-    if (scanSamples_ < 1) scanSamples_ = 1;
+// Port of Edrumulus::Pad::initialize() — only the single-head-sensor derivations.
+void PDrum2Trigger::buildDerived() {
+    const int Fs = Fs_;
+
+    const float threshold_db = 20.0f * log10f((float)kAdcMaxNoise) - 16.0f + (float)velThreshold_;
+    threshold_               = powf(10.0f, threshold_db / 10.0f);              // linear power threshold
+    first_peak_diff_thresh_  = powf(10.0f, (firstPeakDiffThreshDb_x10_ / 10.0f) / 10.0f);
+    scan_time_               = (int)lroundf(scanTimeMs_ * 1e-3f * Fs);
+    pre_scan_time_           = (int)lroundf((preScanTimeMs_x10_ / 10.0f) * 1e-3f * Fs);
+    total_scan_time_         = scan_time_ + pre_scan_time_;
+    mask_time_               = (int)lroundf(maskTimeMs_ * 1e-3f * Fs);
+    decay_len1_              = (int)lroundf((decayLen1Ms_x10_ / 10.0f) * 1e-3f * Fs);
+    decay_len2_              = (int)lroundf((decayLen2Ms_x10_ / 10.0f) * 1e-3f * Fs);
+    decay_len3_              = (int)lroundf((decayLen3Ms_x10_ / 10.0f) * 1e-3f * Fs);
+    decay_len_               = decay_len1_ + decay_len2_ + decay_len3_;
+    decay_fact_              = powf(10.0f, (decayFactDb_x10_ / 10.0f) / 10.0f);
+    decay_mask_fact_         = powf(10.0f, (maskTimeDecayFactDb_x10_ / 10.0f) / 10.0f);
+    const float decay_grad1  = (float)decayGradFact1_ / Fs;
+    const float decay_grad2  = (float)decayGradFact2_ / Fs;
+    const float decay_grad3  = (float)decayGradFact3_ / Fs;
+    x_sq_hist_len_           = max(1, total_scan_time_);
+
+    // velocity curve (Edrumulus continuous formula; replaces the Stage-1 LUT)
+    const float max_velocity_range_db = 20.0f * log10f((float)kAdcMaxRange / 2.0f) - threshold_db;
+    const float velocity_range_db     = max_velocity_range_db * (32 - velSensitivity_) / 32.0f;
+    float curve_param = 1.018f; // close to Roland "linear"
+    switch (curveType_) {
+        case 1: curve_param *= 1.012f; break; // EXP1
+        case 2: curve_param *= 1.017f; break; // EXP2
+        case 3: curve_param *= 0.995f; break; // LOG1
+        case 4: curve_param *= 0.987f; break; // LOG2
+        default: break;                       // LINEAR (0) / Custom (5) -> linear
+    }
+    velocity_factor_   = 126.0f / ((powf(curve_param, 126.0f) - 1) * curve_param *
+                         powf(threshold_, 1270.0f / velocity_range_db * log10f(curve_param)));
+    velocity_exponent_ = 1270.0f / velocity_range_db * log10f(curve_param);
+    velocity_offset_   = 1.0f - 126.0f / (powf(curve_param, 126.0f) - 1);
+
+    // Build the 3-segment decay curve LUT. It can be large (KD8 ≈ 6800 floats ≈
+    // 27 KB; ×4 engines), so place it in PSRAM (this board has BOARD_HAS_PSRAM)
+    // and keep it off the internal heap; fall back to internal RAM if PSRAM is
+    // unavailable. The LUT is read once per sample in the hot loop — PSRAM latency
+    // is fine at 8 kHz.
+    if (decay_) { free(decay_); decay_ = nullptr; }
+    const int alloc = max(1, decay_len_);
+    decay_ = (float*)ps_malloc(sizeof(float) * alloc);
+    if (!decay_) decay_ = (float*)malloc(sizeof(float) * alloc);
+    if (!decay_) {
+        // Out of memory: disable the decay model rather than dereference null.
+        decay_len_ = decay_len1_ = decay_len2_ = decay_len3_ = 0;
+    } else {
+        for (int i = 0; i < alloc; i++) decay_[i] = 0.0f;
+        for (int i = 0; i < decay_len1_; i++) {
+            decay_[i] = powf(10.0f, -i / 10.0f * decay_grad1);
+        }
+        const float decay_fact1 = powf(10.0f, -decay_len1_ / 10.0f * decay_grad1);
+        for (int i = 0; i < decay_len2_; i++) {
+            decay_[decay_len1_ + i] = decay_fact1 * powf(10.0f, -i / 10.0f * decay_grad2);
+        }
+        const float decay_fact2 = decay_fact1 * powf(10.0f, -decay_len2_ / 10.0f * decay_grad2);
+        for (int i = 0; i < decay_len3_; i++) {
+            decay_[decay_len1_ + decay_len2_ + i] = decay_fact2 * powf(10.0f, -i / 10.0f * decay_grad3);
+        }
+    }
+
+    x_sq_hist_.initialize(x_sq_hist_len_);
+    resetState();
+    needsInit_ = false;
 }
 
-void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*rimBlock*/, uint16_t n) {
-    // Per-block results reset each call; chokeDetected_ is a latch cleared by main.
-    hit_    = false;
+void PDrum2Trigger::resetState() {
+    for (int i = 0; i < kBpFiltLen; i++)     bp_filt_hist_x_[i] = 0.0f;
+    for (int i = 0; i < kBpFiltLen - 1; i++) bp_filt_hist_y_[i] = 0.0f;
+    mask_back_cnt_       = 0;
+    decay_back_cnt_      = 0;
+    scan_time_cnt_       = 0;
+    max_x_filt_val_      = 0.0f;
+    max_mask_x_filt_val_ = 0.0f;
+    first_peak_val_      = 0.0f;
+    peak_val_            = 0.0f;
+    was_above_threshold_ = false;
+    was_peak_found_      = false;
+    decay_scaling_       = 1.0f;
+    first_peak_delay_    = 0;
+    dcSeeded_            = false;   // re-seed DC estimate from next sample
+    spike_.reset();
+}
+
+// Port of Edrumulus::Pad::process_sample(), single head sensor path.
+void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*rimBlock*/,
+                                 uint16_t n, uint32_t blockStartAbsIndex) {
+    hit_    = false;   // per-block results reset; chokeDetected_ latch cleared by main
     hitRim_ = false;
 
+    if (needsInit_) buildDerived();
     if (!headBlock || n == 0) return;
 
-    bool firedThisBlock = false;
+    bool           firedThisBlock = false;
+    const uint32_t blockEndAbs    = blockStartAbsIndex + n - 1;
 
     for (uint16_t j = 0; j < n; j++) {
-        int v = (int)headBlock[j];
+        const uint32_t absIdx = blockStartAbsIndex + j;
 
-        switch (state_) {
-            case IDLE:
-                if (v > (int)headThreshold_) {
-                    crossIndex_ = procIndex_;
-                    peak_       = v;
-                    scanRemain_ = scanSamples_;
-                    state_      = SCANNING;
-                }
-                break;
+        // 0. DC-offset removal (Edrumulus does this in process() BEFORE process_sample,
+        //    plus a startup estimate that seeds dc_offset to the resting baseline).
+        //    Our unipolar front-end rests at a positive DC bias; without removing it the
+        //    band-pass transient response keeps crossing threshold -> phantom hits on
+        //    every channel. One-pole IIR: track the baseline, subtract it. dcSeeded_
+        //    seeds the estimate from the first sample to avoid a startup convergence
+        //    transient (which would itself cause a burst of false fires).
+        const float raw = (float)headBlock[j];
+        if (!dcSeeded_) { dcOffset_ = raw; dcSeeded_ = true; }
+        else            { dcOffset_ = kDcIirGamma * dcOffset_ + kDcIirOneMinusGamma * raw; }
 
-            case SCANNING:
-                if (v > peak_) peak_ = v;
-                if (--scanRemain_ == 0) {
-                    velocityRaw_ = peak_;
-                    velocity_    = curve(peak_, (int)headThreshold_,
-                                         (int)headSensitivity_, curveType_);
-                    hit_           = true;
-                    firedThisBlock = true;
-                    crossFired_    = crossIndex_;
-                    maskRemain_    = maskSamples_;
-                    state_         = (maskSamples_ > 0) ? MASKED : IDLE;
-                }
-                break;
+        // 1. spike cancellation — now valid because `input` is zero-centred.
+        float input    = raw - dcOffset_;
+        int   overload = (raw >= (float)(kAdcMaxRange - kAdcMaxNoise)) ? 2
+                       : (raw <= (float)(kAdcMaxNoise - 1))            ? 1 : 0;
+        spike_.process(input, overload, kSpikeLevel);
 
-            case MASKED:
-                if (--maskRemain_ == 0) state_ = IDLE;
-                break;
+        first_peak_delay_++; // increments each sample; reset at scan end
+
+        // store raw power in FIFO (used for first-peak/max-peak picking)
+        x_sq_hist_.add(input * input);
+
+        // 2. band-pass IIR filter, then square -> power domain (x_filt)
+        update_fifo(input, kBpFiltLen, bp_filt_hist_x_);
+        float sum_b = 0.0f, sum_a = 0.0f;
+        for (int i = 0; i < kBpFiltLen; i++)     sum_b += bp_filt_hist_x_[i] * bp_filt_b_[i];
+        for (int i = 0; i < kBpFiltLen - 1; i++) sum_a += bp_filt_hist_y_[i] * bp_filt_a_[i];
+        float x_filt = sum_b - sum_a;
+        update_fifo(x_filt, kBpFiltLen - 1, bp_filt_hist_y_);
+        x_filt = x_filt * x_filt;
+
+        // 4. exponential decay subtraction (the retrigger mask — the runaway fix)
+        float x_filt_decay = x_filt;
+        if (decay_back_cnt_ > 0) {
+            const float cur_decay = decay_scaling_ * decay_[decay_len_ - decay_back_cnt_];
+            x_filt_decay = x_filt - cur_decay;
+            decay_back_cnt_--;
+            if (x_filt_decay < 0.0f) x_filt_decay = 0.0f;
         }
 
-        procIndex_++;
+        // 5. mask-time rescue: a loud hit shortly after a soft hit still registers
+        if ((mask_back_cnt_ > 0) && (mask_back_cnt_ <= mask_time_)) {
+            if (x_filt > max_mask_x_filt_val_ * decay_mask_fact_) {
+                was_above_threshold_ = false; // reset peak detection
+                x_filt_decay         = x_filt; // remove decay subtraction
+            }
+        }
+
+        // 6. threshold test + scan state machine
+        if ((x_filt_decay > threshold_) || was_above_threshold_) {
+            if (!was_above_threshold_) {
+                // first sample above threshold for this peak
+                scan_time_cnt_       = max(1, scan_time_ - kXFiltDelay);
+                mask_back_cnt_       = scan_time_ + mask_time_;
+                decay_back_cnt_      = 0;
+                max_x_filt_val_      = x_filt;
+                max_mask_x_filt_val_ = x_filt;
+                was_above_threshold_ = true;
+            }
+
+            if (x_filt > max_x_filt_val_) max_x_filt_val_ = x_filt;
+            if ((mask_back_cnt_ > mask_time_) && (x_filt > max_mask_x_filt_val_)) {
+                max_mask_x_filt_val_ = x_filt;
+            }
+
+            scan_time_cnt_--;
+            mask_back_cnt_--;
+
+            // end of scan time: pick first peak (timing) and max peak (velocity)
+            if (scan_time_cnt_ == 0) {
+                bool  first_peak_found = false;
+                first_peak_val_        = x_sq_hist_[x_sq_hist_len_ - total_scan_time_];
+                int   first_peak_idx   = 0;
+                for (int idx = 1; idx < total_scan_time_; idx++) {
+                    const float cur  = x_sq_hist_[x_sq_hist_len_ - total_scan_time_ + idx];
+                    const float prev = x_sq_hist_[x_sq_hist_len_ - total_scan_time_ + idx - 1];
+                    if ((first_peak_val_ < cur) && !first_peak_found) {
+                        first_peak_val_ = cur;
+                        first_peak_idx  = idx;
+                    } else {
+                        first_peak_found = true;
+                        // check if there is a much larger first peak
+                        if ((prev > cur) && (first_peak_val_ * first_peak_diff_thresh_ < prev)) {
+                            first_peak_val_ = prev;
+                            first_peak_idx  = idx - 1;
+                        }
+                    }
+                }
+
+                // max velocity within scan time (unfiltered power)
+                peak_val_ = 0.0f;
+                for (int i = 0; i < scan_time_; i++) {
+                    const float v = x_sq_hist_[x_sq_hist_len_ - scan_time_ + i];
+                    if (v > peak_val_) peak_val_ = v;
+                }
+
+                first_peak_delay_ = total_scan_time_ - (first_peak_idx + 1);
+                was_peak_found_   = true;
+
+                // TODO 2b: clip/overload correction (overload-history walk +
+                //          amplification_mapping) slots in here.
+            }
+
+            // end of mask time: arm the decay model for retrigger suppression
+            if (mask_back_cnt_ == 0) {
+                decay_back_cnt_      = decay_len_;
+                decay_scaling_       = decay_fact_ * max_x_filt_val_;
+                was_above_threshold_ = false;
+            }
+        }
+
+        // TODO 2b: adaptive decay power estimation (decay_pow_est_*) slots in here.
+        // TODO 2c/2d: positional sensing / dual-piezo rim / switch-choke slot in here.
+
+        // peak found -> emit (single head sensor: no pos/rim delay, fire immediately)
+        if (was_peak_found_) {
+            int midi_vel = (int)(velocity_factor_ *
+                           powf(peak_val_ * kNoiseVelScale, velocity_exponent_) + velocity_offset_);
+            midi_vel       = max(1, min(127, midi_vel));
+            velocity_      = midi_vel;
+            velocityRaw_   = (int)sqrtf(peak_val_); // amplitude units for main's rawToMidi/debug
+            hit_           = true;
+            firedThisBlock = true;
+            crossAbsIndex_ = (absIdx >= (uint32_t)first_peak_delay_) ? (absIdx - first_peak_delay_) : 0;
+            was_peak_found_ = false;
+        }
     }
 
-    // procIndex_ now indexes one past the block's last sample. Express the fired
-    // hit's crossing as a distance back from that last sample so main can map it
-    // to the SampleStream-absolute index it already knows for the block end.
     if (firedThisBlock) {
-        triggerBack_ = (procIndex_ - 1) - crossFired_;
+        triggerBack_ = (blockEndAbs >= crossAbsIndex_) ? (blockEndAbs - crossAbsIndex_) : 0;
     }
-}
-
-int PDrum2Trigger::curve(int velocityRaw, int threshold, int sensRaw, byte curveType) const {
-    float resF = map(velocityRaw, threshold, sensRaw, 1, 127);
-    if (resF <= 1)   resF = 1;
-    if (resF > 127)  resF = 127;
-
-    if (curveType == 1)      { int idx = constrain((int)resF - 1, 0, 126); resF = kCurveExp1[idx]; }
-    else if (curveType == 2) { int idx = constrain((int)resF - 1, 0, 126); resF = kCurveExp2[idx]; }
-    else if (curveType == 3) { int idx = constrain((int)resF - 1, 0, 126); resF = kCurveLog1[idx]; }
-    else if (curveType == 4) { int idx = constrain((int)resF - 1, 0, 126); resF = kCurveLog2[idx]; }
-    // curve 0 (Natural/linear) and 5 (Custom -> linear) fall through unchanged.
-
-    return (int)round(resF);
 }

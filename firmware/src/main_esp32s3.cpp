@@ -93,6 +93,21 @@ static void applyConfig() {
         triggers[i]->setMaskTime(g_inputs[i].maskTime);
         triggers[i]->setCurveType(g_inputs[i].velocityCurve);
         triggers[i]->setNoteHead(g_inputs[i].midiNote);
+        // Tier-2 Edrumulus params (Stage 2a)
+        triggers[i]->setPreScanTimeMs(g_inputs[i].preScanTimeMs);
+        triggers[i]->setFirstPeakDiffThreshDb(g_inputs[i].firstPeakDiffThreshDb);
+        triggers[i]->setDecayLen1Ms(g_inputs[i].decayLen1Ms);
+        triggers[i]->setDecayGradFact1(g_inputs[i].decayGradFact1);
+        triggers[i]->setDecayLen2Ms(g_inputs[i].decayLen2Ms);
+        triggers[i]->setDecayGradFact2(g_inputs[i].decayGradFact2);
+        triggers[i]->setDecayLen3Ms(g_inputs[i].decayLen3Ms);
+        triggers[i]->setDecayGradFact3(g_inputs[i].decayGradFact3);
+        triggers[i]->setDecayFactDb(g_inputs[i].decayFactDb);
+        triggers[i]->setMaskTimeDecayFactDb(g_inputs[i].maskTimeDecayFactDb);
+        triggers[i]->setDecayEstDelayMs(g_inputs[i].decayEstDelayMs);
+        triggers[i]->setDecayEstLenMs(g_inputs[i].decayEstLenMs);
+        triggers[i]->setDecayEstFactDb(g_inputs[i].decayEstFactDb);
+        triggers[i]->setClipCompAmpmapStep(g_inputs[i].clipCompAmpmapStep);
     }
 }
 
@@ -130,11 +145,27 @@ static void printHelp() {
     Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
     Serial.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
     Serial.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
-    Serial.println("  params: thresh sens scan mask retrig type ratio chokethresh choke");
+    Serial.println("  params: thresh sens scan mask retrig type ratio chokethresh choke enable");
 }
 
-static bool g_adcDump = false;
+static bool g_adcDump = false;  // ADC auto-dump off by default now (was on for
+                                // bring-up). Detection runs normally; re-enable
+                                // via 'a' only when needed (and only meaningful
+                                // in MODE=1 diag firmware where serial RX works).
 bool g_serialQuiet = false;
+// DIAGNOSTIC: gate hit serial output AND hit-debug SysEx so the serial link is
+// quiet enough to use 'a' and inspect the raw signal. Toggle with 'd'.
+// Default OFF = no hit spam. MIDI note output is unaffected (still sent).
+static bool g_hitDebug = false;
+
+// DIAGNOSTIC MODE: when true, loop() ONLY pumps the stream and services the 'a'
+// ADC dump. The entire per-input detection + MIDI + SysEx block is skipped, so
+// NO MIDI is sent and NO detection runs. This isolates the sampling pipeline so
+// we can read the raw ADC baseline over a quiet serial link (the USB MIDI flood
+// was starving serial RX). Toggle with 'm'.
+// Default OFF now: bring-up diagnosis complete (floating jacks + stale cache were
+// the phantom-hit causes). Normal detection runs from boot.
+static bool g_diagMode = false;
 
 // Scope state
 static bool     g_scopeActive  = false;
@@ -163,10 +194,11 @@ static void handleSerial(char cmd) {
         case 's': {
             Serial.println("[Config]");
             for (int i = 0; i < NUM_INPUTS; i++) {
-                Serial.printf("  [%d] type=%d note=%d ch=%d z2note=%d z2ch=%d"
+                Serial.printf("  [%d] en=%d type=%d note=%d ch=%d z2note=%d z2ch=%d"
               " thresh=%d sens=%d scan=%d mask=%d"
               " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d\n",
                     i,
+                    (int)g_inputs[i].enabled,
                     g_inputs[i].padType,
                     g_inputs[i].midiNote,    g_inputs[i].midiChannel,
                     g_inputs[i].zone2MidiNote, g_inputs[i].zone2MidiChannel,
@@ -200,6 +232,18 @@ static void handleSerial(char cmd) {
             }
             g_serialQuiet = g_adcDump;
             Serial.println(g_adcDump ? "[ADC] Dump ON" : "[ADC] Dump OFF");
+            break;
+        }
+        case 'd': {
+            g_hitDebug = !g_hitDebug;
+            Serial.println(g_hitDebug ? "[DBG] hit output ON" : "[DBG] hit output OFF (quiet)");
+            break;
+        }
+        case 'm': {
+            g_diagMode = !g_diagMode;
+            Serial.println(g_diagMode
+                ? "[DIAG] diagnostic mode ON  (detection+MIDI disabled, ADC dump only)"
+                : "[DIAG] diagnostic mode OFF (normal detection+MIDI)");
             break;
         }
         case 'o': {
@@ -248,6 +292,7 @@ static void handleSerial(char cmd) {
                 else if (p == "ratio")      { g_inputs[inp].rimRatioThreshold = (uint16_t)val; }
                 else if (p == "chokethresh"){ g_inputs[inp].chokeThreshold    = (uint16_t)val; }
                 else if (p == "choke")      { g_inputs[inp].chokeEnabled      = (bool)val;     }
+                else if (p == "enable")     { g_inputs[inp].enabled          = (bool)val;     }
                 else { Serial.printf("[w] Unknown param '%s'\n", param); ok = false; }
                 if (ok) {
                     applyConfig();
@@ -256,7 +301,7 @@ static void handleSerial(char cmd) {
                 }
             } else {
                 Serial.println("[w] Usage: w <input> <param> <value>");
-                Serial.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke");
+                Serial.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke enable");
             }
             break;
         }
@@ -325,13 +370,19 @@ void setup() {
     MIDI.begin(MIDI_CHANNEL_OMNI);
     MIDI.setHandleSystemExclusive(onSysEx);
     Serial.begin(115200);
-    delay(2000);
+    delay(5000);
     // Short timeout so readStringUntil() in the serial command handlers ('o'/'w')
     // can never block the main loop (which would stall pump() and the input
     // drain, causing host write-timeouts). 20ms is ample for a line already in
     // the USB-CDC buffer; if the rest of a line hasn't arrived, we bail fast.
     Serial.setTimeout(20);
     Serial.println("[eDrum] Ready.");
+    // BUILD STAMP: __DATE__/__TIME__ are set by the compiler at build time, so this
+    // line changes on every real rebuild. If you flash and this timestamp is NOT
+    // newer than your last build, you flashed a STALE binary (pioarduino cache) —
+    // do a full clean (pio run -t clean) and rebuild. This guards against the
+    // silent stale-cache problem that wasted a debugging session.
+    Serial.printf("[eDrum] Build stamp: %s %s\n", __DATE__, __TIME__);
     Serial.println("[LED] boot");
 
     configInit();
@@ -413,15 +464,14 @@ void loop() {
         lastAdcPrint = millis();
         uint32_t latest = stream.writeHead() - 1;
         uint16_t v[8] = {};
-        bool anyAboveFloor = false;
         for (int ch = 0; ch < 8; ch++) {
             stream.readWindow((uint8_t)ch, latest, &v[ch], 1);
-            if (v[ch] > ADC_PRINT_FLOOR) anyAboveFloor = true;
         }
-        if (anyAboveFloor) {
-            Serial.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
-                v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
-        }
+        // DIAGNOSTIC: print every interval unconditionally (no floor filter) so the
+        // resting baseline is visible even when low. Columns are stream channels 0-7;
+        // KD-80 head = jack 2 = GPIO6 = stream ch 4 (the 5th column).
+        Serial.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
+            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
     }
 
     // Fire pending scope dump once 100 post-hit samples have accumulated.
@@ -443,8 +493,13 @@ void loop() {
         }
     }
 
+    // DIAGNOSTIC MODE: skip all detection + MIDI. Only the stream pump and the 'a'
+    // ADC dump run, giving a quiet link to read the raw signal. Toggle with 'm'.
+    if (g_diagMode) return;
+
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (!triggers[i]) continue;
+        if (!g_inputs[i].enabled) continue;   // input disabled: ignore entirely
 
         int hc = streamCh(kHeadCh[i]);
         int rc = streamCh(kRimCh[i]);
@@ -453,15 +508,20 @@ void loop() {
         static uint16_t headBuf[kBlock];
         static uint16_t rimBuf[kBlock];
 
+        // Capture the block's absolute start index BEFORE the read advances the cursor.
+        uint32_t blockStartIdx = headCursor[i].pos;
         uint16_t n = stream.read((uint8_t)hc, headCursor[i], headBuf, kBlock);
         if (rc >= 0) stream.read((uint8_t)rc, rimCursor[i], rimBuf, n);  // same count
         if (n == 0) continue;
+
+        // If the read reset the cursor (overrun), the actual block start is pos - n.
+        blockStartIdx = headCursor[i].pos - n;
 
         if (headCursor[i].overran || (rc >= 0 && rimCursor[i].overran)) {
             if (!g_serialQuiet) Serial.printf("[WARN] i=%d sample overrun (consumer fell behind)\n", i);
         }
 
-        triggers[i]->processBlock(headBuf, rc >= 0 ? rimBuf : nullptr, n);
+        triggers[i]->processBlock(headBuf, rc >= 0 ? rimBuf : nullptr, n, blockStartIdx);
 
         // Absolute stream index of the last head sample in this block.
         uint32_t blockEndIdx = headCursor[i].pos - 1;
@@ -475,12 +535,17 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (!g_adcDump) Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
+            if (g_hitDebug && !g_adcDump) Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
                          i, note, vel, raw_vel, ch);
-            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
-            uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_HEAD, raw_vel, vel };
-            sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
-                              SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
+            // Sent unconditionally: the config app's hit log depends on this. (Only
+            // the noisy serial [HIT] print above is gated; the SysEx event is a
+            // product feature, not debug spam.)
+            {
+                uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_HEAD, raw_vel, vel };
+                sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                                  SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            }
             if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
                     && (triggers[i]->getVelocityRaw()    >= g_scopeFloor
                      || triggers[i]->getVelocityRimRaw() >= g_scopeFloor)) {
@@ -501,12 +566,14 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (!g_adcDump) Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
+            if (g_hitDebug && !g_adcDump) Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
                          i, note, vel, raw_vel, ch);
-            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel
-            uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
-            sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
-                              SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
+            {
+                uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
+                sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                                  SYSEX_STAT_HIT_DEBUG, dbg, 4);
+            }
             if (g_scopeActive && !g_adcDump && i == (int)g_scopeInput && !g_scopePending
                     && (triggers[i]->getVelocityRaw()    >= g_scopeFloor
                      || triggers[i]->getVelocityRimRaw() >= g_scopeFloor)) {
