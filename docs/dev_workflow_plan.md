@@ -103,6 +103,21 @@ The MCU never parses/formats anything complex — Python does, where it's safe.
 - **Success:** `telnet <device-ip>` gives a working in/out console while USB MIDI runs.
 - **Note:** S3 is BLE-only (no classic BT / SPP) — WiFi TCP is the route, not BT serial.
 
+### Step 2b — OTA filesystem updates (implemented 2026-07-04)
+- Firmware (dev build only): `ArduinoOTA` brought up in `DevWiFi.cpp` alongside the
+  telnet server, gated by the same `debug_wifi` flag — no separate dev.txt key.
+  Hostname `edrum-head`. No OTA password (dev-build-only, bench-network use).
+- **Purpose:** push a new `dev.txt`/LittleFS image over WiFi instead of the
+  USB-unplug/bootloader-button reflash dance. In practice this is used with
+  `-t uploadfs` only, though `ArduinoOTA` doesn't hard-block a sketch (`-t upload`)
+  push — that's just not this workflow's purpose, not a filesystem-only guarantee.
+- New PlatformIO env `[env:xiao_esp32s3_head_ota]` in `platformio.ini`:
+  `extends = env:xiao_esp32s3_head`, overrides `upload_protocol = espota` +
+  `upload_port` (the board's current DHCP IP — update each session, or set a
+  router DHCP reservation for the board's MAC, unless/until this gets mDNS).
+  Usage: `pio run -e xiao_esp32s3_head_ota -t uploadfs`.
+- **Success:** edit `dev.txt`, `uploadfs` over WiFi, reset — no USB cable touched.
+
 ### Step 3 — firmware reads tuning.txt at boot (under use_text_tuning flag)
 - When the flag is set, parse `tuning.txt` and apply as overrides after loading config.
 - Honour the read-only-from-text rule (don't persist back to LittleFS in this mode).

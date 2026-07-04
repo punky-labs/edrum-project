@@ -3,6 +3,7 @@
 #ifdef DEV_BUILD
 
 #include "DevConfig.h"
+#include <ArduinoOTA.h>
 
 DevWiFi devwifi;
 
@@ -75,12 +76,40 @@ void DevWiFi::begin(DevConfig& cfg) {
     server_.setNoDelay(true);
     available_ = true;
 
-    Serial.printf("[dev] WiFi connected: %s  telnet to that IP on port %u\n",
+    // OTA (filesystem uploads only, in practice — see docs/dev_workflow_plan.md).
+    // No password: dev-build-only, bench-network use. ArduinoOTA technically also
+    // accepts a sketch (firmware) push (`pio run -t upload` vs `-t uploadfs`), but
+    // the workflow this exists for is fast dev.txt/LittleFS tweaks via `uploadfs`
+    // over WiFi instead of the USB unplug/bootloader-button dance.
+    ArduinoOTA.setHostname("edrum-head");
+    ArduinoOTA.onStart([]() {
+        const char* type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+        Serial.printf("[dev] OTA start (%s)\n", type);
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("[dev] OTA end — rebooting");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        static uint32_t s_lastPct = 255;
+        uint32_t pct = (total > 0) ? (progress * 100u / total) : 0;
+        if (pct != s_lastPct) {
+            s_lastPct = pct;
+            Serial.printf("[dev] OTA progress: %u%%\n", (unsigned)pct);
+        }
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("[dev] OTA error [%u]\n", (unsigned)error);
+    });
+    ArduinoOTA.begin();
+
+    Serial.printf("[dev] WiFi connected: %s  telnet port %u, OTA (uploadfs) ready\n",
                   WiFi.localIP().toString().c_str(), (unsigned)kTelnetPort);
 }
 
 void DevWiFi::poll() {
     if (!available_) return;
+
+    ArduinoOTA.handle();
 
     // Accept a NEW connection if one is waiting; a new client replaces the old
     // (single-client console). accept() returns a connected client only on a new
