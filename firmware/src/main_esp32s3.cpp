@@ -23,6 +23,12 @@
 #include "sensing/sampling/AdcSampler.h"
 #include "sensing/sampling/SampleStream.h"
 
+// Dev tooling (dev-build only — no-ops when DEV_BUILD is undefined). Replaces the
+// dead USB-serial-RX debug path with a WiFi telnet console; reads dev.txt flags.
+#include "dev/DevConfig.h"
+#include "dev/DevLog.h"
+#include "dev/DevWiFi.h"
+
 // FW_BUILD is injected by the RP2040 build's increment_build.py extra_script.
 // This env does not run that script, so provide a fallback so printHelp() builds.
 #ifndef FW_BUILD
@@ -142,10 +148,10 @@ static void onSysEx(byte* data, unsigned size) {
 // ---------------------------------------------------------------------------
 
 static void printHelp() {
-    Serial.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
-    Serial.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
-    Serial.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
-    Serial.println("  params: thresh sens scan mask retrig type ratio chokethresh choke enable");
+    DevLog.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
+    DevLog.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
+    DevLog.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
+    DevLog.println("  params: thresh sens scan mask retrig type ratio chokethresh choke enable");
 }
 
 static bool g_adcDump = false;  // ADC auto-dump off by default now (was on for
@@ -181,20 +187,20 @@ static void handleSerial(char cmd) {
             uint8_t msg[] = { 0xF0, SYSEX_MFR_0, SYSEX_MFR_1, SYSEX_DEV_HEAD,
                               SYSEX_CAT_SYS, SYSEX_SYS_PING, 0xF7 };
             usbMidiSendSysEx(msg, sizeof(msg));
-            Serial.println("[>] SysEx ping sent");
+            DevLog.println("[>] SysEx ping sent");
             break;
         }
         case 'i': {
             uint8_t msg[] = { 0xF0, SYSEX_MFR_0, SYSEX_MFR_1, SYSEX_DEV_HEAD,
                               SYSEX_CAT_SYS, SYSEX_SYS_IDENT_REQ, 0xF7 };
             usbMidiSendSysEx(msg, sizeof(msg));
-            Serial.println("[>] SysEx identify sent");
+            DevLog.println("[>] SysEx identify sent");
             break;
         }
         case 's': {
-            Serial.println("[Config]");
+            DevLog.println("[Config]");
             for (int i = 0; i < NUM_INPUTS; i++) {
-                Serial.printf("  [%d] en=%d type=%d note=%d ch=%d z2note=%d z2ch=%d"
+                DevLog.printf("  [%d] en=%d type=%d note=%d ch=%d z2note=%d z2ch=%d"
               " thresh=%d sens=%d scan=%d mask=%d"
               " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d\n",
                     i,
@@ -214,11 +220,11 @@ static void handleSerial(char cmd) {
             // C3 = MIDI note 48
             MIDI.sendNoteOn(48, 100, 10);
             MIDI.sendNoteOff(48, 0, 10);
-            Serial.println("[>] Note C3 vel=100 ch=10");
+            DevLog.println("[>] Note C3 vel=100 ch=10");
             break;
         }
         case 'r': {
-            Serial.println("[eDrum] Restarting...");
+            DevLog.println("[eDrum] Restarting...");
             delay(100);
             ESP.restart();
             break;
@@ -228,33 +234,33 @@ static void handleSerial(char cmd) {
             if (g_adcDump && g_scopeActive) {
                 g_scopeActive  = false;
                 g_scopePending = false;
-                Serial.println("[SCOPE] Warning: scope disabled — ADC dump active");
+                DevLog.println("[SCOPE] Warning: scope disabled — ADC dump active");
             }
             g_serialQuiet = g_adcDump;
-            Serial.println(g_adcDump ? "[ADC] Dump ON" : "[ADC] Dump OFF");
+            DevLog.println(g_adcDump ? "[ADC] Dump ON" : "[ADC] Dump OFF");
             break;
         }
         case 'd': {
             g_hitDebug = !g_hitDebug;
-            Serial.println(g_hitDebug ? "[DBG] hit output ON" : "[DBG] hit output OFF (quiet)");
+            DevLog.println(g_hitDebug ? "[DBG] hit output ON" : "[DBG] hit output OFF (quiet)");
             break;
         }
         case 'm': {
             g_diagMode = !g_diagMode;
-            Serial.println(g_diagMode
+            DevLog.println(g_diagMode
                 ? "[DIAG] diagnostic mode ON  (detection+MIDI disabled, ADC dump only)"
                 : "[DIAG] diagnostic mode OFF (normal detection+MIDI)");
             break;
         }
         case 'o': {
-            String args = Serial.readStringUntil('\n');
+            String args = DevLog.readLine();
             args.trim();
             if (args.length() == 0) {
-                Serial.println("[SCOPE] Usage: o <input> <floor>  |  o off");
+                DevLog.println("[SCOPE] Usage: o <input> <floor>  |  o off");
             } else if (args.startsWith("off")) {
                 g_scopeActive  = false;
                 g_scopePending = false;
-                Serial.println("[SCOPE] Disabled");
+                DevLog.println("[SCOPE] Disabled");
             } else {
                 int inp = -1, flr = 10;
                 if (sscanf(args.c_str(), "%d %d", &inp, &flr) >= 1
@@ -263,9 +269,9 @@ static void handleSerial(char cmd) {
                     g_scopeInput   = (uint8_t)inp;
                     g_scopeFloor   = (uint16_t)flr;
                     g_scopePending = false;
-                    Serial.printf("[SCOPE] Active: input=%d floor=%d\n", inp, flr);
+                    DevLog.printf("[SCOPE] Active: input=%d floor=%d\n", inp, flr);
                 } else {
-                    Serial.printf("[SCOPE] Error: input must be 0-%d\n", NUM_INPUTS - 1);
+                    DevLog.printf("[SCOPE] Error: input must be 0-%d\n", NUM_INPUTS - 1);
                 }
             }
             break;
@@ -275,7 +281,7 @@ static void handleSerial(char cmd) {
             break;
         }
         case 'w': {
-            String args = Serial.readStringUntil('\n');
+            String args = DevLog.readLine();
             args.trim();
             int inp = -1, val = -1;
             char param[16] = {};
@@ -293,15 +299,15 @@ static void handleSerial(char cmd) {
                 else if (p == "chokethresh"){ g_inputs[inp].chokeThreshold    = (uint16_t)val; }
                 else if (p == "choke")      { g_inputs[inp].chokeEnabled      = (bool)val;     }
                 else if (p == "enable")     { g_inputs[inp].enabled          = (bool)val;     }
-                else { Serial.printf("[w] Unknown param '%s'\n", param); ok = false; }
+                else { DevLog.printf("[w] Unknown param '%s'\n", param); ok = false; }
                 if (ok) {
                     applyConfig();
                     g_save_requested = true;
-                    Serial.printf("[w] input=%d %s=%d OK\n", inp, param, val);
+                    DevLog.printf("[w] input=%d %s=%d OK\n", inp, param, val);
                 }
             } else {
-                Serial.println("[w] Usage: w <input> <param> <value>");
-                Serial.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke enable");
+                DevLog.println("[w] Usage: w <input> <param> <value>");
+                DevLog.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke enable");
             }
             break;
         }
@@ -350,11 +356,11 @@ static void scopeDump(int input, bool isRim) {
         if (rimWin[t]  > rimPeak)  rimPeak  = rimWin[t];
     }
 
-    Serial.printf("[SCOPE] input=%d pad_type=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
+    DevLog.printf("[SCOPE] input=%d pad_type=%d head_ch=%d rim_ch=%d head_peak=%d rim_peak=%d decision=%s samples=%d\n",
         input, (int)g_inputs[input].padType, hc, rc, headPeak, rimPeak, isRim ? "RIM" : "HEAD", (int)TOTAL);
-    Serial.println("T,H,R");
+    DevLog.println("T,H,R");
     for (uint32_t t = 0; t < TOTAL; t++) {
-        Serial.printf("%d,%d,%d\n", (int)t, (int)headWin[t], (int)rimWin[t]);
+        DevLog.printf("%d,%d,%d\n", (int)t, (int)headWin[t], (int)rimWin[t]);
     }
 }
 
@@ -371,10 +377,10 @@ void setup() {
     MIDI.setHandleSystemExclusive(onSysEx);
     Serial.begin(115200);
     delay(5000);
-    // Short timeout so readStringUntil() in the serial command handlers ('o'/'w')
-    // can never block the main loop (which would stall pump() and the input
-    // drain, causing host write-timeouts). 20ms is ample for a line already in
-    // the USB-CDC buffer; if the rest of a line hasn't arrived, we bail fast.
+    // Command line-reads ('o'/'w') now come over telnet via DevLog.readLine(),
+    // which has its own short internal timeout — so Serial's timeout no longer
+    // gates the loop. Kept small anyway as a belt-and-braces guard on any stray
+    // Serial read: a blocking read must never stall pump()/the input drain.
     Serial.setTimeout(20);
     Serial.println("[eDrum] Ready.");
     // BUILD STAMP: __DATE__/__TIME__ are set by the compiler at build time, so this
@@ -387,6 +393,14 @@ void setup() {
 
     configInit();
     configLoad();
+
+    // Dev tooling (dev-build only). LittleFS is mounted by configInit() above, so
+    // dev.txt can be read now. Order matters: parse dev.txt, then set the DevLog
+    // serial-mirror from it, then apply file-controlled flags, then bring up WiFi.
+    devcfg.begin();                                             // read /dev.txt
+    DevLog.begin(devcfg.getBool("log_mirror_serial", true));    // seam config
+    g_diagMode = devcfg.getBool("diag_mode", false);            // was hardcoded false
+    devwifi.begin(devcfg);   // connect + start telnet (silent skip on fail/absent)
 
     // Layer 1 + 2: continuous DMA sampling -> ring/demux.
     if (!sampler.begin(kChannelGpios, 8, 8000)) {
@@ -416,6 +430,10 @@ void loop() {
     // Layer 2: pull all completed DMA frames into the ring buffer (advances head).
     stream.pump();
 
+    // Dev telnet console: accept/maintain the client, route debug I/O (dev build
+    // only; no-op otherwise). Independent of USB MIDI.
+    devwifi.poll();
+
     // One-shot measured per-channel rate (driver-reported), printed ~1s after the
     // first sample so we can confirm the configured-vs-delivered rate at boot.
     static bool     s_rateDone = false;
@@ -426,7 +444,7 @@ void loop() {
         if (!s_rateInit && stream.writeHead() > 0) {
             s_rateInit = true; s_rateT0 = millis(); s_rateHead = stream.writeHead();
         } else if (s_rateInit && millis() - s_rateT0 >= 1000) {
-            Serial.printf("[ADC] measured %lu Hz/ch (delivered)\n",
+            DevLog.printf("[ADC] measured %lu Hz/ch (delivered)\n",
                           (unsigned long)(stream.writeHead() - s_rateHead));
             s_rateDone = true;
         }
@@ -437,7 +455,7 @@ void loop() {
     bool mounted = TinyUSBDevice.mounted();
     if (mounted != wasMounted) {
         wasMounted = mounted;
-        Serial.println(mounted ? "[LED] mounted" : "[LED] unmounted");
+        DevLog.println(mounted ? "[LED] mounted" : "[LED] unmounted");
     }
 
     if (g_apply_requested) {
@@ -455,8 +473,10 @@ void loop() {
 
     MIDI.read();
 
-    if (Serial.available()) {
-        handleSerial((char)Serial.read());
+    // Command input now arrives over the telnet console (serial RX is dead under
+    // USB MIDI). DevLog reads from the telnet client; no-op if none connected.
+    if (DevLog.available()) {
+        handleSerial((char)DevLog.read());
     }
 
     static unsigned long lastAdcPrint = 0;
@@ -470,7 +490,7 @@ void loop() {
         // DIAGNOSTIC: print every interval unconditionally (no floor filter) so the
         // resting baseline is visible even when low. Columns are stream channels 0-7;
         // KD-80 head = jack 2 = GPIO6 = stream ch 4 (the 5th column).
-        Serial.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
+        DevLog.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
             v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
     }
 
@@ -518,7 +538,7 @@ void loop() {
         blockStartIdx = headCursor[i].pos - n;
 
         if (headCursor[i].overran || (rc >= 0 && rimCursor[i].overran)) {
-            if (!g_serialQuiet) Serial.printf("[WARN] i=%d sample overrun (consumer fell behind)\n", i);
+            if (!g_serialQuiet) DevLog.printf("[WARN] i=%d sample overrun (consumer fell behind)\n", i);
         }
 
         triggers[i]->processBlock(headBuf, rc >= 0 ? rimBuf : nullptr, n, blockStartIdx);
@@ -535,7 +555,7 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) Serial.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
                          i, note, vel, raw_vel, ch);
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
@@ -566,7 +586,7 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) Serial.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
                          i, note, vel, raw_vel, ch);
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
@@ -593,7 +613,7 @@ void loop() {
             byte note = g_inputs[i].midiNote;
             byte ch   = g_inputs[i].midiChannel;
             MIDI.sendNoteOff(note, 0, ch);
-            if (!g_serialQuiet) Serial.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
+            if (!g_serialQuiet) DevLog.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
         }
     }
 }

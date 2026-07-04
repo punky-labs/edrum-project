@@ -16,5 +16,16 @@ app/test_midi.py
 # App logs (runtime artefacts)
 app/logs/
 
+# PlatformIO build output (generated artifacts — must NOT be tracked). These were
+# committed by mistake; untrack with:  git rm -r --cached .pio
+# A `-t clean` deletes them and they regenerate on build, so tracking them creates
+# huge spurious diffs. Build output is never source.
+.pio/
+
 # Reference libraries (local only, not part of build)
 firmware/reference/
+
+# Dev config (holds WiFi creds — never shipped, never committed). See
+# docs/dev_txt_format.md. Uploaded to LittleFS via `pio run -t uploadfs`.
+data/dev.txt
+firmware/data/dev.txt

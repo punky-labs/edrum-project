@@ -1,6 +1,7 @@
 #include "SysEx.h"
 #include "BleMidi.h"
 #include "../config/Config.h"
+#include "../dev/DevLog.h"   // debug prints route through DevLog (telnet, dev-build)
 #include <string.h>
 
 // ---- 7-bit encode / decode -------------------------------------------------
@@ -23,7 +24,7 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
     const size_t msgLen = 7 + payloadLen;
     uint8_t buf[320];
     if (msgLen > sizeof(buf)) {
-        if (!g_serialQuiet) Serial.printf("[SysEx TX] ERROR: payload too large (%u bytes)\n", (unsigned)payloadLen);
+        if (!g_serialQuiet) DevLog.printf("[SysEx TX] ERROR: payload too large (%u bytes)\n", (unsigned)payloadLen);
         return;
     }
     buf[0] = 0xF0;
@@ -41,11 +42,11 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
 
     // Debug log (keep alongside USB send for now)
     if (!g_serialQuiet) {
-        Serial.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
+        DevLog.printf("[SysEx TX] F0 00 7D %02X %02X %02X", deviceId, cmdHigh, cmdLow);
         for (size_t i = 0; i < payloadLen; i++) {
-            Serial.printf(" %02X", payload[i]);
+            DevLog.printf(" %02X", payload[i]);
         }
-        Serial.println(" F7");
+        DevLog.println(" F7");
     }
 }
 
@@ -402,22 +403,22 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
 // ---- main dispatcher -------------------------------------------------------
 
 void sysexParse(const uint8_t* data, size_t len) {
-    if (!g_serialQuiet) Serial.printf("[SysEx RX] len=%u first bytes: %02X %02X %02X %02X %02X\n",
+    if (!g_serialQuiet) DevLog.printf("[SysEx RX] len=%u first bytes: %02X %02X %02X %02X %02X\n",
         (unsigned)len,
         len>0?data[0]:0, len>1?data[1]:0,
         len>2?data[2]:0, len>3?data[3]:0,
         len>4?data[4]:0);
     
     if (len < SYSEX_HEADER_LEN) {
-        Serial.println("[SysEx] Message too short");
+        DevLog.println("[SysEx] Message too short");
         return;
     }
     if (data[0] != SYSEX_MFR_0 || data[1] != SYSEX_MFR_1) {
-        Serial.println("[SysEx] Unknown manufacturer ID");
+        DevLog.println("[SysEx] Unknown manufacturer ID");
         return;
     }
     if (data[2] != SYSEX_DEV_HEAD) {
-        if (!g_serialQuiet) Serial.printf("[SysEx] Wrong device ID: %02X\n", data[2]);
+        if (!g_serialQuiet) DevLog.printf("[SysEx] Wrong device ID: %02X\n", data[2]);
         return;
     }
 
