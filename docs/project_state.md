@@ -67,6 +67,41 @@ process after a Stage 2a session burned hours/tokens on code-reading and guessin
   the pad (many large transients in quick succession), and had never been seen
   on the old RP2040 build running the same core algorithm — consistent with a
   fixed `SPIKE_THRESHOLD` tuned for different ADC range/sample-rate hardware.
+- **Retrigger-cancel v1 (added 2026-07-06) is BROKEN — currently inverted, not
+  just imperfect.** Added a samples-to-peak (`peakSampleIdx`) based accept/reject
+  check to `PDrumTrigger::sensing()` (repurposing the previously-dead `retrig`
+  config field as the cutoff), on the theory that a genuine strike's attack is
+  near-instant (~1-2 samples, per earlier scope captures) while a mesh head's
+  own mechanical rebound rises more slowly (~7-14 samples, also per earlier scope
+  captures). It successfully eliminated the machine-gun retrigger cascade. BUT
+  live single-hit testing with full per-event visibility (`[REJECT]`/`peakidx=`
+  debug fields) showed the OPPOSITE of intended: genuine hard strikes
+  (`velraw` 4088/1076/1056, unmistakably real) were REJECTED with `peakidx` in
+  the high-20s/low-30s, while small residual tail events (`truepeak` 34-870)
+  were ACCEPTED with `peakidx` 0-5. This contradicts the earlier scope-based
+  characterisation (fast 2-3 sample rise to plateau) for the same pad/scenario.
+  **Two things parked, likely related, both centred on "scope's view of the
+  signal" vs "what the detection path's per-sample tracking actually measures"
+  not agreeing:**
+  1. Scope-capture duplication bug (found same evening, still unconfirmed root
+     cause): two `[SCOPE]` dumps ~617ms apart contained bit-identical `T,H,R`
+     sample data, despite `SampleStream`'s ring depth (8192 @ 8kHz, ~1.02s) being
+     nowhere near a wraparound for that gap. `PDrumTrigger`'s `crossAbsIndex_`/
+     `triggerBack_` logic and `SampleStream::readWindow()` both look structurally
+     correct on inspection — the bug is likely in how they interact at runtime
+     (e.g. `g_scopeSnap` computation in `main_esp32s3.cpp`'s arm-time logic),
+     not visible from static code reading alone.
+  2. `peakSampleIdx` mismatch: rejected genuine hits show `peakidx` clustering
+     right around ~24-31 — suspiciously close to a FULL `scantime`-worth of
+     samples (3ms @ 8kHz = 24), suggesting the peak is being (re-)recorded near
+     the END of the scan window, not early in it, for real hits. This directly
+     contradicts the earlier scope-derived "fast 2-3 sample rise" finding for
+     what should be the same kind of event.
+  **Do not resume tuning `retrig` until the measurement itself is trusted.**
+  All TEMP DIAGNOSTIC instrumentation from this investigation is left in place
+  (`[REJECT]` print, `peakidx=` on `[HIT]`/`[RIM]`, `hasReject()`/`clearReject()`
+  latch pattern) — no re-instrumenting needed next session, just reproduce and
+  read.
 - Future debug channel: **WiFi telnet/TCP console** (dev-build-only) replaces the dead
   USB serial RX without clashing with MIDI. See `dev_workflow_plan.md`.
 
@@ -586,6 +621,21 @@ the full picture. Summary of remaining gaps:
 ---
 
 ## Pending — Next Sessions
+
+**Immediate — fix retrigger-cancel measurement (top priority, added 2026-07-06):**
+- See "Retrigger-cancel v1 is BROKEN" under Hardware/debugging constraints above
+  for full detail. Short version: the samples-to-peak approach correctly killed
+  the machine-gun cascade, but is currently rejecting genuine hard hits and
+  accepting small residual tail events instead — backwards from intent.
+- Two parked, possibly-related bugs to investigate first (both about the scope's
+  view of a signal disagreeing with the detection path's own per-sample tracking):
+  the scope-capture duplication bug, and the `peakSampleIdx` mismatch itself.
+- Do NOT resume tuning `retrig`/`maxFastAttackSamples` values until the
+  measurement is trusted — the cutoff number isn't the problem, the thing being
+  measured is suspect.
+- `retrig` config field meaning changed 2026-07-06: now samples-to-peak cutoff
+  (not ms). Default changed 50 → 5 in `Config.cpp`. `w <input> retrig <value>`
+  already wired through `applyConfig()`/`setRetriggerTime()`.
 
 **Future — recorded-waveform-driven decay/mask tuning (added 2026-07-06, do not
 start until the pdrum-revival Phase 1 + Phase 2 below are independently confirmed

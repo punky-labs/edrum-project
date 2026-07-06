@@ -85,6 +85,18 @@ public:
   float getDebugPiezoAfterDc() const override { return (float)lastPiezoAfterDc_; }
   float getDebugDcOffsetHead() const override { return dcOffsetHead_; }
   int   getDebugSpikeRejects() const override { return spikeRejectCount_; }
+  // TEMP DIAGNOSTIC (retrigger-cancel validation): count of hits rejected for a
+  // too-slow attack (likely a mechanical rebound, not a genuine strike).
+  int   getDebugRetriggerRejects() const override { return retriggerRejectCount_; }
+
+  bool  hasReject()                override { return rejectPending_; }
+  void  clearReject()              override { rejectPending_ = false; }
+  int   getLastRejectPeakIdx()    const override { return lastRejectPeakIdx_; }
+  int   getLastRejectVelocityRaw() const override { return lastRejectVelocityRaw_; }
+  // TEMP DIAGNOSTIC: peak-sample-index for whichever hit/rejection most recently
+  // occurred (head channel) — valid immediately after hasHit()/hasReject() either
+  // fires, since it's only overwritten at the START of the next scan.
+  int   getLastPeakIdx() const override { return peakSampleIdx; }
 
   void setPadType(uint8_t t)             override { padType           = t; }
   void setHeadThreshold(uint16_t v)      override { headThreshold     = v; }
@@ -96,6 +108,7 @@ public:
   void setRimRatioThreshold(uint16_t v)  override { rimRatioThreshold = v; }
   void setChokeThreshold(uint16_t v)     override { chokeThreshold    = v; }
   void setChokeEnabled(bool v)           override { chokeEnabled      = v; }
+  void setRetriggerTime(uint16_t v)      override { maxFastAttackSamples = v; }
   uint8_t getNoteHead()    const         override { return noteHead; }
 
 private:
@@ -141,6 +154,24 @@ private:
   int prevPrevPiezoValue = 0;
   int prevRimValue       = 0;
   int prevPrevRimValue   = 0;
+
+  // Retrigger-cancel: samples-to-peak within the current scan window, so we can
+  // tell a near-instant genuine strike (peak reached in ~1-2 samples, confirmed
+  // in real captures) from a mesh head's own slower mechanical rebound (~7-14
+  // samples). maxFastAttackSamples is the accept/reject cutoff (repurposed
+  // 'retrig' config param). Sample-count based, not millis()-based, since the
+  // real difference is sub-millisecond and millis() can't resolve it.
+  uint16_t maxFastAttackSamples = 5;   // first-pass default, expect to tune
+  int      peakSampleIdx        = 0;
+  int      rimPeakSampleIdx     = 0;
+  int      retriggerRejectCount_ = 0;   // TEMP DIAGNOSTIC
+
+  // TEMP DIAGNOSTIC (retrigger-cancel per-event visibility): latch set at the
+  // moment a hit is rejected, cleared once main reads it — same convention as
+  // chokeDetected/clearChoke().
+  bool rejectPending_        = false;
+  int  lastRejectPeakIdx_    = 0;
+  int  lastRejectVelocityRaw_ = 0;
 
   // TEMP DIAGNOSTIC (runaway investigation, remove once resolved): piezoValue
   // after DC-offset removal + spike rejection, captured every sensing() call.

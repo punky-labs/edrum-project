@@ -71,6 +71,20 @@ public:
     virtual float getDebugDcOffsetHead()  const { return -1.0f; }
     virtual int   getDebugSpikeRejects()  const { return -1; }
 
+    // TEMP DIAGNOSTIC (retrigger-cancel validation): count of hits rejected for a
+    // too-slow attack (likely a mechanical rebound, not a genuine strike).
+    virtual int   getDebugRetriggerRejects() const { return -1; }
+
+    // TEMP DIAGNOSTIC (retrigger-cancel validation cont'd): per-event detail for
+    // the most recent rejection, since rejections otherwise produce no visible
+    // signal at all (no hit, no MIDI, nothing for main to print). Mirrors the
+    // hasChoke()/clearChoke() latch pattern. Default no-op for other engines.
+    virtual bool  hasReject()               { return false; }
+    virtual void  clearReject()             {}
+    virtual int   getLastRejectPeakIdx()    const { return -1; }
+    virtual int   getLastRejectVelocityRaw() const { return -1; }
+    virtual int   getLastPeakIdx()          const { return -1; }
+
     // Configuration — applied from g_inputs[] by applyConfig()
     virtual void setPadType(uint8_t t)               = 0;
     virtual void setHeadThreshold(uint16_t v)        = 0;
@@ -82,6 +96,10 @@ public:
     virtual void setRimRatioThreshold(uint16_t v)    = 0;
     virtual void setChokeThreshold(uint16_t v)       = 0;
     virtual void setChokeEnabled(bool v)             = 0;
+    // Retrigger-cancel sensitivity (repurposed 'retrig' param, was dead code —
+    // previously stored/shown but never applied). Default no-op so engines that
+    // don't implement it (PDrum2Trigger) need no changes.
+    virtual void setRetriggerTime(uint16_t)          {}
     virtual uint8_t getNoteHead()    const           = 0;
 
     // Force any deferred, config-dependent rebuild to happen NOW (synchronously),

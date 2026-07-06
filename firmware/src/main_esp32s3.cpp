@@ -101,6 +101,7 @@ static void applyConfig() {
         triggers[i]->setRimRatioThreshold(g_inputs[i].rimRatioThreshold);
         triggers[i]->setChokeThreshold(g_inputs[i].chokeThreshold);
         triggers[i]->setChokeEnabled(g_inputs[i].chokeEnabled);
+        triggers[i]->setRetriggerTime(g_inputs[i].retriggerTime);
         triggers[i]->setHeadThreshold(g_inputs[i].threshold);
         triggers[i]->setHeadSensitivity(g_inputs[i].headSensitivity);
         triggers[i]->setScanTime(g_inputs[i].scanTime);
@@ -623,14 +624,16 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d\n",
-                         (unsigned long)millis(), i, note, vel, raw_vel, ch,
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d peakidx=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d retrigrej=%d\n",
+                         (unsigned long)millis(), i, note, vel, raw_vel,
+                         triggers[i]->getVelocityRaw(), triggers[i]->getLastPeakIdx(), ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
                          triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
                          triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
-                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects());
+                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
+                         triggers[i]->getDebugRetriggerRejects());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
             // the noisy serial [HIT] print above is gated; the SysEx event is a
@@ -660,14 +663,16 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d\n",
-                         (unsigned long)millis(), i, note, vel, raw_vel, ch,
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d peakidx=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d retrigrej=%d\n",
+                         (unsigned long)millis(), i, note, vel, raw_vel,
+                         triggers[i]->getVelocityRimRaw(), triggers[i]->getLastPeakIdx(), ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
                          triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
                          triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
-                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects());
+                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
+                         triggers[i]->getDebugRetriggerRejects());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
                 uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
@@ -694,6 +699,18 @@ void loop() {
             byte ch   = g_inputs[i].midiChannel;
             MIDI.sendNoteOff(note, 0, ch);
             if (!g_serialQuiet) DevLog.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
+        }
+
+        // TEMP DIAGNOSTIC (retrigger-cancel validation): a rejected hit produces no
+        // MIDI/hit event at all, so this is the only visibility into what actually
+        // got rejected and why (peak-timing detail, not just a running count).
+        if (g_hitDebug && !g_adcDump && triggers[i]->hasReject()) {
+            DevLog.printf("[REJECT] t=%lu i=%d peakidx=%d velraw=%d retrig_cutoff=%d\n",
+                          (unsigned long)millis(), i,
+                          triggers[i]->getLastRejectPeakIdx(),
+                          triggers[i]->getLastRejectVelocityRaw(),
+                          (int)g_inputs[i].retriggerTime);
+            triggers[i]->clearReject();
         }
     }
 }

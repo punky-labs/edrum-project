@@ -22,7 +22,12 @@ static InputConfig defaultInput(uint8_t idx) {
     // headSensitivity 800 is the upper ADC bound for velocity scaling.
     c.threshold        = 20;   // raw ADC units — scan-trigger point
     c.velocityCurve    = 4;    // Aggressive (LOG2) velocity curve
-    c.retriggerTime    = 50;   // ms — unused by PDrumTrigger (kept for config compat)
+    // Retrigger-cancel cutoff, in SAMPLES (not ms) — max samples-to-peak for a hit
+    // to count as a genuine strike vs. a mechanical rebound (added 2026-07-06,
+    // repurposed from a previously-unused field). 5 is a first-pass default from
+    // real PDX-12 captures (genuine hits ~1-2 samples, rebounds ~7-14); expect to
+    // tune per pad type once more data is gathered.
+    c.retriggerTime    = 5;
     c.headSensitivity  = 800;  // raw ADC upper bound for velocity scaling
     c.scanTime         = 3;    // peak scan window, ms
     c.maskTime         = 80;   // post-hit ignore window, ms (flat mask; no decay model)

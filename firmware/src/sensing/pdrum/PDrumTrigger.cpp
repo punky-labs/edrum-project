@@ -198,14 +198,16 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
         time_hit = millis();
         velocity    = piezoValue;
         velocityRim = rimValue;
+        peakSampleIdx    = 0;
+        rimPeakSampleIdx = 0;
         firstPeakChannel = (rimValue > piezoValue) ? 1 : 0;
         loopTimes = 1;
         crossAbsIndex_ = currentAbsIndex;
       }
     }
     if (loopTimes > 0) {
-      if (piezoValue > velocity)    velocity    = piezoValue;
-      if (rimValue   > velocityRim) velocityRim = rimValue;
+      if (piezoValue > velocity)    { velocity    = piezoValue; peakSampleIdx    = loopTimes; }
+      if (rimValue   > velocityRim) { velocityRim = rimValue;   rimPeakSampleIdx = loopTimes; }
       loopTimes++;
       if (millis() - time_hit >= scantime) {
         time_end = millis();
@@ -218,8 +220,20 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
                      (ratio > 80 && firstPeakChannel == 1);
         velocity    = curve(velocity,    headThreshold, headSensitivity, curvetype);
         velocityRim = curve(velocityRim, headThreshold, headSensitivity, curvetype);
-        if (isRim) { hitRim = true; }
-        else       { hit    = true; }
+        // Retrigger cancel: a genuine strike's electrical attack is near-instant
+        // (peak reached in ~1-2 samples, confirmed in real captures); a mesh
+        // head's own mechanical rebound rises much more gradually (~7-14 samples,
+        // also confirmed). maxFastAttackSamples (repurposed 'retrig' param) is
+        // the accept/reject cutoff.
+        int relevantPeakIdx = isRim ? rimPeakSampleIdx : peakSampleIdx;
+        if (relevantPeakIdx <= (int)maxFastAttackSamples) {
+          if (isRim) { hitRim = true; } else { hit = true; }
+        } else {
+          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
+          rejectPending_        = true;
+          lastRejectPeakIdx_    = relevantPeakIdx;
+          lastRejectVelocityRaw_ = isRim ? velocityRimRaw : velocityRaw;
+        }
         loopTimes = 0;
       }
     }
@@ -235,19 +249,28 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
         if (millis() - time_end >= masktime) {
           time_hit = millis();
           velocity = piezoValue;
+          peakSampleIdx = 0;
           loopTimes = 1;
           crossAbsIndex_ = currentAbsIndex;
         }
       }
     }
     if (loopTimes > 0) {
-      if (piezoValue > velocity) velocity = piezoValue;
+      if (piezoValue > velocity) { velocity = piezoValue; peakSampleIdx = loopTimes; }
       loopTimes++;
       if (millis() - time_hit >= scantime) {
         time_end = millis();
         velocityRaw = velocity;
         velocity    = curve(velocity, headThreshold, headSensitivity, curvetype);
-        hit = true;
+        // Retrigger cancel — see padType==0 comment for the reasoning.
+        if (peakSampleIdx <= (int)maxFastAttackSamples) {
+          hit = true;
+        } else {
+          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
+          rejectPending_        = true;
+          lastRejectPeakIdx_    = peakSampleIdx;
+          lastRejectVelocityRaw_ = velocityRaw;
+        }
         loopTimes = 0;
       }
     }
@@ -281,18 +304,27 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
         if (millis() - time_end < masktime) return;
         time_hit = millis();
         velocity  = piezoValue;
+        peakSampleIdx = 0;
         loopTimes = 1;
         crossAbsIndex_ = currentAbsIndex;
       }
     }
     if (loopTimes > 0) {
-      if (piezoValue > velocity) velocity = piezoValue;
+      if (piezoValue > velocity) { velocity = piezoValue; peakSampleIdx = loopTimes; }
       loopTimes++;
       if (millis() - time_hit >= scantime) {
         time_end    = millis();
         velocityRaw = velocity;
         velocity    = curve(velocity, headThreshold, headSensitivity, curvetype);
-        hit = true;
+        // Retrigger cancel — see padType==0 comment for the reasoning.
+        if (peakSampleIdx <= (int)maxFastAttackSamples) {
+          hit = true;
+        } else {
+          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
+          rejectPending_        = true;
+          lastRejectPeakIdx_    = peakSampleIdx;
+          lastRejectVelocityRaw_ = velocityRaw;
+        }
         loopTimes = 0;
       }
     }
