@@ -293,7 +293,14 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
     switch (cmd) {
         case SYSEX_PRE_LOAD: {
             if (pLen < 1) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            adcSamplerPause();
             bool ok = presetLoad(p[0]);
+            adcSamplerResume();
+            // BUG FIX: push the loaded config into the running engines. Every other
+            // config-mutating handler sets this; presetLoad was missing it, so a loaded
+            // preset didn't take effect until some later apply. loop() runs the apply
+            // inside its own pause bracket.
+            if (ok) g_apply_requested = true;
             sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
             break;
         }
@@ -306,7 +313,11 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
             uint8_t n = nameLen < PRESET_NAME_LEN ? nameLen : PRESET_NAME_LEN;
             memcpy(name, p + 2, n);
             name[n] = '\0';
+            adcSamplerPause();
             bool ok = presetSave(p[0], name);
+            adcSamplerResume();
+            // No apply: presetSave writes current config out to a preset file; it does
+            // not change g_inputs, so the running engines are unaffected.
             sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
             break;
         }
@@ -334,7 +345,10 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
 
         case SYSEX_PRE_DELETE: {
             if (pLen < 1) { sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR); return; }
+            adcSamplerPause();
             bool ok = presetDelete(p[0]);
+            adcSamplerResume();
+            // No apply: deleting a preset file doesn't change g_inputs.
             sendAck(deviceId, SYSEX_CAT_PRESET, cmd, ok ? SYSEX_ACK_OK : SYSEX_ACK_ERROR);
             break;
         }

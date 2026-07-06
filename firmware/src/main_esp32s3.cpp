@@ -19,7 +19,9 @@
 #include "config/Config.h"
 #include "midi/SysEx.h"
 #include "sensing/TriggerEngine.h"
-#include "sensing/pdrum2/PDrum2Trigger.h"
+// Phase-1 revert: the simple HelloDrum-derived PDrumTrigger is the active engine.
+// PDrum2Trigger (Edrumulus, Stage 2a) stays in the tree, unused, for a future return.
+#include "sensing/pdrum/PDrumTrigger.h"
 #include "sensing/sampling/AdcSampler.h"
 #include "sensing/sampling/SampleStream.h"
 
@@ -117,6 +119,15 @@ static void applyConfig() {
     }
 }
 
+// Exposed for SysEx.cpp's preset handlers: presetLoad/Save/Delete do synchronous
+// LittleFS I/O directly in the SysEx receive path (not deferred via a flag), so they
+// bracket those calls with these to keep a filesystem-write stall from overflowing
+// the ADC store buffer — same protection loop() gives configSave(). Plain extern
+// functions (declared in SysEx.h) to match the g_save_requested house style; `sampler`
+// is file-static so the bodies must live here where it's in scope.
+void adcSamplerPause()  { sampler.pause();  }
+void adcSamplerResume() { sampler.resume(); }
+
 // ---------------------------------------------------------------------------
 // SysEx USB bridge
 // BleMidi.cpp is excluded from this build; provide stubs here so that
@@ -148,7 +159,8 @@ static void onSysEx(byte* data, unsigned size) {
 // ---------------------------------------------------------------------------
 
 static void printHelp() {
-    DevLog.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  a=toggle ADC dump\n", FW_BUILD);
+    DevLog.printf("[eDrum] Build %d — p=ping  i=identify  s=config  n=test note  r=reboot\n", FW_BUILD);
+    DevLog.println("  a=toggle ADC dump  d=toggle hit debug print  m=toggle diag mode (detection+MIDI off)");
     DevLog.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
     DevLog.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
     DevLog.println("  params: thresh sens scan mask retrig type ratio chokethresh choke enable");
@@ -202,7 +214,8 @@ static void handleSerial(char cmd) {
             for (int i = 0; i < NUM_INPUTS; i++) {
                 DevLog.printf("  [%d] en=%d type=%d note=%d ch=%d z2note=%d z2ch=%d"
               " thresh=%d sens=%d scan=%d mask=%d"
-              " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d\n",
+              " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d"
+              " seeds=%d builds=%d\n",
                     i,
                     (int)g_inputs[i].enabled,
                     g_inputs[i].padType,
@@ -212,7 +225,9 @@ static void handleSerial(char cmd) {
                     g_inputs[i].scanTime,    g_inputs[i].maskTime,
                     g_inputs[i].rimRatioThreshold, g_inputs[i].chokeThreshold,
                     (int)g_inputs[i].chokeEnabled,
-                    g_inputs[i].velocityCurve, g_inputs[i].retriggerTime);
+                    g_inputs[i].velocityCurve, g_inputs[i].retriggerTime,
+                    triggers[i] ? triggers[i]->getDebugSeedCount()  : -1,
+                    triggers[i] ? triggers[i]->getDebugBuildCount() : -1);
             }
             break;
         }
@@ -301,8 +316,12 @@ static void handleSerial(char cmd) {
                 else if (p == "enable")     { g_inputs[inp].enabled          = (bool)val;     }
                 else { DevLog.printf("[w] Unknown param '%s'\n", param); ok = false; }
                 if (ok) {
-                    applyConfig();
-                    g_save_requested = true;
+                    // Defer apply+save to loop() (single pause/resume-bracketed path,
+                    // same as the SysEx PAD_SET_* handlers) instead of applying inline
+                    // here — an inline applyConfig()+LUT rebuild could stall the loop
+                    // and overflow the ADC store buffer.
+                    g_apply_requested = true;
+                    g_save_requested  = true;
                     DevLog.printf("[w] input=%d %s=%d OK\n", inp, param, val);
                 }
             } else {
@@ -406,6 +425,12 @@ void setup() {
     if (!sampler.begin(kChannelGpios, 8, 8000)) {
         Serial.println("[ADC] ERROR: AdcSampler.begin() failed");
     }
+    // Hold DMA sampling off while triggers are created/initialized and boot config
+    // is applied below — same protection as the runtime g_apply_requested path
+    // (buildDerived()'s ps_malloc/free churn across 4 engines could otherwise stall
+    // long enough to overflow the store buffer before the pipeline is even fully
+    // set up). Resumed just before the main loop starts sampling for real.
+    sampler.pause();
     stream.begin(&sampler);
     Serial.printf("[ADC] configured %lu Hz/ch  (%lu Hz aggregate, %d ch)\n",
                   (unsigned long)sampler.sampleRateHz(),
@@ -415,12 +440,16 @@ void setup() {
     // Layer 3: one engine per input that has a head channel.
     for (int i = 0; i < NUM_INPUTS; i++) {
         if (kHeadCh[i] < 0) { triggers[i] = nullptr; continue; }
-        triggers[i] = new PDrum2Trigger(
+        triggers[i] = new PDrumTrigger(
             (byte)streamCh(kHeadCh[i]),
             (byte)streamCh(kRimCh[i]));
         triggers[i]->initialize(stream.sampleRateHz());
     }
     applyConfig();
+    for (int i = 0; i < NUM_INPUTS; i++) {
+        if (triggers[i]) triggers[i]->syncConfig();
+    }
+    sampler.resume();
 
     Serial.println("[LED] ready");
     printHelp();
@@ -458,17 +487,50 @@ void loop() {
         DevLog.println(mounted ? "[LED] mounted" : "[LED] unmounted");
     }
 
-    if (g_apply_requested) {
-        g_apply_requested = false;
-        applyConfig();
+    // Config apply / save each stall the loop long enough to overflow the ADC DMA
+    // store buffer: applyConfig() marks the engines' decay LUTs dirty and syncConfig()
+    // rebuilds them (ps_malloc/free + fill), and configSave() does a LittleFS write.
+    // Pause DMA sampling across the whole block so a stall can't wedge the sampler,
+    // and only pay one pause/resume cycle when both flags are set together.
+    if (g_apply_requested || g_save_requested) {
+        sampler.pause();
+
+        if (g_apply_requested) {
+            g_apply_requested = false;
+            applyConfig();
+            // Force each engine's deferred (needsInit_) rebuild NOW, inside the
+            // pause bracket, instead of lazily on the next processBlock().
+            for (int i = 0; i < NUM_INPUTS; i++) {
+                if (triggers[i]) triggers[i]->syncConfig();
+            }
+        }
+
+        if (g_save_requested) {
+            g_save_requested = false;
+            configSave();
+            uint8_t ack[3] = {SYSEX_CAT_SYS, SYSEX_SYS_SAVE, SYSEX_ACK_OK};
+            sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                            SYSEX_STAT_ACK, ack, 3);
+        }
+
+        sampler.resume();
     }
 
-    if (g_save_requested) {
-        g_save_requested = false;
-        configSave();
-        uint8_t ack[3] = {SYSEX_CAT_SYS, SYSEX_SYS_SAVE, SYSEX_ACK_OK};
-        sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
-                        SYSEX_STAT_ACK, ack, 3);
+    // TEMP DIAGNOSTIC (DC-reseed runaway confirmation): print immediately whenever
+    // an engine's seed count changes, independent of hit timing, so a reseed shows
+    // up even if no hit follows right after. Should print exactly once per input,
+    // at boot, and never again post-fix.
+    static int s_lastSeedCount[NUM_INPUTS] = {0};
+    for (int i = 0; i < NUM_INPUTS; i++) {
+        if (!triggers[i]) continue;
+        int sc = triggers[i]->getDebugSeedCount();
+        if (sc != s_lastSeedCount[i]) {
+            s_lastSeedCount[i] = sc;
+            if (g_hitDebug && !g_adcDump) {
+                DevLog.printf("[SEED] t=%lu i=%d count=%d raw=%.1f\n",
+                              (unsigned long)millis(), i, sc, triggers[i]->getDebugLastSeedRaw());
+            }
+        }
     }
 
     MIDI.read();
@@ -555,8 +617,12 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] i=%d note=%d vel=%d raw=%d ch=%d\n",
-                         i, note, vel, raw_vel, ch);
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f\n",
+                         (unsigned long)millis(), i, note, vel, raw_vel, ch,
+                         triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
+                         triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
+                         triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
+                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
             // the noisy serial [HIT] print above is gated; the SysEx event is a
@@ -586,8 +652,12 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] i=%d note=%d vel=%d raw=%d ch=%d\n",
-                         i, note, vel, raw_vel, ch);
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f\n",
+                         (unsigned long)millis(), i, note, vel, raw_vel, ch,
+                         triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
+                         triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
+                         triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
+                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
                 uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };

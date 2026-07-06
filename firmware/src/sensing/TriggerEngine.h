@@ -32,6 +32,38 @@ public:
     // index it already knows. Valid immediately after a processBlock() that set a hit.
     virtual uint32_t getTriggerSnap() const = 0;
 
+    // TEMP DIAGNOSTIC (mask-time-rescue runaway investigation, remove once resolved):
+    // count of mask-time-rescue branch firings within the most recent processBlock()
+    // call. Default 0 for engines that don't implement/need it.
+    virtual int getRescueCount() const { return 0; }
+
+    // TEMP DIAGNOSTIC (runaway investigation cont'd): raw state-machine numbers at
+    // the moment of the most recent hit, so we can see the real comparison values
+    // instead of reasoning about them abstractly. Defaults are sentinel (-1) for
+    // engines that don't implement this.
+    virtual float getDebugThreshold() const { return -1.0f; }
+    virtual float getDebugPeakVal()   const { return -1.0f; }
+    virtual int   getDebugMaskCnt()   const { return -1; }
+    virtual int   getDebugDecayCnt()  const { return -1; }
+    virtual int   getDebugDecayLen()  const { return -1; }
+
+    // TEMP DIAGNOSTIC (DC-reseed runaway confirmation): how many times the DC
+    // baseline has been (re)seeded since boot, and the raw sample value it was
+    // last seeded from. Should be 1 (boot only) after the resetState() fix.
+    virtual int   getDebugSeedCount()   const { return -1; }
+    virtual float getDebugLastSeedRaw() const { return -1.0f; }
+
+    // TEMP DIAGNOSTIC: how many times buildDerived() has actually run since boot.
+    // Should be 1 (boot only) unless a config change legitimately requested it.
+    virtual int   getDebugBuildCount()  const { return -1; }
+
+    // TEMP DIAGNOSTIC: the actual decision-path values (never yet observed directly —
+    // everything we've looked at so far, e.g. getDebugPeakVal(), is the raw/velocity
+    // track, not this one). Reflects the last sample processed in the most recent
+    // processBlock() call.
+    virtual float getDebugXFilt()      const { return -1.0f; }
+    virtual float getDebugXFiltDecay() const { return -1.0f; }
+
     // Configuration — applied from g_inputs[] by applyConfig()
     virtual void setPadType(uint8_t t)               = 0;
     virtual void setHeadThreshold(uint16_t v)        = 0;
@@ -44,6 +76,12 @@ public:
     virtual void setChokeThreshold(uint16_t v)       = 0;
     virtual void setChokeEnabled(bool v)             = 0;
     virtual uint8_t getNoteHead()    const           = 0;
+
+    // Force any deferred, config-dependent rebuild to happen NOW (synchronously),
+    // rather than lazily on the next processBlock(). Call after applyConfig() while
+    // ADC sampling is paused, so the (potentially slow) rebuild can't stall the
+    // hot path. Default no-op for engines with nothing to rebuild.
+    virtual void syncConfig()                        {}
 
     // Tier-2 Edrumulus params (added Stage 2a). Default no-op so engines that don't
     // use them need not implement them. Values are the fixed-point reals from

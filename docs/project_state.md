@@ -341,13 +341,15 @@ Opened from Dev menu → ADC Scope…
 - h — print help + build number
 - s — dump full config (all inputs, all DSP params)
 - a — toggle continuous ADC channel dump (100ms interval)
+- d — toggle [HIT]/[RIM] serial debug print (MIDI/SysEx output unaffected)
+- m — toggle diagnostic mode (skips all detection + MIDI; pump + ADC dump only)
 - o <input> <floor> — arm scope capture on input
 - o off — disarm scope
 - w <input> <param> <value> — set DSP param live (thresh/sens/scan/mask/retrig)
 - p — send SysEx ping
 - i — send SysEx identify request
 - n — send test note (C3, ch10)
-- r — reboot to bootloader (UF2 upload mode)
+- r — reboot (ESP.restart())
 
 ---
 
@@ -551,6 +553,45 @@ the full picture. Summary of remaining gaps:
 ---
 
 ## Pending — Next Sessions
+
+**Future — recorded-waveform-driven decay/mask tuning (added 2026-07-06, do not
+start until the pdrum-revival Phase 1 + Phase 2 below are independently confirmed
+working on hardware):**
+- Idea, from re-examining Edrumulus's own documented methodology (record real test
+  signals per pad type, tune the decay/mask model against them) — the *approach* is
+  good even though we're moving away from Edrumulus's specific C++ implementation.
+  Matches what scope sessions already showed by eye (rubber pad PD-7: sharp spike,
+  fast decay; mesh/cymbal pads: long oscillating decay tail) — worth quantifying
+  properly instead of just eyeballing a serial monitor.
+- Once Phase 1 (pdrum-derived engine, correctly adapted to ESP32-S3: block adapter,
+  DC-offset, padType/choke fixes) and Phase 2 (peak-multiple re-strike check instead
+  of a flat mask) are each confirmed solid on real hardware — use per-pad-type
+  recorded waveforms (via the planned bounded-capture mechanism / app-side ADC Scope
+  redesign, see the debug-logging-system discussion) as the evidence base for tuning
+  mask/re-strike parameters *per pad type*, rather than one global guess.
+- Deliberately sequenced last: a data-driven refinement on top of a baseline we
+  already trust, not layered onto a system still being debugged.
+
+**Immediate — Velocity floor / noise gate (next task, added 2026-07-04):**
+- Even with real pads plugged into all four jacks, low-velocity spam still gets
+  through on some inputs (observed via telnet + MidiView: near-continuous
+  Note on/off + `05 03` SysEx at velocity 1 across multiple inputs).
+- Distinct from `threshold` (which sets the *scan trigger* point that starts a
+  hit capture) — this is a **post-detection floor**: discard a detected hit if
+  its resulting raw ADC / MIDI velocity falls below a configurable floor, so
+  marginal noise that still crosses `threshold` doesn't produce output.
+- Goal: a software-tunable way to clean up hardware anomalies (floating jacks,
+  cable/EMI noise, per-pad quirks) per input, so the rest of the system
+  (DSP tuning, app UI, MIDI mapping) can be worked on without noise spam —
+  works alongside `InputConfig.enabled` (which fully disables an input) rather
+  than replacing it.
+- Needs: new configurable field (per input, e.g. `velocityFloor`), applied in
+  `main_esp32s3.cpp`'s hit-output path (`rawToMidi()` / the `hasHit()`/`hasHitRim()`
+  blocks) before `MIDI.sendNoteOn()` and the `05 03` SysEx are sent. App-side:
+  expose in Config/MIDI tab and PAD_GET/PAD_SET SysEx.
+- Not yet designed in detail — first task next session is to work out where in
+  the pipeline the floor should sit and whether it should be a single value or
+  per-zone (head/rim) like `threshold` already is.
 
 **Immediate — PDrum2Trigger sensing rewrite (top priority):**
 - Implement PDrum2Trigger using Step 0 design doc (docs/sensing_rewrite_step0.md)

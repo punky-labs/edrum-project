@@ -95,3 +95,9 @@ void sysexSendResponse(uint8_t deviceId, uint8_t cmdHigh, uint8_t cmdLow,
 
 extern volatile bool g_save_requested;
 extern volatile bool g_apply_requested;
+
+// Pause/resume ADC DMA sampling around blocking LittleFS I/O in the preset
+// handlers (defined in main_esp32s3.cpp). Prevents a filesystem-write stall from
+// overflowing the ADC store buffer and wedging the sampler.
+extern void adcSamplerPause();
+extern void adcSamplerResume();

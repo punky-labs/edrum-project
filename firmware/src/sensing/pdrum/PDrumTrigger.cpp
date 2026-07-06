@@ -19,6 +19,7 @@
 
 #include "PDrumTrigger.h"
 #include "Arduino.h"
+#include <math.h>   // lroundf, for DC-offset rounding
 
 // Precomputed curve lookup tables [0..126] → [1..127]
 // Generated from the original pow() formulae:
@@ -82,21 +83,77 @@ PDrumTrigger::PDrumTrigger(byte pin1, byte pin2)
   chokeThreshold     = 50;
   chokeEnabled       = true;
   chokeDetected      = false;
-  chokeHoldSamples   = 0;
+  chokeAbove_        = false;
   firstPeakChannel   = 0;
   curvetype          = 0;
   noteHead           = 38;
   velocityRaw        = 0;
   velocityRimRaw     = 0;
   loopTimes          = 0;
-  triggerSnap        = 0;
+}
+
+// Fs is stored only — this engine's timing is millis()-based, so there is nothing
+// sample-rate-dependent to derive. dcSeeded_ is intentionally left false (member
+// initializer) so the DC baseline seeds once from the first real sample in
+// processBlock(); do NOT seed/reset it here.
+void PDrumTrigger::initialize(uint32_t sampleRateHz)
+{
+  Fs_ = sampleRateHz ? sampleRateHz : 8000;
+}
+
+// Block adapter: run the per-sample sensing() over the block, carrying the absolute
+// sample index so the threshold-crossing snapshot lands in absolute space. Mirrors
+// PDrum2Trigger's crossAbsIndex_ -> triggerBack_ conversion for scope capture.
+void PDrumTrigger::processBlock(const uint16_t* headBlock, const uint16_t* rimBlock,
+                                uint16_t n, uint32_t blockStartAbsIndex)
+{
+  // Per-block output latches reset ONCE here (not per-sample inside sensing()) so a
+  // hit that fires mid-block is still visible to main after the whole block runs.
+  // chokeDetected is a separate latch cleared by main via clearChoke().
+  hit    = false;
+  hitRim = false;
+  choke  = false;
+
+  if (!headBlock || n == 0) return;
+
+  bool           firedThisBlock = false;
+  const uint32_t blockEndAbs    = blockStartAbsIndex + n - 1;
+
+  for (uint16_t j = 0; j < n; j++) {
+    const uint32_t absIdx = blockStartAbsIndex + j;
+    const int piezo = (int)headBlock[j];
+    const int rim   = rimBlock ? (int)rimBlock[j] : 0;
+    sensing(piezo, rim, absIdx);
+    if (hit || hitRim) firedThisBlock = true;
+  }
+
+  if (firedThisBlock) {
+    triggerBack_ = (blockEndAbs >= crossAbsIndex_) ? (blockEndAbs - crossAbsIndex_) : 0;
+  }
 }
 
 //
 // Three sensing code paths, selected by padType.
 //
-void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHead)
+void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsIndex)
 {
+  // DC-offset removal (ESP32-S3 unipolar ADC rests at a positive bias). Slow one-pole
+  // IIR baseline, subtracted from BOTH channels before any detection. Seed the
+  // baseline ONCE from the first sample, then only track it — never reseed (see the
+  // seed-once note in the header / PDrum2Trigger runaway-bug fix).
+  const float rawHead = (float)piezoValue;
+  const float rawRim  = (float)rimValue;
+  if (!dcSeeded_) {
+      dcOffsetHead_ = rawHead;
+      dcOffsetRim_  = rawRim;
+      dcSeeded_     = true;
+  } else {
+      dcOffsetHead_ = kDcIirGamma * dcOffsetHead_ + kDcIirOneMinusGamma * rawHead;
+      dcOffsetRim_  = kDcIirGamma * dcOffsetRim_  + kDcIirOneMinusGamma * rawRim;
+  }
+  piezoValue = (int)lroundf(rawHead - dcOffsetHead_);
+  rimValue   = (int)lroundf(rawRim  - dcOffsetRim_);
+
   // Spike rejection — discard single-sample outliers (applied to both channels)
   if (abs(piezoValue - prevPiezoValue) > SPIKE_THRESHOLD &&
       abs(piezoValue - prevPrevPiezoValue) > SPIKE_THRESHOLD) {
@@ -112,10 +169,8 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHea
   prevPrevRimValue = prevRimValue;
   prevRimValue     = rimValue;
 
-  // Per-call outputs reset every pass. chokeDetected is a latch cleared by Core 0.
-  hit    = false;
-  hitRim = false;
-  choke  = false;
+  // NOTE: hit/hitRim/choke are reset per-BLOCK in processBlock(), not here, so a hit
+  // firing on any sample latches until main consumes it after the block.
 
   // =========================================================================
   // DUAL_PIEZO — both channels velocity-sensitive; ratio discrimination
@@ -131,7 +186,7 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHea
         velocityRim = rimValue;
         firstPeakChannel = (rimValue > piezoValue) ? 1 : 0;
         loopTimes = 1;
-        triggerSnap = currentRingHead;
+        crossAbsIndex_ = currentAbsIndex;
       }
     }
     if (loopTimes > 0) {
@@ -167,7 +222,7 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHea
           time_hit = millis();
           velocity = piezoValue;
           loopTimes = 1;
-          triggerSnap = currentRingHead;
+          crossAbsIndex_ = currentAbsIndex;
         }
       }
     }
@@ -185,16 +240,20 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHea
 
     // Switch/choke monitoring — runs independently of hit scan.
     // Always monitor switch channel, even during mask window.
+    // Fire when the switch has stayed above threshold for kChokeHoldMs (millis-based,
+    // sample-rate-independent — replaces the old hardcoded ~45-sample count that
+    // assumed ~9kHz sampling and would mistime at our 8kHz rate).
     if (chokeEnabled) {
       if (rimValue > (int)chokeThreshold) {
-        chokeHoldSamples++;
-        // ~5ms sustained at ~110us/sample = ~45 samples
-        if (chokeHoldSamples >= 45) {
+        if (!chokeAbove_) {
+          chokeAbove_      = true;
+          chokeAboveSince_ = millis();
+        } else if (millis() - chokeAboveSince_ >= kChokeHoldMs) {
           chokeDetected = true;
-          chokeHoldSamples = 0;
+          chokeAbove_   = false;   // re-arm (matches old count-reset behaviour)
         }
       } else {
-        chokeHoldSamples = 0;
+        chokeAbove_ = false;
       }
     }
   }
@@ -209,7 +268,7 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentRingHea
         time_hit = millis();
         velocity  = piezoValue;
         loopTimes = 1;
-        triggerSnap = currentRingHead;
+        crossAbsIndex_ = currentAbsIndex;
       }
     }
     if (loopTimes > 0) {

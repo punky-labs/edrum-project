@@ -16,10 +16,15 @@
 
 // DMA store/frame sizing. conv_frame_size must be a multiple of the per-conv
 // byte size (4 on S3); max_store_buf_size must be a multiple of conv_frame_size.
-// 4096-byte store ≈ 1024 conversions ≈ 16 ms at 8ch*8kHz — ample headroom
-// between pump() calls; SampleStream's ring carries the real 100 ms buffer.
+// At 8ch*8kHz = 64 kHz aggregate, one 4-byte conversion arrives every ~15.6 µs,
+// so 1024 conversions (4096 bytes) ≈ 16 ms. The store buffer is the headroom the
+// DMA has before pump() must drain it: if the main loop stalls longer than this,
+// the buffer overflows and the sampler wedges (values freeze until reboot).
+// Bumped 4096 -> 32768 (16 ms -> ~128 ms) so an unbracketed stall has generous
+// margin; deliberate stalls (config save, LUT rebuild) are additionally bracketed
+// by pause()/resume(). 32768 / 1024 = 32, so still a whole number of frames.
 static constexpr uint32_t kConvFrameBytes = 1024;
-static constexpr uint32_t kStoreBufBytes  = 4096;
+static constexpr uint32_t kStoreBufBytes  = 32768;
 
 // ESP32-S3: ADC1_CHANNEL_n is GPIO(n+1) for GPIO1..GPIO10. This is the one place
 // in the firmware that encodes the GPIO<->ADC channel relationship.
@@ -81,6 +86,18 @@ void AdcSampler::stop() {
     adc_continuous_stop(handle_);
     adc_continuous_deinit(handle_);
     handle_ = nullptr;
+}
+
+void AdcSampler::pause() {
+    if (!handle_) return;
+    // Stop conversions but KEEP the handle/config — resume() restarts the same
+    // driver. Much lighter than stop() (which deinits) so it's cheap to bracket.
+    adc_continuous_stop(handle_);
+}
+
+void AdcSampler::resume() {
+    if (!handle_) return;
+    adc_continuous_start(handle_);
 }
 
 uint32_t AdcSampler::read(uint8_t* buf, uint32_t bufLenBytes) {

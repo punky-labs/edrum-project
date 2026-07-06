@@ -32,13 +32,14 @@ struct __attribute__((packed)) InputConfig {
     uint8_t  ccChannel;
     uint8_t  linkedInput;    // 0xFF = no link, 0x00–0x08 = paired input ID
 
-    // ---- Tier-2 (Edrumulus) params — added Stage 2a. Stored in REAL units with a
-    // fixed-point convention so the engine runs without app/SysEx plumbing (that is
-    // Step 2 of the overall plan). Tune via serial `w` / presets until then.
-    // Fixed-point: *Ms and *Db fields are value×10 (one decimal); gradFact fields
-    // are integer ×1; clipCompAmpmapStep is value×100.
-    // NOTE: with these fields `threshold` and `headSensitivity` now carry the
-    // Edrumulus 0..31 velocity_threshold / velocity_sensitivity (not ADC units).
+    // ---- Tier-2 (Edrumulus) params — added Stage 2a for PDrum2Trigger. Stored in
+    // REAL units (fixed-point: *Ms/*Db fields value×10 (one decimal); gradFact fields
+    // integer ×1; clipCompAmpmapStep value×100). UNUSED by the active PDrumTrigger
+    // engine (Phase-1 revert) — kept so a future return to PDrum2Trigger needs no
+    // config-struct change. Tune via serial `w` / presets when that engine is active.
+    // NOTE: `threshold` and `headSensitivity` (declared above) are RAW ADC units for
+    // PDrumTrigger (a peak detector), NOT the Edrumulus 0..31 log-scale velocity_
+    // threshold/velocity_sensitivity that PDrum2Trigger interpreted them as.
     uint16_t preScanTimeMs;         // ms×10   (25  = 2.5 ms)
     uint16_t firstPeakDiffThreshDb; // dB×10   (80  = 8.0 dB)
     uint16_t decayLen1Ms;           // ms×10   (0)

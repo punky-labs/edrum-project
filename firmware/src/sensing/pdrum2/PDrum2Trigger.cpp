@@ -34,6 +34,7 @@ void PDrum2Trigger::initialize(uint32_t sampleRateHz) {
 
 // Port of Edrumulus::Pad::initialize() — only the single-head-sensor derivations.
 void PDrum2Trigger::buildDerived() {
+    buildCount_++;   // TEMP DIAGNOSTIC
     const int Fs = Fs_;
 
     const float threshold_db = 20.0f * log10f((float)kAdcMaxNoise) - 16.0f + (float)velThreshold_;
@@ -102,6 +103,12 @@ void PDrum2Trigger::buildDerived() {
     needsInit_ = false;
 }
 
+void PDrum2Trigger::syncConfig() {
+    // Same lazy-rebuild guard processBlock() uses, but driven eagerly by main so the
+    // rebuild happens inside the ADC pause bracket rather than in the hot loop.
+    if (needsInit_) buildDerived();
+}
+
 void PDrum2Trigger::resetState() {
     for (int i = 0; i < kBpFiltLen; i++)     bp_filt_hist_x_[i] = 0.0f;
     for (int i = 0; i < kBpFiltLen - 1; i++) bp_filt_hist_y_[i] = 0.0f;
@@ -116,7 +123,16 @@ void PDrum2Trigger::resetState() {
     was_peak_found_      = false;
     decay_scaling_       = 1.0f;
     first_peak_delay_    = 0;
-    dcSeeded_            = false;   // re-seed DC estimate from next sample
+    // dcOffset_/dcSeeded_ intentionally NOT reset here (runaway-bug fix): this is
+    // called from buildDerived(), which runs on every ordinary config change (any
+    // w/SysEx pad-set touches needsInit_ on ALL engines via applyConfig()).
+    // Re-seeding snaps dcOffset_ instantly to whatever single raw sample happens
+    // to be current at that moment -- if that sample isn't representative, every
+    // subsequent sample computes against a wrong baseline, producing a large,
+    // stable, non-decaying apparent signal that the detector faithfully reports
+    // as a real (but fake) continuous hit source. The DC estimate only needs to
+    // be seeded once, at true first-run (member initializers already give
+    // dcSeeded_=false there); it doesn't depend on anything buildDerived() computes.
     spike_.reset();
 }
 
@@ -125,6 +141,7 @@ void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*ri
                                  uint16_t n, uint32_t blockStartAbsIndex) {
     hit_    = false;   // per-block results reset; chokeDetected_ latch cleared by main
     hitRim_ = false;
+    rescueCount_ = 0;  // TEMP DIAGNOSTIC (mask-time-rescue runaway investigation)
 
     if (needsInit_) buildDerived();
     if (!headBlock || n == 0) return;
@@ -143,7 +160,12 @@ void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*ri
         //    seeds the estimate from the first sample to avoid a startup convergence
         //    transient (which would itself cause a burst of false fires).
         const float raw = (float)headBlock[j];
-        if (!dcSeeded_) { dcOffset_ = raw; dcSeeded_ = true; }
+        if (!dcSeeded_) {
+            dcOffset_ = raw;
+            dcSeeded_ = true;
+            seedCount_++;              // TEMP DIAGNOSTIC (DC-reseed runaway confirmation)
+            lastSeedRaw_ = raw;        // TEMP DIAGNOSTIC
+        }
         else            { dcOffset_ = kDcIirGamma * dcOffset_ + kDcIirOneMinusGamma * raw; }
 
         // 1. spike cancellation — now valid because `input` is zero-centred.
@@ -165,6 +187,7 @@ void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*ri
         float x_filt = sum_b - sum_a;
         update_fifo(x_filt, kBpFiltLen - 1, bp_filt_hist_y_);
         x_filt = x_filt * x_filt;
+        lastXFilt_ = x_filt;   // TEMP DIAGNOSTIC (decision-path visibility)
 
         // 4. exponential decay subtraction (the retrigger mask — the runaway fix)
         float x_filt_decay = x_filt;
@@ -180,10 +203,12 @@ void PDrum2Trigger::processBlock(const uint16_t* headBlock, const uint16_t* /*ri
             if (x_filt > max_mask_x_filt_val_ * decay_mask_fact_) {
                 was_above_threshold_ = false; // reset peak detection
                 x_filt_decay         = x_filt; // remove decay subtraction
+                rescueCount_++;                // TEMP DIAGNOSTIC
             }
         }
 
         // 6. threshold test + scan state machine
+        lastXFiltDecay_ = x_filt_decay;   // TEMP DIAGNOSTIC (decision-path visibility, final value)
         if ((x_filt_decay > threshold_) || was_above_threshold_) {
             if (!was_above_threshold_) {
                 // first sample above threshold for this peak

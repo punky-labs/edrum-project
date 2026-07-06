@@ -16,14 +16,16 @@ static InputConfig defaultInput(uint8_t idx) {
     c.linkedInput      = 0xFF;
     c.enabled          = true;  // inputs active by default; disable unpopulated jacks
     c.padType          = 1;    // PIEZO_SWITCH_CHOKE (safest default)
-    // Stage 2a: threshold/headSensitivity now carry Edrumulus velocity_threshold/
-    // velocity_sensitivity (0..31), NOT ADC units. KD8-derived defaults below.
-    c.threshold        = 8;    // velocity_threshold (0..31), KD8 global
-    c.velocityCurve    = 4;    // LOG2 (kick: less dynamic), KD8
-    c.retriggerTime    = 50;
-    c.headSensitivity  = 2;    // velocity_sensitivity (0..31), KD8
-    c.scanTime         = 3;    // scan_time_ms (KD8 = 3.0)
-    c.maskTime         = 6;    // mask_time_ms (global = 6)
+    // PDrumTrigger (Phase-1 revert): threshold/headSensitivity are RAW ADC units
+    // (peak detector), NOT Edrumulus 0..31 log units. Values match PDrumTrigger's own
+    // constructor defaults — noise floor reads ~4-17, so thresh 20 sits just above it;
+    // headSensitivity 800 is the upper ADC bound for velocity scaling.
+    c.threshold        = 20;   // raw ADC units — scan-trigger point
+    c.velocityCurve    = 4;    // Aggressive (LOG2) velocity curve
+    c.retriggerTime    = 50;   // ms — unused by PDrumTrigger (kept for config compat)
+    c.headSensitivity  = 800;  // raw ADC upper bound for velocity scaling
+    c.scanTime         = 3;    // peak scan window, ms
+    c.maskTime         = 80;   // post-hit ignore window, ms (flat mask; no decay model)
     c.rimRatioThreshold = 40;  // ratio*100: rim/head > 0.40 = rim hit
     c.chokeThreshold   = 50;
     c.chokeEnabled     = true;

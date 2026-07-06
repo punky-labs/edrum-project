@@ -49,6 +49,27 @@ public:
     //   crossingAbsIndex = blockEndAbsIndex - getTriggerSnap().
     uint32_t getTriggerSnap() const override { return triggerBack_; }
 
+    // TEMP DIAGNOSTIC (mask-time-rescue runaway investigation, remove once resolved).
+    int getRescueCount() const override { return rescueCount_; }
+
+    // TEMP DIAGNOSTIC (runaway investigation cont'd).
+    float getDebugThreshold() const override { return threshold_; }
+    float getDebugPeakVal()   const override { return peak_val_; }
+    int   getDebugMaskCnt()   const override { return mask_back_cnt_; }
+    int   getDebugDecayCnt()  const override { return decay_back_cnt_; }
+    int   getDebugDecayLen()  const override { return decay_len_; }
+
+    // TEMP DIAGNOSTIC (DC-reseed runaway confirmation).
+    int   getDebugSeedCount()   const override { return seedCount_; }
+    float getDebugLastSeedRaw() const override { return lastSeedRaw_; }
+
+    // TEMP DIAGNOSTIC.
+    int   getDebugBuildCount()  const override { return buildCount_; }
+
+    // TEMP DIAGNOSTIC (decision-path visibility).
+    float getDebugXFilt()      const override { return lastXFilt_; }
+    float getDebugXFiltDecay() const override { return lastXFiltDecay_; }
+
     // Tier-1 setters (threshold/headSensitivity now carry Edrumulus 0..31 units).
     void setPadType(uint8_t t)             override { padType_           = t; }
     void setHeadThreshold(uint16_t v)      override { velThreshold_   = v; needsInit_ = true; }
@@ -61,6 +82,10 @@ public:
     void setChokeThreshold(uint16_t v)     override { chokeThreshold_    = v; }
     void setChokeEnabled(bool v)           override { chokeEnabled_      = v; }
     uint8_t getNoteHead()    const         override { return noteHead_; }
+
+    // Force the deferred decay-LUT rebuild (ps_malloc/free + fill) now if a setter
+    // marked needsInit_, instead of waiting for the next processBlock().
+    void syncConfig()                      override;
 
     // Tier-2 setters (fixed-point reals from InputConfig — see Config.h).
     void setPreScanTimeMs(uint16_t v)         override { preScanTimeMs_x10_      = v; needsInit_ = true; }
@@ -171,6 +196,15 @@ private:
     float  dcOffset_ = 0.0f;   // tracked baseline
     bool   dcSeeded_ = false;  // seed from first sample to avoid startup transient
 
+    // TEMP DIAGNOSTIC (DC-reseed runaway confirmation, remove once resolved).
+    int    seedCount_    = 0;
+    float  lastSeedRaw_  = 0.0f;
+    int    buildCount_   = 0;
+
+    // TEMP DIAGNOSTIC (decision-path visibility, remove once resolved).
+    float  lastXFilt_      = 0.0f;
+    float  lastXFiltDecay_ = 0.0f;
+
     // ---- Block coordinate / results ----
     uint32_t crossAbsIndex_ = 0;   // absolute index of fired hit's first peak
     uint32_t triggerBack_   = 0;   // blockEndAbs - crossAbsIndex_ (set at block end)
@@ -182,6 +216,9 @@ private:
     int  velocityRim_    = 0;
     int  velocityRaw_    = 0;
     int  velocityRimRaw_ = 0;
+
+    // TEMP DIAGNOSTIC (mask-time-rescue runaway investigation, remove once resolved).
+    int  rescueCount_    = 0;
 };
 
 #endif

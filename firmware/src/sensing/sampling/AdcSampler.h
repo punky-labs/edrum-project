@@ -44,6 +44,13 @@ public:
     // Stop + tear down the driver. Safe to call if never started.
     void stop();
 
+    // Lightweight halt/restart of conversions on the EXISTING handle (does NOT
+    // deinit or recreate it, unlike stop()/begin()). Use to bracket a main-loop
+    // stall — LittleFS writes, decay-LUT rebuilds — that would otherwise overflow
+    // the DMA store buffer and wedge the sampler. Safe to call if never started.
+    void pause();
+    void resume();
+
     // Non-blocking: copy up to bufLenBytes of newly converted raw bytes into buf.
     // Returns the number of bytes written (0 if nothing new). The returned length
     // is always a multiple of kSampleBytes.
