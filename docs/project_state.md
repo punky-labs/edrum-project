@@ -32,6 +32,41 @@ process after a Stage 2a session burned hours/tokens on code-reading and guessin
 - **Floating (unplugged) jacks read 12–17 noise** (high-impedance antenna pickup);
   **populated jacks read ~4.** Empty jacks generate phantom hits. Disable unused inputs
   (`InputConfig.enabled` / serial `w <i> enable 0`) or plug them when testing.
+- **Head/rim GPIO assignment was backwards from board bring-up until 2026-07-06.**
+  `kHeadCh`/`kRimCh` in `main_esp32s3.cpp` had tip/ring reversed relative to the
+  actual PCB — confirmed via single-piezo pads (KD-80, which cannot physically
+  produce a rim signal) on jacks 0, 1, and 3: real signal consistently landed on
+  the GPIO labelled "rim", not "head". The ESP32-S3 GPIO-to-ADC1-channel formula
+  itself (`channel = gpio - 1`) is confirmed correct against the datasheet — this
+  was a labelling swap in firmware, not an ADC bug, not per-jack wiring, and not
+  crosstalk (all three were considered and ruled out with real pad tests before
+  landing on this). If any single-piezo-pad test ever again shows strong signal
+  on the "rim" channel, check this assignment first before assuming a new bug.
+- **PDrumTrigger spike-rejection self-lock (found + fixed 2026-07-06).** The
+  HelloDrum-derived spike-rejection filter in `PDrumTrigger::sensing()`
+  (`firmware/src/sensing/pdrum/PDrumTrigger.cpp`) stored the REJECTED
+  (substituted) value into its own history (`prevPiezoValue`/`prevPrevPiezoValue`)
+  instead of the true incoming sample. Once two consecutive real samples exceeded
+  `SPIKE_THRESHOLD` (200) from a frozen reference — trivial for a fast piezo
+  attack peaking in the thousands — every subsequent real sample kept comparing
+  against the same stale pair and got rejected again, permanently, producing a
+  "machine-gun" flood of identical max-velocity hits that only released when a
+  sample's delta happened to fall back under threshold by chance. Confirmed with
+  data, not guesswork: added a `spikeRejectCount_` counter (TEMP DIAGNOSTIC
+  pattern) and watched it climb by ~1/sample continuously for the full duration
+  of a live runaway (thousands of rejections in ~2 seconds), while a simultaneous
+  `a` ADC dump on the same channel showed completely normal noise-floor values —
+  cleanly proving the fault was in `PDrumTrigger`'s consumption of the data, not
+  in sampling/hardware. Fix: history now always tracks the true incoming sample
+  (captured before any substitution), applied identically to both head and rim
+  channels. If a similarly-shaped "reject an outlier, substitute a previous
+  value" filter is ever written elsewhere in this codebase, check that its
+  history/state update uses the true input, not the substituted output — this
+  exact self-poisoning pattern is easy to reintroduce.
+  Also worth noting: this reproduced most reliably via a rapid stick-bounce on
+  the pad (many large transients in quick succession), and had never been seen
+  on the old RP2040 build running the same core algorithm — consistent with a
+  fixed `SPIKE_THRESHOLD` tuned for different ADC range/sample-rate hardware.
 - Future debug channel: **WiFi telnet/TCP console** (dev-build-only) replaces the dead
   USB serial RX without clashing with MIDI. See `dev_workflow_plan.md`.
 
@@ -168,8 +203,8 @@ better. BOAL's vision is trigger interface + user's existing software.
 - ADC front-end: 1kΩ series resistors + BAT85 clamp diodes + 1MΩ pull-down
   (22nF caps not yet fitted on interim board — target for next PCB spin)
 - 4 stereo TRS jacks → 8 ADC channels (4 jacks, dual-zone capable)
-  - Tip = head/piezo channel
-  - Ring = rim/switch channel
+  - **Tip = rim/switch channel; Ring = head/piezo channel** (corrected 2026-07-06 —
+    see "Hard-won" note below; was previously documented backwards)
 - 1 mono jack → GPIO1 directly (hi-hat controller, jack 4, stubbed)
 - Stage 2: XIAO ESP32-S3 wireless satellite modules (architecture decided,
   PCB designed, not yet manufactured)
@@ -539,16 +574,14 @@ the full picture. Summary of remaining gaps:
 - version.txt must not be empty — must contain an integer
 - MCP filesystem server: home desktop still points at old Dropbox path —
   needs updating to D:\Dev\eDrum\edrum-project\ after migration
-- **[UNRESOLVED] Hard hit runaway:** On very hard hits (mainly mesh pads),
-  the unit occasionally enters a runaway state firing continuous MIDI notes.
-  Usually cleared by hitting the pad again; occasionally requires USB replug.
-  Suspected cause: ADC saturation at 1023 keeping signal above threshold
-  indefinitely, or loopTimes incrementing without scan-end condition firing.
-  Mitigation planned: watchdog in sensing loop — if loopTimes exceeds ~500
-  iterations, force-reset scan state.
-  To reproduce: arm scope on input 1, floor=50, hit as hard as possible
-  repeatedly; watch serial for continuous [HIT] lines; scope capture just
-  before runaway will show ADC behaviour.
+- **[RESOLVED 2026-07-06] Hard hit runaway:** On very hard hits (mainly mesh pads),
+  the unit occasionally entered a runaway state firing continuous MIDI notes.
+  Usually cleared by hitting the pad again; occasionally required USB replug.
+  This was the exact same underlying bug in both the old pdrum-era code AND its
+  eventual PDrumTrigger reincarnation — see the "PDrumTrigger spike-rejection
+  self-lock" entry under Hardware/debugging constraints above for the confirmed
+  root cause and fix (a self-poisoning history bug in the spike-rejection filter,
+  not ADC saturation or a missing loopTimes watchdog as originally suspected here).
 
 ---
 

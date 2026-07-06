@@ -80,8 +80,14 @@ static TriggerEngine* triggers[NUM_INPUTS];
 
 // ADC channel per input: {headGpio, rimGpio}; -1 = no channel (hi-hat stub).
 // Jacks 0-3: head/piezo + rim; Jack 4: hi-hat controller — stubbed.
-static const int8_t kHeadCh[NUM_INPUTS] = { 2, 4, 6, 8, -1 };
-static const int8_t kRimCh[NUM_INPUTS]  = { 3, 5, 7, 9, -1 };
+// NOTE (2026-07-06): swapped from the original {2,4,6,8}/{3,5,7,9} assignment —
+// confirmed via single-piezo pads (KD-80, which cannot produce a rim signal at
+// all) on jacks 0, 1, and 3 that real signal consistently lands on the HIGHER
+// GPIO of each pair, not the lower one. The ESP32-S3 GPIO-to-ADC1-channel
+// mapping itself is confirmed correct against the datasheet (GPIO2->CH1,
+// GPIO3->CH2, etc.) — this was a head/rim labelling swap, not an ADC bug.
+static const int8_t kHeadCh[NUM_INPUTS] = { 3, 5, 7, 9, -1 };
+static const int8_t kRimCh[NUM_INPUTS]  = { 2, 4, 6, 8, -1 };
 
 // Map a GPIO number to its SampleStream channel index (-1 if no channel).
 static inline int streamCh(int8_t gpio) {
@@ -617,12 +623,14 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d\n",
                          (unsigned long)millis(), i, note, vel, raw_vel, ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
-                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay());
+                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
+                         triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
+                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
             // the noisy serial [HIT] print above is gated; the SysEx event is a
@@ -652,12 +660,14 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d\n",
                          (unsigned long)millis(), i, note, vel, raw_vel, ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
-                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay());
+                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
+                         triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
+                         triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
                 uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };

@@ -154,20 +154,34 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   piezoValue = (int)lroundf(rawHead - dcOffsetHead_);
   rimValue   = (int)lroundf(rawRim  - dcOffsetRim_);
 
-  // Spike rejection — discard single-sample outliers (applied to both channels)
+  // Spike rejection — discard single-sample outliers (applied to both channels).
+  // FIX (confirmed via spikeRejectCount_ data during a real runaway): history
+  // (prevPiezoValue/prevPrevPiezoValue) must always track the TRUE incoming
+  // sample, never the substituted/rejected one. The old code stored the rejected
+  // value into history, which self-poisons: once two consecutive real samples
+  // exceed SPIKE_THRESHOLD from a frozen reference (trivial for a fast piezo
+  // attack peaking in the thousands), every subsequent real sample keeps getting
+  // compared against the same stale pair and rejected again, forever — confirmed
+  // by watching spikerej climb continuously (every single sample) for the full
+  // duration of a real runaway, only releasing when a sample's delta happened to
+  // fall back under threshold by chance.
+  const int trueIncomingPiezo = piezoValue;
   if (abs(piezoValue - prevPiezoValue) > SPIKE_THRESHOLD &&
       abs(piezoValue - prevPrevPiezoValue) > SPIKE_THRESHOLD) {
       piezoValue = prevPiezoValue;
+      spikeRejectCount_++;   // TEMP DIAGNOSTIC (runaway investigation)
   }
   prevPrevPiezoValue = prevPiezoValue;
-  prevPiezoValue     = piezoValue;
+  prevPiezoValue     = trueIncomingPiezo;
 
   if (abs(rimValue - prevRimValue) > SPIKE_THRESHOLD &&
       abs(rimValue - prevPrevRimValue) > SPIKE_THRESHOLD) {
       rimValue = prevRimValue;
   }
   prevPrevRimValue = prevRimValue;
-  prevRimValue     = rimValue;
+  prevRimValue     = (int)lroundf(rawRim - dcOffsetRim_);   // FIX: track true incoming sample, same as head
+
+  lastPiezoAfterDc_ = piezoValue;   // TEMP DIAGNOSTIC (runaway investigation)
 
   // NOTE: hit/hitRim/choke are reset per-BLOCK in processBlock(), not here, so a hit
   // firing on any sample latches until main consumes it after the block.

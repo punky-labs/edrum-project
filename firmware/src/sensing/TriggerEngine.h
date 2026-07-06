@@ -64,6 +64,13 @@ public:
     virtual float getDebugXFilt()      const { return -1.0f; }
     virtual float getDebugXFiltDecay() const { return -1.0f; }
 
+    // TEMP DIAGNOSTIC (PDrumTrigger runaway investigation): state-machine internals
+    // for the HelloDrum-derived engine, since it shares none of the fields above.
+    virtual int   getDebugLoopTimes()     const { return -1; }
+    virtual float getDebugPiezoAfterDc()  const { return -1.0f; }
+    virtual float getDebugDcOffsetHead()  const { return -1.0f; }
+    virtual int   getDebugSpikeRejects()  const { return -1; }
+
     // Configuration — applied from g_inputs[] by applyConfig()
     virtual void setPadType(uint8_t t)               = 0;
     virtual void setHeadThreshold(uint16_t v)        = 0;

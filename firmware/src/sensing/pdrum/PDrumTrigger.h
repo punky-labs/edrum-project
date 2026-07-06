@@ -80,6 +80,12 @@ public:
   // convention as PDrum2Trigger. main maps it: crossingAbs = blockEndAbs - snap.
   uint32_t getTriggerSnap() const override { return triggerBack_; }
 
+  // TEMP DIAGNOSTIC (runaway investigation).
+  int   getDebugLoopTimes()    const override { return loopTimes; }
+  float getDebugPiezoAfterDc() const override { return (float)lastPiezoAfterDc_; }
+  float getDebugDcOffsetHead() const override { return dcOffsetHead_; }
+  int   getDebugSpikeRejects() const override { return spikeRejectCount_; }
+
   void setPadType(uint8_t t)             override { padType           = t; }
   void setHeadThreshold(uint16_t v)      override { headThreshold     = v; }
   void setHeadSensitivity(uint16_t v)    override { headSensitivity   = v; }
@@ -135,6 +141,11 @@ private:
   int prevPrevPiezoValue = 0;
   int prevRimValue       = 0;
   int prevPrevRimValue   = 0;
+
+  // TEMP DIAGNOSTIC (runaway investigation, remove once resolved): piezoValue
+  // after DC-offset removal + spike rejection, captured every sensing() call.
+  int lastPiezoAfterDc_ = 0;
+  int spikeRejectCount_ = 0;   // cumulative count of the spike-reject branch firing
 };
 
 
