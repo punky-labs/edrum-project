@@ -1,0 +1,18 @@
+
+=== Session started 2026-07-11T12:49:06.759179 (192.168.1.168:23) ===
+[12:49:06.763] [dev] eDrum telnet console
+[12:49:08.297] [Config]
+[12:49:08.299]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=1 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:49:08.306]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:49:08.308]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:49:08.308]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:49:08.310]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:49:10.358] [SysEx TX] F0 00 7D 00 05 03 00 00 7F 7F F7
+[12:49:10.375] [SysEx TX] F0 00 7D 00 05 03 00 00 7F 7F F7
+[12:49:10.384] [SysEx TX] F0 00 7D 00 05 03 00 00 7F 7F F7
+[12:49:10.402] [SysEx TX] F0 00 7D 00 05 03 00 00 2A 2A F7
+[12:49:10.412] [SysEx TX] F0 00 7D 00 05 03 00 00 19 19 F7
+[12:49:10.428] [SysEx TX] F0 00 7D 00 05 03 00 00 0D 0D F7
+[12:49:10.458] [SysEx TX] F0 00 7D 00 05 03 00 00 04 04 F7
+[12:49:10.475] [SysEx TX] F0 00 7D 00 05 03 00 00 01 01 F7
+=== Session ended 2026-07-11T12:49:13.479555 ===

@@ -102,6 +102,10 @@ static void applyConfig() {
         triggers[i]->setChokeThreshold(g_inputs[i].chokeThreshold);
         triggers[i]->setChokeEnabled(g_inputs[i].chokeEnabled);
         triggers[i]->setRetriggerTime(g_inputs[i].retriggerTime);
+        // v3 tunables (telnet-`w` only; not in SysEx)
+        triggers[i]->setScanMargin(g_inputs[i].scanMargin);
+        triggers[i]->setSettleWaitMs(g_inputs[i].settleWaitMs);
+        triggers[i]->setEmaAlphaPct(g_inputs[i].emaAlpha);
         triggers[i]->setHeadThreshold(g_inputs[i].threshold);
         triggers[i]->setHeadSensitivity(g_inputs[i].headSensitivity);
         triggers[i]->setScanTime(g_inputs[i].scanTime);
@@ -170,7 +174,7 @@ static void printHelp() {
     DevLog.println("  a=toggle ADC dump  d=toggle hit debug print  m=toggle diag mode (detection+MIDI off)");
     DevLog.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
     DevLog.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
-    DevLog.println("  params: thresh sens scan mask retrig type ratio chokethresh choke enable");
+    DevLog.println("  params: thresh sens scan mask retrig scanmargin settlewait ema type ratio chokethresh choke enable");
 }
 
 static bool g_adcDump = false;  // ADC auto-dump off by default now (was on for
@@ -222,6 +226,7 @@ static void handleSerial(char cmd) {
                 DevLog.printf("  [%d] en=%d type=%d note=%d ch=%d z2note=%d z2ch=%d"
               " thresh=%d sens=%d scan=%d mask=%d"
               " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d"
+              " scanmargin=%d settlewait=%d ema=%d"
               " seeds=%d builds=%d\n",
                     i,
                     (int)g_inputs[i].enabled,
@@ -233,6 +238,7 @@ static void handleSerial(char cmd) {
                     g_inputs[i].rimRatioThreshold, g_inputs[i].chokeThreshold,
                     (int)g_inputs[i].chokeEnabled,
                     g_inputs[i].velocityCurve, g_inputs[i].retriggerTime,
+                    g_inputs[i].scanMargin, g_inputs[i].settleWaitMs, g_inputs[i].emaAlpha,
                     triggers[i] ? triggers[i]->getDebugSeedCount()  : -1,
                     triggers[i] ? triggers[i]->getDebugBuildCount() : -1);
             }
@@ -316,6 +322,9 @@ static void handleSerial(char cmd) {
                 else if (p == "scan")       { g_inputs[inp].scanTime          = (uint16_t)val; }
                 else if (p == "mask")       { g_inputs[inp].maskTime          = (uint16_t)val; }
                 else if (p == "retrig")     { g_inputs[inp].retriggerTime     = (uint16_t)val; }
+                else if (p == "scanmargin") { g_inputs[inp].scanMargin        = (uint16_t)val; }
+                else if (p == "settlewait") { g_inputs[inp].settleWaitMs      = (uint16_t)val; }
+                else if (p == "ema")        { g_inputs[inp].emaAlpha          = (uint16_t)val; }
                 else if (p == "type")       { g_inputs[inp].padType           = (uint8_t)val;  }
                 else if (p == "ratio")      { g_inputs[inp].rimRatioThreshold = (uint16_t)val; }
                 else if (p == "chokethresh"){ g_inputs[inp].chokeThreshold    = (uint16_t)val; }
@@ -333,7 +342,7 @@ static void handleSerial(char cmd) {
                 }
             } else {
                 DevLog.println("[w] Usage: w <input> <param> <value>");
-                DevLog.println("[w] params: thresh sens scan mask retrig type ratio chokethresh choke enable");
+                DevLog.println("[w] params: thresh sens scan mask retrig scanmargin settlewait ema type ratio chokethresh choke enable");
             }
             break;
         }
@@ -624,16 +633,19 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d peakidx=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d retrigrej=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d rcstate=%d lcp=%d refrise=%d scanexit=%d confirms=%d scandur=%d\n",
                          (unsigned long)millis(), i, note, vel, raw_vel,
-                         triggers[i]->getVelocityRaw(), triggers[i]->getLastPeakIdx(), ch,
+                         triggers[i]->getVelocityRaw(), ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
                          triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
                          triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
                          triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
-                         triggers[i]->getDebugRetriggerRejects());
+                         triggers[i]->getDebugRcState(), triggers[i]->getDebugLastConfirmedPeak(),
+                         (int)triggers[i]->getDebugRefRising(),
+                         triggers[i]->getDebugScanExit(), triggers[i]->getDebugScanConfirms(),
+                         triggers[i]->getDebugScanDurMs());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
             // the noisy serial [HIT] print above is gated; the SysEx event is a
@@ -663,16 +675,19 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d peakidx=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d retrigrej=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d rcstate=%d lcp=%d refrise=%d scanexit=%d confirms=%d scandur=%d\n",
                          (unsigned long)millis(), i, note, vel, raw_vel,
-                         triggers[i]->getVelocityRimRaw(), triggers[i]->getLastPeakIdx(), ch,
+                         triggers[i]->getVelocityRimRaw(), ch,
                          triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
                          triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
                          triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
                          triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
                          triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
                          triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
-                         triggers[i]->getDebugRetriggerRejects());
+                         triggers[i]->getDebugRcState(), triggers[i]->getDebugLastConfirmedPeak(),
+                         (int)triggers[i]->getDebugRefRising(),
+                         triggers[i]->getDebugScanExit(), triggers[i]->getDebugScanConfirms(),
+                         triggers[i]->getDebugScanDurMs());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
                 uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
@@ -701,16 +716,19 @@ void loop() {
             if (!g_serialQuiet) DevLog.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
         }
 
-        // TEMP DIAGNOSTIC (retrigger-cancel validation): a rejected hit produces no
-        // MIDI/hit event at all, so this is the only visibility into what actually
-        // got rejected and why (peak-timing detail, not just a running count).
-        if (g_hitDebug && !g_adcDump && triggers[i]->hasReject()) {
-            DevLog.printf("[REJECT] t=%lu i=%d peakidx=%d velraw=%d retrig_cutoff=%d\n",
+        // TEMP DIAGNOSTIC (retrigger-cancel v2): the MONITOR phase exits are
+        // momentary and produce no MIDI, so latch + print them once. exit: 0=natural
+        // (decayed to threshold), 1=hardcap (900ms backstop), 2=newstrike (a genuine
+        // new hit mid-monitor → a fresh [HIT] follows). lcp/dur are the reference
+        // value and monitor duration at the exit.
+        if (g_hitDebug && !g_adcDump && triggers[i]->hasRetrigEvent()) {
+            DevLog.printf("[RCEXIT] t=%lu i=%d exit=%d lcp=%d dur=%dms margin=%d\n",
                           (unsigned long)millis(), i,
-                          triggers[i]->getLastRejectPeakIdx(),
-                          triggers[i]->getLastRejectVelocityRaw(),
+                          triggers[i]->getLastRetrigExit(),
+                          triggers[i]->getLastRetrigExitLcp(),
+                          triggers[i]->getLastRetrigExitDurMs(),
                           (int)g_inputs[i].retriggerTime);
-            triggers[i]->clearReject();
+            triggers[i]->clearRetrigEvent();
         }
     }
 }

@@ -1,0 +1,25 @@
+
+=== Session started 2026-07-07T19:21:07.570744 (192.168.1.168:23) ===
+[19:21:07.573] [dev] eDrum telnet console
+[19:21:11.186] [DBG] hit output ON
+[19:21:11.189] [RCEXIT] t=85728 i=0 exit=0 lcp=5 dur=8ms margin=5
+[19:21:11.194] [RCEXIT] t=85731 i=3 exit=0 lcp=156 dur=0ms margin=50
+[19:21:18.198] [HIT] t=92735 i=0 note=38 vel=25 raw=25 truepeak=651 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=808.0 dchead=30.3 spikerej=15 rcstate=2 lcp=651 refrise=0
+[19:21:18.207] [SysEx TX] F0 00 7D 00 05 03 00 00 19 19 F7
+[19:21:18.254] [RCEXIT] t=92794 i=0 exit=2 lcp=651 dur=0ms margin=5
+[19:21:18.262] [HIT] t=92799 i=0 note=38 vel=46 raw=46 truepeak=1179 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=572.0 dchead=156.6 spikerej=133 rcstate=2 lcp=1179 refrise=1
+[19:21:18.284] [SysEx TX] F0 00 7D 00 05 03 00 00 2E 2E F7
+[19:21:18.334] [RCEXIT] t=92874 i=0 exit=0 lcp=19 dur=16ms margin=5
+[19:21:18.352] [HIT] t=92890 i=0 note=38 vel=1 raw=1 truepeak=21 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=-157.0 dchead=157.0 spikerej=133 rcstate=2 lcp=21 refrise=0
+[19:21:18.390] [SysEx TX] F0 00 7D 00 05 03 00 00 01 01 F7
+[19:21:18.417] [RCEXIT] t=92950 i=0 exit=0 lcp=21 dur=0ms margin=5
+[19:22:45.765] [Config]
+[19:22:45.767]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=3 mask=57 ratio=40 chokethresh=50 choke=1 curve=0 retrig=5 seeds=-1 builds=-1
+[19:22:45.773]   [1] en=0 type=1 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[19:22:45.774]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[19:22:45.774]   [3] en=1 type=2 note=36 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[19:22:45.777]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[19:34:19.336] [HIT] t=873827 i=3 note=36 vel=127 raw=127 truepeak=4091 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=1122.0 dchead=26.8 spikerej=31 rcstate=2 lcp=4091 refrise=0
+[19:34:19.345] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[19:34:20.255] [RCEXIT] t=874809 i=3 exit=1 lcp=4091 dur=902ms margin=50
+=== Session ended 2026-07-07T19:50:00.377781 ===

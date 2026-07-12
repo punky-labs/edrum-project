@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -64,6 +65,95 @@ _COLOR_AMBER = "#f59e0b"
 BAUD_RATE = 115200
 
 
+class _ScopeParser:
+    """Line-by-line state machine for the firmware's [SCOPE] / T,H,R / CSV dump
+    format. Extracted so BOTH the live serial reader and the log-file loader parse
+    exactly the same protocol from a single implementation (the live path used to
+    inline this in _SerialReader.run()).
+
+    Stateful — feed() one already-decoded, prefix-free line at a time; it returns a
+    list of events, in order:
+        ("capture", meta: dict, head: list[int], rim: list[int])
+        ("line",    text: str)   # pass-through, non-scope line
+        ("adc",)                 # an [ADC] line was seen (device ADC dump active)
+
+    The caller decides what to do with each event (emit a Qt signal on the live
+    path; collect captures on the file path). Behaviour is identical to the old
+    inline loop, so the live path is unchanged.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._state = "IDLE"
+        self._meta: dict = {}
+        self._head: list[int] = []
+        self._rim:  list[int] = []
+        self._expected = 0
+
+    def feed(self, line: str) -> list:
+        events: list = []
+
+        if line.startswith("[SCOPE]"):
+            # Flush any in-progress capture before starting a new one
+            if self._state == "READING_DATA" and self._head:
+                events.append(("capture", self._meta, list(self._head), list(self._rim)))
+            self._meta = {}
+            self._head = []
+            self._rim  = []
+            for part in line.split()[1:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    try:
+                        self._meta[k] = int(v)
+                    except ValueError:
+                        self._meta[k] = v
+            self._expected = self._meta.get("samples", 200)
+            self._state = "READING_HEADER"
+
+        elif line == "T,H,R" and self._state == "READING_HEADER":
+            self._state = "READING_DATA"
+
+        elif self._state == "READING_DATA":
+            parts = line.split(",")
+            if len(parts) == 3:
+                try:
+                    h = int(parts[1])
+                    r = int(parts[2])
+                except ValueError:
+                    events.append(("line", line))
+                else:
+                    self._head.append(h)
+                    self._rim.append(r)
+                    if len(self._head) >= self._expected:
+                        events.append(("capture", self._meta,
+                                       list(self._head), list(self._rim)))
+                        self._head = []
+                        self._rim  = []
+                        self._state = "IDLE"
+            else:
+                events.append(("line", line))
+
+        else:
+            if "[ADC]" in line:
+                events.append(("adc",))
+            events.append(("line", line))
+
+        return events
+
+    def finish(self) -> list:
+        """Flush a capture still in progress at end-of-input. Only the file loader
+        calls this (the live reader just stops its thread); additive, so live
+        behaviour is unaffected. The flushed capture will be sub-`samples` length,
+        which the file loader treats as malformed/partial."""
+        events: list = []
+        if self._state == "READING_DATA" and self._head:
+            events.append(("capture", self._meta, list(self._head), list(self._rim)))
+        self.reset()
+        return events
+
+
 class _SerialReader(QThread):
     """Reads lines from a serial port; emits scope captures and pass-through lines."""
 
@@ -80,11 +170,7 @@ class _SerialReader(QThread):
         self._running = False
 
     def run(self) -> None:
-        state              = "IDLE"
-        meta: dict         = {}
-        head_samples: list[int] = []
-        rim_samples:  list[int] = []
-        expected           = 0
+        parser = _ScopeParser()
 
         while self._running:
             try:
@@ -100,63 +186,42 @@ class _SerialReader(QThread):
             if not line:
                 continue
 
-            if line.startswith("[SCOPE]"):
-                # Flush any in-progress capture before starting a new one
-                if state == "READING_DATA" and head_samples:
-                    self.scope_capture.emit(meta, list(head_samples), list(rim_samples))
-                meta         = {}
-                head_samples = []
-                rim_samples  = []
-                for part in line.split()[1:]:
-                    if "=" in part:
-                        k, v = part.split("=", 1)
-                        try:
-                            meta[k] = int(v)
-                        except ValueError:
-                            meta[k] = v
-                expected = meta.get("samples", 200)
-                state = "READING_HEADER"
-
-            elif line == "T,H,R" and state == "READING_HEADER":
-                state = "READING_DATA"
-
-            elif state == "READING_DATA":
-                parts = line.split(",")
-                if len(parts) == 3:
-                    try:
-                        head_samples.append(int(parts[1]))
-                        rim_samples.append(int(parts[2]))
-                    except ValueError:
-                        self.serial_line.emit(line)
-                    else:
-                        if len(head_samples) >= expected:
-                            self.scope_capture.emit(
-                                meta, list(head_samples), list(rim_samples)
-                            )
-                            head_samples = []
-                            rim_samples  = []
-                            state = "IDLE"
-                else:
-                    self.serial_line.emit(line)
-
-            else:
-                if "[ADC]" in line:
+            for event in parser.feed(line):
+                kind = event[0]
+                if kind == "capture":
+                    self.scope_capture.emit(event[1], event[2], event[3])
+                elif kind == "adc":
                     self.adc_warning.emit()
-                self.serial_line.emit(line)
+                else:  # "line"
+                    self.serial_line.emit(event[1])
 
     # Config response helpers
     @staticmethod
-    def _parse_config_line(line: str, input_idx: int) -> Optional[dict]:
-        """Parse a [Config] input line e.g. '  [0] note=36 thresh=30 ...'
-        Returns dict of int values if it matches input_idx, else None."""
-        import re
+    def _parse_config_row(line: str) -> Optional[tuple[int, dict]]:
+        """Parse one [Config] input row, e.g. '  [0] note=36 thresh=30 scan=3 ...'.
+        Returns (input_number, {key: int_value, ...}), or None if the line is not a
+        config row. Single shared parsing primitive used by BOTH the live 's'
+        handler (via _parse_config_line) and the log-file loader, so the two parse
+        the exact same format."""
         m = re.match(r"\s*\[(\d+)\]", line)
-        if not m or int(m.group(1)) != input_idx:
+        if not m:
             return None
         result: dict = {}
         for kv in re.finditer(r"(\w+)=(\d+)", line):
             result[kv.group(1)] = int(kv.group(2))
-        return result if result else None
+        if not result:
+            return None
+        return int(m.group(1)), result
+
+    @staticmethod
+    def _parse_config_line(line: str, input_idx: int) -> Optional[dict]:
+        """Parse a [Config] input line e.g. '  [0] note=36 thresh=30 ...'
+        Returns dict of int values if it matches input_idx, else None. Behaviour
+        unchanged (live 's' path); now delegates to _parse_config_row."""
+        row = _SerialReader._parse_config_row(line)
+        if row is None or row[0] != input_idx:
+            return None
+        return row[1]
 
 
 class ScopeWindow(QMainWindow):
@@ -170,11 +235,22 @@ class ScopeWindow(QMainWindow):
         self._serial:   Optional["serial.Serial"] = None
         self._reader:   Optional[_SerialReader]   = None
         self._captures: list[tuple[dict, list, list]] = []
+        # Per-capture overlay config, index-parallel to _captures:
+        #   None = live capture   → fall back to the global _pad_config (unchanged
+        #                           live behaviour)
+        #   {}   = loaded capture → no applicable [Config] block; draw no overlay
+        #   dict = loaded capture → that capture's own scan/mask/thresh config
+        self._capture_configs: list[Optional[dict]] = []
         self._armed:    bool = False
         self._pad_config: dict = {}           # current pad config from 's' command
         self._reading_config: bool = False    # True while parsing [Config] block
         self._auto_save_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "logs", "scope")
+        )
+        # telnet_logger.py writes its session logs here (project-root/tools/logs);
+        # used as the default directory for the "Load Log…" file picker.
+        self._tools_logs_dir = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "tools", "logs")
         )
 
         self._build_ui()
@@ -298,6 +374,16 @@ class ScopeWindow(QMainWindow):
         self._export_btn.setFixedWidth(88)
         self._export_btn.clicked.connect(self._on_export_csv)
         bar.addWidget(self._export_btn)
+
+        # Load captures from a saved telnet_logger.py session log. Works offline —
+        # no serial connection required (deliberately always enabled).
+        self._load_log_btn = QPushButton("Load Log…")
+        self._load_log_btn.setFixedWidth(84)
+        self._load_log_btn.setToolTip(
+            "Load [SCOPE] captures from a saved telnet_logger.py log file"
+        )
+        self._load_log_btn.clicked.connect(self._on_load_log)
+        bar.addWidget(self._load_log_btn)
 
         self._autosave_cb = QCheckBox("Auto-save")
         bar.addWidget(self._autosave_cb)
@@ -578,6 +664,7 @@ class ScopeWindow(QMainWindow):
 
     def _on_clear(self) -> None:
         self._captures.clear()
+        self._capture_configs.clear()
         self._session_list.clear()
         if _PG:
             self._head_curve.setData([], [])
@@ -588,15 +675,24 @@ class ScopeWindow(QMainWindow):
     # Incoming data
     # ------------------------------------------------------------------
 
-    def _on_scope_capture(self, meta: dict, head: list, rim: list) -> None:
-        idx       = len(self._captures)
+    def _add_capture(self, meta: dict, head: list, rim: list,
+                     ts: Optional[str] = None,
+                     config: Optional[dict] = None) -> int:
+        """Append a capture to the session log and plot it. Shared by the live
+        serial path and the log-file loader so a loaded capture behaves exactly
+        like one that arrived live. ts defaults to now() (live); the file loader
+        passes the log's own timestamp. config is the per-capture overlay config
+        (see _capture_configs) — None for live captures."""
+        idx = len(self._captures)
         self._captures.append((meta, head, rim))
+        self._capture_configs.append(config)
 
         decision  = str(meta.get("decision", "?"))
         head_peak = int(meta.get("head_peak", 0))
         rim_peak  = int(meta.get("rim_peak", 0))
         inp       = int(meta.get("input", 0))
-        ts        = datetime.now().strftime("%H:%M:%S")
+        if ts is None:
+            ts = datetime.now().strftime("%H:%M:%S")
 
         text  = (
             f"#{idx + 1:>3}  [{decision:<3}]  "
@@ -610,7 +706,10 @@ class ScopeWindow(QMainWindow):
         self._session_list.scrollToBottom()
 
         self._plot_capture(idx)
+        return idx
 
+    def _on_scope_capture(self, meta: dict, head: list, rim: list) -> None:
+        idx = self._add_capture(meta, head, rim)
         if self._autosave_cb.isChecked():
             self._auto_save(idx)
 
@@ -730,8 +829,32 @@ class ScopeWindow(QMainWindow):
         trigger_ms = 100 * MS_PER_SAMPLE
         self._trigger_line.setValue(trigger_ms)
         self._plot_widget.getPlotItem().getAxis("bottom").setLabel("Time (ms)")
-        if self._pad_config:
-            self._apply_pad_config(self._pad_config)
+
+        # Scan/Mask/Threshold overlay. A loaded capture carries its own config (dict)
+        # or an explicit "no config" ({}); a live capture (None) uses the global
+        # _pad_config from "Load Settings" — the original, unchanged live behaviour.
+        entry = self._capture_configs[idx] if idx < len(self._capture_configs) else None
+        if entry is None:
+            if self._pad_config:
+                self._apply_pad_config(self._pad_config)
+        elif entry:
+            self._apply_pad_config(entry)
+        else:
+            self._hide_overlays()
+
+    def _hide_overlays(self) -> None:
+        """Blank the settings-bar labels and hide the config-driven chart overlays,
+        for a loaded capture that has no applicable [Config] block. Reuses the
+        existing overlay items — only toggles their visibility."""
+        self._thresh_lbl.setText("—")
+        self._scan_lbl.setText("—")
+        self._mask_lbl.setText("—")
+        self._retrig_lbl.setText("—")
+        if not _PG:
+            return
+        self._thresh_line.setVisible(False)
+        self._scan_region.setVisible(False)
+        self._mask_region.setVisible(False)
 
     def _on_log_item_clicked(self, item: QListWidgetItem) -> None:
         idx = item.data(Qt.ItemDataRole.UserRole)
@@ -776,6 +899,156 @@ class ScopeWindow(QMainWindow):
             w.writerow(["sample", "head", "rim"])
             for s, (h, r) in enumerate(zip(head, rim)):
                 w.writerow([s, h, r])
+
+    # ------------------------------------------------------------------
+    # Log file loading (offline — no serial connection needed)
+    # ------------------------------------------------------------------
+
+    _LOG_PREFIX_RE = re.compile(r"^\[(\d{2}:\d{2}:\d{2}\.\d{3})\]\s(.*)$")
+
+    @classmethod
+    def _split_log_prefix(cls, line: str) -> tuple[Optional[str], str]:
+        """Split telnet_logger.py's per-line '[HH:MM:SS.mmm] ' timestamp prefix.
+        Returns (timestamp, remainder). If the line has no such prefix, returns
+        (None, line unchanged). The digit-only time pattern means a real
+        '[SCOPE] ...' line is never mistaken for a prefix (S is not a digit) —
+        the parser never sees the prefix at all."""
+        m = cls._LOG_PREFIX_RE.match(line)
+        if m:
+            return m.group(1), m.group(2)
+        return None, line
+
+    def _on_load_log(self) -> None:
+        start_dir = self._tools_logs_dir if os.path.isdir(self._tools_logs_dir) else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Scope Log File", start_dir,
+            "Log files (*.log *.txt);;All files (*)"
+        )
+        if not path:
+            return
+        self._load_log_file(path)
+
+    def _load_log_file(self, path: str) -> None:
+        """Parse every [SCOPE] capture in a saved telnet_logger.py log and add each
+        to the session log, reusing the exact live parser (_ScopeParser) and the
+        live session-log/plot path (_add_capture).
+
+        Also parses any [Config] blocks (same format the live 's' handler reads, via
+        the shared _parse_config_row) so each capture is overlaid with the scan/mask
+        that was actually in effect: a capture uses the most recent [Config] block
+        that PRECEDES it in the file, matched on the capture's own input number. A
+        capture with no preceding block, or whose input has no row in that block,
+        loads fine but draws no overlay (never a later block applied retroactively).
+        Malformed/partial captures are skipped and reported."""
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = f.readlines()
+        except OSError as exc:
+            self._serial_output_append(
+                f"⚠ could not read {os.path.basename(path)}: {exc}", color=_COLOR_AMBER
+            )
+            return
+
+        parser = _ScopeParser()
+        loaded = 0
+        overlaid = 0
+        malformed = 0
+        config_block_count = 0
+        last_ts: Optional[str] = None
+
+        # current_config: {input_num: cfg_dict} from the most recently COMPLETED
+        # [Config] block seen so far. pending_config: snapshot taken at the active
+        # capture's [SCOPE] header, so a capture always resolves against the block
+        # that preceded it — never one printed later in the file.
+        current_config: dict = {}
+        pending_config: dict = {}
+        in_config = False
+        building: Optional[dict] = None
+
+        def _commit_config() -> None:
+            nonlocal in_config, building, current_config
+            if building:
+                current_config = building     # rebind (never mutate) so earlier
+            in_config = False                 # pending_config snapshots stay valid
+            building = None
+
+        def _consume(events: list) -> None:
+            nonlocal loaded, overlaid, malformed
+            for event in events:
+                if event[0] != "capture":
+                    continue   # ignore pass-through [HIT]/[ADC]/etc. lines
+                meta, head, rim = event[1], event[2], event[3]
+                expected = meta.get("samples", 200)
+                if not isinstance(expected, int):
+                    expected = 200
+                # A capture is only well-formed if it reached its declared sample
+                # count. Sub-length emits come from a flush (a new [SCOPE] or EOF
+                # interrupting a capture mid-stream) → skip as partial/malformed.
+                if head and len(head) == len(rim) == expected:
+                    inp = meta.get("input", 0)
+                    cfg = pending_config.get(inp) if pending_config else None
+                    if cfg:
+                        overlaid += 1
+                    # {} = "no applicable config" → no overlay (see _plot_capture).
+                    self._add_capture(meta, head, rim, ts=last_ts,
+                                      config=(cfg if cfg else {}))
+                    loaded += 1
+                else:
+                    malformed += 1
+
+        for raw in raw_lines:
+            ts, line = self._split_log_prefix(raw.rstrip("\r\n"))
+
+            # A blank line terminates a [Config] block (mirrors the live handler).
+            if not line:
+                if in_config:
+                    _commit_config()
+                continue
+
+            # --- [Config] block accumulation (file-level; shared row parsing) ---
+            if line.startswith("[Config]"):
+                _commit_config()             # close any prior unterminated block
+                in_config = True
+                building = {}
+                config_block_count += 1
+                continue
+            if in_config:
+                row = _SerialReader._parse_config_row(line)
+                if row is not None:
+                    building[row[0]] = row[1]
+                    continue
+                # A non-row line ends the block here (these logs terminate a block
+                # with the next console line, e.g. '[w] ...' / '[eDrum] ...', not a
+                # blank line); commit, then fall through to handle this line.
+                _commit_config()
+
+            # --- capture parsing ---
+            # Remember the header timestamp so the session-log row shows when the hit
+            # happened, and snapshot the config in effect for THIS capture.
+            is_header = bool(ts) and line.startswith("[SCOPE]") and "samples=" in line
+            if is_header:
+                last_ts = ts
+            _consume(parser.feed(line))
+            if is_header:
+                pending_config = current_config
+        _consume(parser.finish())
+
+        fname = os.path.basename(path)
+        if loaded:
+            msg = f"Loaded {loaded} capture(s) from {fname}"
+            if malformed:
+                msg += f"  ({malformed} malformed/partial skipped)"
+            if config_block_count == 0:
+                msg += "  — no [Config] block in file; no scan/mask overlay"
+            else:
+                msg += (f"  — {overlaid}/{loaded} with scan/mask overlay "
+                        f"from {config_block_count} [Config] block(s)")
+            self._serial_output_append(msg, color=_COLOR_HEAD)
+        else:
+            msg = f"No valid [SCOPE] captures found in {fname}"
+            if malformed:
+                msg += f"  ({malformed} malformed/partial skipped)"
+            self._serial_output_append(msg, color=_COLOR_AMBER)
 
     # ------------------------------------------------------------------
     # Cleanup

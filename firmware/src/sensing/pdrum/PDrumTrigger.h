@@ -85,18 +85,32 @@ public:
   float getDebugPiezoAfterDc() const override { return (float)lastPiezoAfterDc_; }
   float getDebugDcOffsetHead() const override { return dcOffsetHead_; }
   int   getDebugSpikeRejects() const override { return spikeRejectCount_; }
-  // TEMP DIAGNOSTIC (retrigger-cancel validation): count of hits rejected for a
-  // too-slow attack (likely a mechanical rebound, not a genuine strike).
-  int   getDebugRetriggerRejects() const override { return retriggerRejectCount_; }
 
-  bool  hasReject()                override { return rejectPending_; }
-  void  clearReject()              override { rejectPending_ = false; }
-  int   getLastRejectPeakIdx()    const override { return lastRejectPeakIdx_; }
-  int   getLastRejectVelocityRaw() const override { return lastRejectVelocityRaw_; }
-  // TEMP DIAGNOSTIC: peak-sample-index for whichever hit/rejection most recently
-  // occurred (head channel) — valid immediately after hasHit()/hasReject() either
-  // fires, since it's only overwritten at the START of the next scan.
-  int   getLastPeakIdx() const override { return peakSampleIdx; }
+  // TEMP DIAGNOSTIC (retrigger-cancel v2): live state-machine snapshot so the
+  // whole IDLE→SCAN→MASK→MONITOR cycle can be watched on [HIT]/[RIM] prints.
+  //   rcState: 0=IDLE 1=SCAN 2=MASK 3=MONITOR (see RcState below).
+  //   lastConfirmedPeak: the reference the new-strike bar is measured against.
+  //   refRising: reference-tracking sub-state (true=RISING, false=FALLING).
+  int   getDebugRcState()           const override { return (int)rcState_; }
+  int   getDebugLastConfirmedPeak() const override { return lastConfirmedPeak_; }
+  bool  getDebugRefRising()         const override { return rcTracker_.dir == ExtremumTracker::DIR_RISING; }
+
+  // TEMP DIAGNOSTIC (confirmation-based Scan v3): last-commit detail. A Scan commit
+  // always produces a [HIT]/[RIM], so these ride the existing hit print (no separate
+  // latch needed). scanExit: 0=SETTLE (adaptive) 1=HARDCAP (backstop).
+  int   getDebugScanExit()     const override { return (int)scanLastExit_; }
+  int   getDebugScanConfirms() const override { return scanLastConfirms_; }
+  int   getDebugScanDurMs()    const override { return (int)scanLastDurMs_; }
+
+  // TEMP DIAGNOSTIC (retrigger-cancel v2 event visibility): monitor exits are
+  // momentary and would be missed between debug polls, so they're latched here
+  // (mirrors hasChoke()/clearChoke()). getLastRetrigExit(): 0=NATURAL 1=HARDCAP
+  // 2=NEWSTRIKE (see RcExit). Lcp/DurMs are the values captured at that exit.
+  bool  hasRetrigEvent()                 override { return rcEventPending_; }
+  void  clearRetrigEvent()               override { rcEventPending_ = false; }
+  int   getLastRetrigExit()        const override { return (int)rcLastExit_; }
+  int   getLastRetrigExitLcp()     const override { return rcLastExitLcp_; }
+  int   getLastRetrigExitDurMs()   const override { return (int)rcLastExitDurMs_; }
 
   void setPadType(uint8_t t)             override { padType           = t; }
   void setHeadThreshold(uint16_t v)      override { headThreshold     = v; }
@@ -108,14 +122,44 @@ public:
   void setRimRatioThreshold(uint16_t v)  override { rimRatioThreshold = v; }
   void setChokeThreshold(uint16_t v)     override { chokeThreshold    = v; }
   void setChokeEnabled(bool v)           override { chokeEnabled      = v; }
-  void setRetriggerTime(uint16_t v)      override { maxFastAttackSamples = v; }
+  // Repurposed 'retrig' config field (v2): now the retrigger-cancel MARGIN in raw
+  // ADC counts — the prominence a rise must clear to count as a genuine new peak/
+  // trough (and as a new strike). Was v1's samples-to-peak cutoff.
+  void setRetriggerTime(uint16_t v)      override { retriggerMargin_ = v; }
+  // NEW v3 tunables (telnet-`w` only; not in SysEx). scantime is now Scan's hard-cap.
+  void setScanMargin(uint16_t v)         override { scanMargin_   = v; }
+  void setSettleWaitMs(uint16_t v)       override { settleWaitMs_ = v; }
+  void setEmaAlphaPct(uint16_t v)        override { emaAlphaPct_  = v; }
   uint8_t getNoteHead()    const         override { return noteHead; }
 
 private:
-  // Per-sample detection core (unchanged HelloDrum logic). currentAbsIndex is the
+  // Per-sample detection core (unchanged HelloDrum Scan/Mask logic, plus the v2
+  // retrigger-cancel MONITOR phase after Mask). currentAbsIndex is the
   // SampleStream-absolute index of this sample; recorded at the threshold crossing
   // so scope capture can locate the attack.
   void sensing(int piezoValue, int rimValue, uint32_t currentAbsIndex);
+
+  // Begin a fresh Scan window from the current sample — the same initiation as an
+  // ordinary threshold crossing (used both from IDLE and when the retrigger-cancel
+  // MONITOR detects a genuine new strike). Rim/firstPeak seeding applies to
+  // DUAL_PIEZO only; harmless no-op fields for the other pad types.
+  void startScan(int piezoValue, int rimValue, uint32_t currentAbsIndex);
+
+  // Confirmation-based Scan service (v3): one sample of the per-channel ratchet-UP
+  // peak confirmation. Returns true when Scan has committed (settle or hard-cap) and
+  // the caller must finalize the hit (read scanHeadBest_/scanRimBest_, curve, →MASK).
+  bool serviceScan(int piezoValue, int rimValue);
+
+  // MASK-phase service: hold until masktime elapses since scan end, then enter the
+  // retrigger-cancel MONITOR phase. Mask behaviour itself is unchanged.
+  void serviceMask(int piezoValue);
+
+  // Retrigger-cancel MONITOR service (v2): one sample of (a) the unconditional
+  // new-strike check and (b) the debounced FALLING/RISING reference tracker that
+  // ratchets lastConfirmedPeak_ down as the strike decays. Handles the natural and
+  // hard-cap exits to IDLE internally. Returns true iff a genuine new strike was
+  // detected and the caller must start a fresh Scan window from this sample.
+  bool serviceRetriggerMonitor(int piezoValue);
 
   int curve(int velocityRaw, int threshold, int sensRaw, byte curveType);
 
@@ -139,7 +183,7 @@ private:
 
   uint32_t Fs_ = 8000;   // stored only; timing is millis()-based (see initialize)
 
-  int           loopTimes = 0;
+  int           loopTimes = 0;   // in-scan sample counter (diagnostic only now)
   unsigned long time_hit;
   unsigned long time_end;
 
@@ -155,23 +199,119 @@ private:
   int prevRimValue       = 0;
   int prevPrevRimValue   = 0;
 
-  // Retrigger-cancel: samples-to-peak within the current scan window, so we can
-  // tell a near-instant genuine strike (peak reached in ~1-2 samples, confirmed
-  // in real captures) from a mesh head's own slower mechanical rebound (~7-14
-  // samples). maxFastAttackSamples is the accept/reject cutoff (repurposed
-  // 'retrig' config param). Sample-count based, not millis()-based, since the
-  // real difference is sub-millisecond and millis() can't resolve it.
-  uint16_t maxFastAttackSamples = 5;   // first-pass default, expect to tune
-  int      peakSampleIdx        = 0;
-  int      rimPeakSampleIdx     = 0;
-  int      retriggerRejectCount_ = 0;   // TEMP DIAGNOSTIC
+  // ---- Retrigger-cancel v2 (head channel; see project_state.md "Retrigger-Cancel
+  // Design Spec (v2)"). A genuine 4th state distinct from ordinary IDLE/SCAN: the
+  // MONITOR accept bar (lastConfirmedPeak_ + margin) differs from IDLE's plain
+  // headThreshold, so it cannot be represented as IDLE-with-different-data.
+  enum RcState : uint8_t {
+    RC_IDLE    = 0,   // waiting for a threshold crossing (accept bar = headThreshold)
+    RC_SCAN    = 1,   // scan window open (running max → velocity), unchanged
+    RC_MASK    = 2,   // flat blackout window after scan, unchanged
+    RC_MONITOR = 3    // retrigger-cancel (accept bar = lastConfirmedPeak_ + margin)
+  };
+  enum RcExit     : uint8_t { RC_EXIT_NATURAL = 0, RC_EXIT_HARDCAP = 1, RC_EXIT_NEWSTRIKE = 2 };
 
-  // TEMP DIAGNOSTIC (retrigger-cancel per-event visibility): latch set at the
-  // moment a hit is rejected, cleared once main reads it — same convention as
-  // chokeDetected/clearChoke().
-  bool rejectPending_        = false;
-  int  lastRejectPeakIdx_    = 0;
-  int  lastRejectVelocityRaw_ = 0;
+  // Shared margin-debounced local-extremum tracker (v3). Extracted verbatim from the
+  // v2 MONITOR reference tracker so BOTH mechanisms use ONE implementation, differing
+  // only in what they do with a confirmed extremum:
+  //   MONITOR — ratchet lastConfirmedPeak_ DOWN on each confirmed peak (decay).
+  //   Scan    — ratchet the best peak UP toward the true peak (attack).
+  // Alternates FALLING (track running min; a rise of > margin above it confirms a
+  // TROUGH) and RISING (track running max; a fall of > margin below it confirms a
+  // PEAK). feed() returns the event this sample confirmed; the confirmed value is
+  // left in runMax (peak) / runMin (trough). Direction/action are the caller's.
+  enum RefEvent : uint8_t { REF_NONE = 0, REF_PEAK = 1, REF_TROUGH = 2 };
+  struct ExtremumTracker {
+    // NOTE: enumerators are DIR_-prefixed because Arduino.h defines bare RISING /
+    // FALLING as macros (attachInterrupt modes) — the same reason the v2 MONITOR
+    // state used RC_FALLING/RC_RISING. Do not rename to bare FALLING/RISING.
+    enum Dir : uint8_t { DIR_FALLING = 0, DIR_RISING = 1 };
+    Dir dir    = DIR_FALLING;
+    int runMin = 0;
+    int runMax = 0;
+    void reset(Dir d, int seed) { dir = d; runMin = seed; runMax = seed; }
+    RefEvent feed(int sample, int margin) {
+      if (dir == DIR_FALLING) {
+        if (sample < runMin)               { runMin = sample; }
+        else if (sample > runMin + margin) { dir = DIR_RISING;  runMax = sample; return REF_TROUGH; }
+      } else {  // DIR_RISING
+        if (sample > runMax)               { runMax = sample; }
+        else if (sample < runMax - margin) { dir = DIR_FALLING; runMin = sample; return REF_PEAK; }
+      }
+      return REF_NONE;
+    }
+  };
+
+  RcState    rcState_           = RC_IDLE;
+  int        lastConfirmedPeak_ = 0;         // reference the new-strike bar rides on;
+                                             // seeded to the scan's velocityRaw, then
+                                             // ratcheted DOWN as the strike decays.
+  ExtremumTracker rcTracker_;                // MONITOR's decay peak/trough tracker
+  unsigned long rcMonitorStart_ = 0;         // millis() at MONITOR entry (hard-cap timer)
+
+  // ---- Confirmation-based Scan (v3; see project_state.md "Scan Redesign + EMA
+  // Smoothing"). Each channel ratchets its best peak UP via the shared tracker
+  // above; the HEAD channel drives the settle/hard-cap exit, the rim channel
+  // (DUAL_PIEZO only) is tracked concurrently so ratio discrimination is unchanged.
+  enum ScanExit : uint8_t { SCAN_EXIT_SETTLE = 0, SCAN_EXIT_HARDCAP = 1 };
+  ExtremumTracker scanHeadTrk_;
+  ExtremumTracker scanRimTrk_;
+  int  scanHeadBest_      = 0;         // best confirmed head peak this scan
+  int  scanRimBest_       = 0;         // best confirmed rim peak this scan (DUAL)
+  unsigned long scanSettleSince_ = 0;  // millis() of the last confirmed-peak event
+  bool scanEverConfirmed_ = false;     // gate: no settle-exit before first confirmation
+  int  scanConfirms_      = 0;         // confirmed peaks so far this scan (diagnostic)
+  uint8_t       scanLastExit_     = SCAN_EXIT_SETTLE;  // exit path of the last commit
+  unsigned long scanLastDurMs_    = 0;                 // duration (ms) of the last scan
+  int           scanLastConfirms_ = 0;                 // confirmed peaks in the last scan
+
+  // NEW telnet-`w`-only tunables (v3; NOT in the SysEx protocol — see spec). Member
+  // defaults mirror Config.cpp; applyConfig() overwrites them from g_inputs at runtime.
+  uint16_t scanMargin_   = 40;   // raw ADC counts: prominence to confirm a Scan peak
+  uint16_t settleWaitMs_ = 5;    // ms with no new confirmed peak → commit (settle exit)
+  uint16_t emaAlphaPct_  = 50;   // EMA alpha ×100 (0 or >=100 = smoothing disabled)
+
+  // EMA smoothing state (v3): low-pass half of the approximate band-pass (DC-offset
+  // removal is the high-pass half). Seeded once like the DC baseline; runs AFTER
+  // spike-rejection so a large single-sample glitch is caught raw, not smeared first.
+  float emaHead_   = 0.0f;
+  float emaRim_    = 0.0f;
+  bool  emaSeeded_ = false;
+
+  // Repurposed 'retrig' config param (v2): the shared MONITOR margin, in raw ADC
+  // counts. 0 = retrigger-cancel DISABLED for this input (explicit opt-out handled
+  // in serviceMask()/serviceRetriggerMonitor(), not margin=0 arithmetic). Non-zero
+  // needs real per-pad recorded-waveform calibration (open item). Default 0 (off)
+  // matches Config.cpp; applyConfig() overwrites this from g_inputs at runtime.
+  uint16_t retriggerMargin_ = 0;
+
+  // Hard safety cap: force MONITOR→IDLE this long after entry regardless of decay,
+  // for pads (e.g. KD-80 with a bouncy beater) whose lastConfirmedPeak_ may never
+  // cleanly settle near headThreshold. Generous vs the ~600-700ms PDX-12 rebound
+  // gaps measured so far. Non-user-facing backstop; millis() is fine at this scale.
+  static constexpr unsigned long kRetrigHardCapMs = 900;
+
+  // Seed cap (2026-07-08 fix): lastConfirmedPeak_ is seeded to min(velocityRaw,
+  // kRetrigSeedCap) at scan end, NOT velocityRaw directly. If the initiating hit
+  // clips the 12-bit ADC (~4095, normal on a firm-to-hard hit — confirmed on the
+  // PD-7 at truepeak=4091), an uncapped seed makes the new-strike bar
+  // (lastConfirmedPeak_ + margin) physically unreachable, so no strike however
+  // hard can register for the whole MONITOR window. Capping below the ceiling
+  // keeps that bar achievable, recovering the common case (a moderate-to-hard
+  // second hit that does NOT itself clip). ROUGH PLACEHOLDER — comfortably above
+  // the low-thousands amplitudes measured this week, with headroom below 4095 so
+  // capValue+margin stays achievable; needs real per-pad recorded-waveform
+  // calibration (same open item as margin). Does NOT solve clipped-vs-clipped
+  // (both hits at ~4095 read identically) — an accepted, documented limitation,
+  // not something a cap value can tune around. Non-user-facing.
+  static constexpr int kRetrigSeedCap = 3500;
+
+  // TEMP DIAGNOSTIC (retrigger-cancel v2 event latch): set when a MONITOR exit
+  // fires, cleared once main reads it — same convention as chokeDetected/clearChoke().
+  bool          rcEventPending_  = false;
+  uint8_t       rcLastExit_      = RC_EXIT_NATURAL;
+  int           rcLastExitLcp_   = 0;   // lastConfirmedPeak_ captured at that exit
+  unsigned long rcLastExitDurMs_ = 0;   // MONITOR duration (ms) at that exit
 
   // TEMP DIAGNOSTIC (runaway investigation, remove once resolved): piezoValue
   // after DC-offset removal + spike rejection, captured every sensing() call.

@@ -16,9 +16,14 @@ struct __attribute__((packed)) InputConfig {
                              // phantom hits from antenna noise. Default true.
     uint16_t threshold;      // 0–1023 (ADC range); encode as 2x 7-bit bytes in SysEx
     uint8_t  velocityCurve;
-    uint16_t retriggerTime;  // ms; encode as 2x 7-bit bytes in SysEx
+    uint16_t retriggerTime;  // repurposed as retrigger-cancel MARGIN in raw ADC
+                             // counts (v2); wire format unchanged (2x 7-bit bytes)
+                             // and SysEx label stays 'retrigger time' for
+                             // compatibility. Was v1's samples-to-peak cutoff.
     uint16_t headSensitivity;  // upper ADC bound for velocity scaling; default 1000
-    uint16_t scanTime;         // peak scan window ms; default 10
+    uint16_t scanTime;         // v3: repurposed as confirmation-based Scan's HARD-CAP
+                               // ms (force-commit backstop). Old fixed-window meaning
+                               // retired — same repurposing pattern as retriggerTime.
     uint16_t maskTime;         // post-hit ignore window ms; default 30
     uint16_t rimRatioThreshold;  // DUAL_PIEZO: ratio*100 threshold (e.g. 40 = 0.40 ratio)
     uint16_t chokeThreshold;     // PIEZO_SWITCH_CHOKE: ADC units for switch detection
@@ -54,6 +59,16 @@ struct __attribute__((packed)) InputConfig {
     uint16_t decayEstLenMs;         // ms×10   (40)  [stored, UNUSED until 2b]
     uint16_t decayEstFactDb;        // dB×10   (160) [stored, UNUSED until 2b]
     uint16_t clipCompAmpmapStep;    // ×100    (8   = 0.08) [stored, UNUSED until 2b]
+
+    // ---- v3 Scan-redesign / EMA tunables (2026-07-12). Live-settable via telnet
+    // `w` and LittleFS-persisted like every field above, but DELIBERATELY NOT wired
+    // into the SysEx protocol (telnet-only bootstrap while the values are still being
+    // found — same path `retrig` followed before any UI existed). Appended at the end
+    // of the struct so existing field offsets are unchanged; adding them still grows
+    // the struct, so a LittleFS re-upload (uploadfs) / config reset is required.
+    uint16_t scanMargin;    // raw ADC counts — Scan confirmation prominence
+    uint16_t settleWaitMs;  // ms — Scan settle-exit wait (no new confirmed peak)
+    uint16_t emaAlpha;      // EMA alpha ×100 (0..100); 0 or 100 = smoothing off
 };
 
 struct __attribute__((packed)) Preset {

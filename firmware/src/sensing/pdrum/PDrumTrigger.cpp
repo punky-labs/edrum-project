@@ -77,7 +77,7 @@ PDrumTrigger::PDrumTrigger(byte pin1, byte pin2)
   padType            = 1;    // PIEZO_SWITCH_CHOKE
   headSensitivity    = 800;
   headThreshold      = 20;
-  scantime           = 3;
+  scantime           = 30;   // v3: Scan HARD-CAP ms (was old fixed-window duration)
   masktime           = 80;
   rimRatioThreshold  = 40;
   chokeThreshold     = 50;
@@ -181,7 +181,33 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   prevPrevRimValue = prevRimValue;
   prevRimValue     = (int)lroundf(rawRim - dcOffsetRim_);   // FIX: track true incoming sample, same as head
 
-  lastPiezoAfterDc_ = piezoValue;   // TEMP DIAGNOSTIC (runaway investigation)
+  // EMA smoothing (v3) — the low-pass half of an approximate band-pass (DC-offset
+  // removal above is the high-pass half). Runs AFTER spike-rejection (per the spec's
+  // "Pipeline order (decided)"): a large single-sample glitch is caught raw by
+  // spike-rejection first, not smeared across samples by the EMA. Same raw 0-4095
+  // domain — no rescaling, so thresh/sens/margins all stay meaningful. Seeded once
+  // like the DC baseline. emaAlphaPct 0 or >=100 disables it (100 = alpha 1.0 =
+  // identity; 0 = off) — passthrough, but state stays seeded for a smooth re-enable.
+  if (emaAlphaPct_ > 0 && emaAlphaPct_ < 100) {
+    const float a = (float)emaAlphaPct_ / 100.0f;
+    if (!emaSeeded_) {
+      emaHead_ = (float)piezoValue;
+      emaRim_  = (float)rimValue;
+      emaSeeded_ = true;
+    } else {
+      emaHead_ = a * (float)piezoValue + (1.0f - a) * emaHead_;
+      emaRim_  = a * (float)rimValue   + (1.0f - a) * emaRim_;
+    }
+    piezoValue = (int)lroundf(emaHead_);
+    rimValue   = (int)lroundf(emaRim_);
+  } else {
+    emaHead_ = (float)piezoValue;   // keep state current for a smooth re-enable
+    emaRim_  = (float)rimValue;
+    emaSeeded_ = true;
+  }
+
+  lastPiezoAfterDc_ = piezoValue;   // TEMP DIAGNOSTIC: post DC-offset + spike + EMA
+                                    // (the actual value the detection blocks consume)
 
   // NOTE: hit/hitRim/choke are reset per-BLOCK in processBlock(), not here, so a hit
   // firing on any sample latches until main consumes it after the block.
@@ -192,50 +218,36 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   if (padType == 0) {
     // Only the head channel can initiate a scan.
     // Rim channel is read during scan for discrimination but never starts one.
-    if (loopTimes == 0) {
-      if (piezoValue > headThreshold) {
-        if (millis() - time_end < masktime) return;
-        time_hit = millis();
-        velocity    = piezoValue;
-        velocityRim = rimValue;
-        peakSampleIdx    = 0;
-        rimPeakSampleIdx = 0;
-        firstPeakChannel = (rimValue > piezoValue) ? 1 : 0;
-        loopTimes = 1;
-        crossAbsIndex_ = currentAbsIndex;
-      }
-    }
-    if (loopTimes > 0) {
-      if (piezoValue > velocity)    { velocity    = piezoValue; peakSampleIdx    = loopTimes; }
-      if (rimValue   > velocityRim) { velocityRim = rimValue;   rimPeakSampleIdx = loopTimes; }
-      loopTimes++;
-      if (millis() - time_hit >= scantime) {
+    if (rcState_ == RC_IDLE) {
+      if (piezoValue > headThreshold) startScan(piezoValue, rimValue, currentAbsIndex);
+    } else if (rcState_ == RC_SCAN) {
+      if (serviceScan(piezoValue, rimValue)) {
         time_end = millis();
-        velocityRaw    = velocity;
-        velocityRimRaw = velocityRim;
-        // Ratio-based discrimination
+        // Committed peaks: best confirmed, floored by the tracker's current running
+        // max so a still-rising unconfirmed peak at hard-cap is never undercounted.
+        velocityRaw    = max(scanHeadBest_, scanHeadTrk_.runMax);
+        velocityRimRaw = max(scanRimBest_,  scanRimTrk_.runMax);
+        // Ratio-based discrimination — UNCHANGED, just fed by confirmation-derived
+        // peaks instead of the old fixed-window running maxes.
         // ratio = rimPeak * 100 / headPeak (integer, avoids float)
-        int ratio = (velocity > 0) ? (velocityRim * 100 / velocity) : 0;
+        int ratio = (velocityRaw > 0) ? (velocityRimRaw * 100 / velocityRaw) : 0;
         bool isRim = (ratio > (int)rimRatioThreshold) ||
                      (ratio > 80 && firstPeakChannel == 1);
-        velocity    = curve(velocity,    headThreshold, headSensitivity, curvetype);
-        velocityRim = curve(velocityRim, headThreshold, headSensitivity, curvetype);
-        // Retrigger cancel: a genuine strike's electrical attack is near-instant
-        // (peak reached in ~1-2 samples, confirmed in real captures); a mesh
-        // head's own mechanical rebound rises much more gradually (~7-14 samples,
-        // also confirmed). maxFastAttackSamples (repurposed 'retrig' param) is
-        // the accept/reject cutoff.
-        int relevantPeakIdx = isRim ? rimPeakSampleIdx : peakSampleIdx;
-        if (relevantPeakIdx <= (int)maxFastAttackSamples) {
-          if (isRim) { hitRim = true; } else { hit = true; }
-        } else {
-          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
-          rejectPending_        = true;
-          lastRejectPeakIdx_    = relevantPeakIdx;
-          lastRejectVelocityRaw_ = isRim ? velocityRimRaw : velocityRaw;
-        }
+        velocity    = curve(velocityRaw,    headThreshold, headSensitivity, curvetype);
+        velocityRim = curve(velocityRimRaw, headThreshold, headSensitivity, curvetype);
+        if (isRim) { hitRim = true; } else { hit = true; }
         loopTimes = 0;
+        // Retrigger-cancel: seed the reference to this scan's own head peak and
+        // hand off to MASK → MONITOR. (Rim discrimination above is unchanged; the
+        // MONITOR watches the HEAD channel only, per the v2 scope decision.)
+        lastConfirmedPeak_ = min(velocityRaw, kRetrigSeedCap);  // seed cap (see .h)
+        rcState_ = RC_MASK;
       }
+    } else if (rcState_ == RC_MASK) {
+      serviceMask(piezoValue);
+    } else {  // RC_MONITOR
+      if (serviceRetriggerMonitor(piezoValue))
+        startScan(piezoValue, rimValue, currentAbsIndex);
     }
   }
 
@@ -243,36 +255,25 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   // PIEZO_SWITCH_CHOKE — head piezo (hit only) + rim switch (choke control)
   // =========================================================================
   else if (padType == 1) {
-    // Head piezo: standard peak detection → hit only, no rim note
-    if (loopTimes == 0) {
-      if (piezoValue > headThreshold) {
-        if (millis() - time_end >= masktime) {
-          time_hit = millis();
-          velocity = piezoValue;
-          peakSampleIdx = 0;
-          loopTimes = 1;
-          crossAbsIndex_ = currentAbsIndex;
-        }
-      }
-    }
-    if (loopTimes > 0) {
-      if (piezoValue > velocity) { velocity = piezoValue; peakSampleIdx = loopTimes; }
-      loopTimes++;
-      if (millis() - time_hit >= scantime) {
+    // Head piezo: confirmation-based Scan → hit only, no rim note
+    if (rcState_ == RC_IDLE) {
+      if (piezoValue > headThreshold) startScan(piezoValue, rimValue, currentAbsIndex);
+    } else if (rcState_ == RC_SCAN) {
+      if (serviceScan(piezoValue, rimValue)) {
         time_end = millis();
-        velocityRaw = velocity;
-        velocity    = curve(velocity, headThreshold, headSensitivity, curvetype);
-        // Retrigger cancel — see padType==0 comment for the reasoning.
-        if (peakSampleIdx <= (int)maxFastAttackSamples) {
-          hit = true;
-        } else {
-          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
-          rejectPending_        = true;
-          lastRejectPeakIdx_    = peakSampleIdx;
-          lastRejectVelocityRaw_ = velocityRaw;
-        }
+        velocityRaw = max(scanHeadBest_, scanHeadTrk_.runMax);
+        velocity    = curve(velocityRaw, headThreshold, headSensitivity, curvetype);
+        hit = true;
         loopTimes = 0;
+        lastConfirmedPeak_ = min(velocityRaw, kRetrigSeedCap);  // seed cap: keep the
+                                                                // new-strike bar reachable when this hit clips the ADC
+        rcState_ = RC_MASK;
       }
+    } else if (rcState_ == RC_MASK) {
+      serviceMask(piezoValue);
+    } else {  // RC_MONITOR
+      if (serviceRetriggerMonitor(piezoValue))
+        startScan(piezoValue, rimValue, currentAbsIndex);
     }
 
     // Switch/choke monitoring — runs independently of hit scan.
@@ -299,36 +300,187 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   // SINGLE_PIEZO — head piezo only, no rim logic
   // =========================================================================
   else if (padType == 2) {
-    if (loopTimes == 0) {
-      if (piezoValue > headThreshold) {
-        if (millis() - time_end < masktime) return;
-        time_hit = millis();
-        velocity  = piezoValue;
-        peakSampleIdx = 0;
-        loopTimes = 1;
-        crossAbsIndex_ = currentAbsIndex;
-      }
-    }
-    if (loopTimes > 0) {
-      if (piezoValue > velocity) { velocity = piezoValue; peakSampleIdx = loopTimes; }
-      loopTimes++;
-      if (millis() - time_hit >= scantime) {
+    if (rcState_ == RC_IDLE) {
+      if (piezoValue > headThreshold) startScan(piezoValue, rimValue, currentAbsIndex);
+    } else if (rcState_ == RC_SCAN) {
+      if (serviceScan(piezoValue, rimValue)) {
         time_end    = millis();
-        velocityRaw = velocity;
-        velocity    = curve(velocity, headThreshold, headSensitivity, curvetype);
-        // Retrigger cancel — see padType==0 comment for the reasoning.
-        if (peakSampleIdx <= (int)maxFastAttackSamples) {
-          hit = true;
-        } else {
-          retriggerRejectCount_++;   // TEMP DIAGNOSTIC
-          rejectPending_        = true;
-          lastRejectPeakIdx_    = peakSampleIdx;
-          lastRejectVelocityRaw_ = velocityRaw;
-        }
+        velocityRaw = max(scanHeadBest_, scanHeadTrk_.runMax);
+        velocity    = curve(velocityRaw, headThreshold, headSensitivity, curvetype);
+        hit = true;
         loopTimes = 0;
+        lastConfirmedPeak_ = min(velocityRaw, kRetrigSeedCap);  // seed cap: keep the
+                                                                // new-strike bar reachable when this hit clips the ADC
+        rcState_ = RC_MASK;
       }
+    } else if (rcState_ == RC_MASK) {
+      serviceMask(piezoValue);
+    } else {  // RC_MONITOR
+      if (serviceRetriggerMonitor(piezoValue))
+        startScan(piezoValue, rimValue, currentAbsIndex);
     }
   }
+}
+
+
+// -----------------------------------------------------------------------------
+// Retrigger-cancel v2 helpers (head channel). See project_state.md
+// "Retrigger-Cancel Design Spec (v2)" for the full mechanism.
+// -----------------------------------------------------------------------------
+
+// Begin a fresh Scan window from the current sample. Identical initiation to an
+// ordinary threshold crossing, so a genuine second strike is captured (and
+// velocity-scaled) by its own Scan window rather than estimated by the monitor.
+void PDrumTrigger::startScan(int piezoValue, int rimValue, uint32_t currentAbsIndex)
+{
+  time_hit       = millis();
+  velocity       = piezoValue;
+  loopTimes      = 1;
+  crossAbsIndex_ = currentAbsIndex;
+  // Confirmation-based Scan (v3): seed the head tracker + best from the crossing
+  // sample; head drives the settle/hard-cap exit. Settle can't fire until the first
+  // confirmation (scanEverConfirmed_), so a slow-developing attack is never cut short.
+  scanHeadTrk_.reset(ExtremumTracker::DIR_RISING, piezoValue);
+  scanHeadBest_      = piezoValue;
+  scanSettleSince_   = time_hit;
+  scanEverConfirmed_ = false;
+  scanConfirms_      = 0;
+  if (padType == 0) {   // DUAL_PIEZO also seeds rim tracking + first-peak channel
+    velocityRim      = rimValue;
+    firstPeakChannel = (rimValue > piezoValue) ? 1 : 0;
+    scanRimTrk_.reset(ExtremumTracker::DIR_RISING, rimValue);
+    scanRimBest_     = rimValue;
+  }
+  rcState_ = RC_SCAN;
+}
+
+// Confirmation-based Scan (v3), one sample. Mirror image of the MONITOR decay
+// tracker: ratchet each channel's best peak UP via the shared ExtremumTracker. The
+// HEAD channel's confirmed peaks drive the settle timer and thus the exit; the rim
+// channel (DUAL_PIEZO only) is tracked concurrently, purely to feed ratio
+// discrimination. Returns true when Scan commits (settle or hard-cap).
+bool PDrumTrigger::serviceScan(int piezoValue, int rimValue)
+{
+  loopTimes++;   // diagnostic in-scan sample count
+
+  // Head channel: a confirmed peak ratchets best UP and resets the settle window.
+  // Keeping watching past the first confirmed peak is deliberate — a piezo's
+  // characteristic 2nd/3rd peak can exceed the 1st (Edrumulus), so locking in on
+  // first confirmation would sometimes report the smaller one.
+  if (scanHeadTrk_.feed(piezoValue, (int)scanMargin_) == REF_PEAK) {
+    scanEverConfirmed_ = true;
+    scanConfirms_++;
+    if (scanHeadTrk_.runMax > scanHeadBest_) scanHeadBest_ = scanHeadTrk_.runMax;
+    scanSettleSince_ = millis();   // any confirmed peak resets the settle window
+  }
+
+  // Rim channel (DUAL_PIEZO only): concurrent confirmation tracker, no exit role.
+  if (padType == 0) {
+    if (scanRimTrk_.feed(rimValue, (int)scanMargin_) == REF_PEAK &&
+        scanRimTrk_.runMax > scanRimBest_) {
+      scanRimBest_ = scanRimTrk_.runMax;
+    }
+  }
+
+  // Exit: settle (adaptive — only once at least one peak is confirmed) or the
+  // hard-cap backstop (repurposed `scantime` ms; generous vs the slowest real
+  // attack measured so far — the PDX-8's ~5ms — so it only ever catches a
+  // pathological signal, never a legitimate hit).
+  const bool settle  = scanEverConfirmed_ &&
+                       (millis() - scanSettleSince_ >= (unsigned long)settleWaitMs_);
+  const bool hardcap = (millis() - time_hit >= (unsigned long)scantime);
+  if (settle || hardcap) {
+    scanLastExit_     = settle ? SCAN_EXIT_SETTLE : SCAN_EXIT_HARDCAP;
+    scanLastDurMs_    = millis() - time_hit;
+    scanLastConfirms_ = scanConfirms_;
+    return true;
+  }
+  return false;
+}
+
+// MASK phase: unchanged blackout window. When masktime has elapsed since scan end,
+// hand off to the retrigger-cancel MONITOR, seeding the reference tracker's running
+// minimum from the current (decaying) sample.
+void PDrumTrigger::serviceMask(int piezoValue)
+{
+  if (millis() - time_end >= masktime) {
+    // retrig=0 means retrigger-cancel is DISABLED for this input (an explicit
+    // opt-out, NOT margin=0 — plugging 0 into the formulas would make it maximally
+    // aggressive, the opposite of off). Skip MONITOR entirely and return straight
+    // to IDLE: exactly the pre-v2 Scan→Mask→Idle behaviour. Most pads (PD-7, KD-80)
+    // don't need this feature; it's opt-in per pad (mesh-type). See v2 spec.
+    if (retriggerMargin_ == 0) {
+      rcState_ = RC_IDLE;
+      return;
+    }
+    rcState_        = RC_MONITOR;
+    rcMonitorStart_ = millis();
+    rcTracker_.reset(ExtremumTracker::DIR_FALLING, piezoValue);
+    // lastConfirmedPeak_ was seeded to velocityRaw at scan end (continuity).
+  }
+}
+
+// One MONITOR sample. Returns true iff a genuine new strike was detected (caller
+// must then startScan() from this sample).
+bool PDrumTrigger::serviceRetriggerMonitor(int piezoValue)
+{
+  // retrig=0 disables retrigger-cancel. This covers the live case: `w <i> retrig 0`
+  // arriving WHILE this input is already mid-MONITOR from an earlier hit. Exit
+  // immediately to IDLE (reusing the NATURAL exit reason — a dedicated "disabled"
+  // reason isn't worth a new diagnostic code here). The mask-end hand-off in
+  // serviceMask() handles the normal already-0-before-the-hit case.
+  if (retriggerMargin_ == 0) {
+    rcLastExit_      = RC_EXIT_NATURAL;
+    rcLastExitLcp_   = lastConfirmedPeak_;
+    rcLastExitDurMs_ = millis() - rcMonitorStart_;
+    rcEventPending_  = true;
+    rcState_         = RC_IDLE;
+    return false;
+  }
+
+  // (a) New-strike check — fast, unconditional, no debounce. lastConfirmedPeak_ is
+  // already a trusted reference, so clearing it by a full margin is decisive alone.
+  if (piezoValue > lastConfirmedPeak_ + (int)retriggerMargin_) {
+    rcLastExit_      = RC_EXIT_NEWSTRIKE;
+    rcLastExitLcp_   = lastConfirmedPeak_;
+    rcLastExitDurMs_ = millis() - rcMonitorStart_;
+    rcEventPending_  = true;              // TEMP DIAGNOSTIC latch
+    return true;                          // caller starts a fresh Scan window
+  }
+
+  // (b) Reference tracking — debounced peak/trough detection that ratchets
+  // lastConfirmedPeak_ DOWN as the strike decays. Uses the shared ExtremumTracker
+  // (same margin-debounced logic as before the v3 extraction; the only MONITOR
+  // action is the downward ratchet on a confirmed peak). (a) never fired, so the
+  // confirmed peak is <= lastConfirmedPeak_ — genuinely smaller.
+  if (rcTracker_.feed(piezoValue, (int)retriggerMargin_) == REF_PEAK) {
+    lastConfirmedPeak_ = rcTracker_.runMax;
+  }
+
+  // Natural exit: once the reference has decayed to within a margin of headThreshold,
+  // the MONITOR bar (lastConfirmedPeak_ + margin) and plain threshold detection are
+  // functionally equivalent — exit early rather than waiting out the hard cap.
+  if (lastConfirmedPeak_ <= (int)headThreshold + (int)retriggerMargin_) {
+    rcLastExit_      = RC_EXIT_NATURAL;
+    rcLastExitLcp_   = lastConfirmedPeak_;
+    rcLastExitDurMs_ = millis() - rcMonitorStart_;
+    rcEventPending_  = true;
+    rcState_         = RC_IDLE;
+    return false;
+  }
+
+  // Hard safety cap: always return to IDLE eventually, even for bouncy pads whose
+  // reference never cleanly settles near headThreshold (e.g. KD-80).
+  if (millis() - rcMonitorStart_ >= kRetrigHardCapMs) {
+    rcLastExit_      = RC_EXIT_HARDCAP;
+    rcLastExitLcp_   = lastConfirmedPeak_;
+    rcLastExitDurMs_ = millis() - rcMonitorStart_;
+    rcEventPending_  = true;
+    rcState_         = RC_IDLE;
+    return false;
+  }
+
+  return false;
 }
 
 

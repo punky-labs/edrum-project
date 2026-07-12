@@ -1,0 +1,141 @@
+
+=== Session started 2026-07-11T12:46:42.789602 (192.168.1.168:23) ===
+[12:46:42.793] [dev] eDrum telnet console
+[12:46:45.509] [CHOKE] i=1 note=57 ch=10
+[12:46:48.448] [Config]
+[12:46:48.450]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=1 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:46:48.453]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:46:48.456]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:46:48.471]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:46:48.471]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:46:52.370] [CHOKE] i=1 note=57 ch=10
+[12:47:06.953] [SCOPE] Error: input must be 0-4
+[12:47:11.693] [CHOKE] i=1 note=57 ch=10
+[12:47:11.732] [CHOKE] i=1 note=57 ch=10
+[12:47:18.266] [Config]
+[12:47:18.268]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=1 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:47:18.271]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:47:18.275]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:47:18.278]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:47:18.281]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:47:18.589] [CHOKE] i=1 note=57 ch=10
+[12:47:33.789] [eDrum] Build 0 — p=ping  i=identify  s=config  n=test note  r=reboot
+[12:47:33.791]   a=toggle ADC dump  d=toggle hit debug print  m=toggle diag mode (detection+MIDI off)
+[12:47:33.794]   o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope
+[12:47:33.797]   w <input> <param> <value> = set param (e.g. w 0 scan 3)
+[12:47:33.801]   params: thresh sens scan mask retrig type ratio chokethresh choke enable
+[12:47:43.537] [CHOKE] i=1 note=57 ch=10
+[12:47:57.873] [CHOKE] i=1 note=57 ch=10
+[12:48:11.634] [CHOKE] i=1 note=57 ch=10
+[12:48:17.206] [w] Usage: w <input> <param> <value>
+[12:48:17.208] [w] params: thresh sens scan mask retrig type ratio chokethresh choke enable
+[12:48:18.460] [CHOKE] i=1 note=57 ch=10
+[12:48:18.500] [CHOKE] i=1 note=57 ch=10
+[12:48:21.941] [Config]
+[12:48:21.943]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=1 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:48:21.945]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:48:21.948]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:48:21.952]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:48:21.954]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:48:35.951] [CHOKE] i=1 note=57 ch=10
+[12:48:39.050] [CHOKE] i=1 note=57 ch=10
+[12:48:39.104] [CHOKE] i=1 note=57 ch=10
+[12:48:39.112] [CHOKE] i=1 note=57 ch=10
+[12:48:46.546] [CHOKE] i=1 note=57 ch=10
+[12:48:49.069] [w] Usage: w <input> <param> <value>
+[12:48:49.081] [w] params: thresh sens scan mask retrig type ratio chokethresh choke enable
+[12:48:49.668] [CHOKE] i=1 note=57 ch=10
+[12:48:49.688] [CHOKE] i=1 note=57 ch=10
+[12:48:51.864] [Config]
+[12:48:51.867]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=1 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:48:51.870]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:48:51.872]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:48:51.876]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:48:51.878]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:48:53.404] [CHOKE] i=1 note=57 ch=10
+[12:48:53.427] [CHOKE] i=1 note=57 ch=10
+[12:48:53.452] [CHOKE] i=1 note=57 ch=10
+[12:48:56.758] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[12:48:56.838] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[12:48:56.932] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[12:48:59.760] [SysEx TX] F0 00 7D 00 05 03 01 00 01 01 F7
+[12:48:59.807] [SysEx TX] F0 00 7D 00 05 03 01 00 03 03 F7
+[12:48:59.891] [SysEx TX] F0 00 7D 00 05 03 01 00 04 04 F7
+[12:49:00.055] [SysEx TX] F0 00 7D 00 05 03 01 00 06 06 F7
+[12:49:00.099] [SysEx TX] F0 00 7D 00 05 03 01 00 03 03 F7
+[12:49:00.288] [SysEx TX] F0 00 7D 00 05 03 01 00 09 09 F7
+[12:49:00.289] [CHOKE] i=1 note=57 ch=10
+[12:49:00.300] [CHOKE] i=1 note=57 ch=10
+[12:49:00.391] [SysEx TX] F0 00 7D 00 05 03 01 00 02 02 F7
+[12:49:00.431] [SysEx TX] F0 00 7D 00 05 03 01 00 02 02 F7
+[12:49:00.475] [SysEx TX] F0 00 7D 00 05 03 01 00 01 01 F7
+[12:49:00.558] [SysEx TX] F0 00 7D 00 05 03 01 00 0D 0D F7
+[12:49:00.614] [SysEx TX] F0 00 7D 00 05 03 01 00 33 33 F7
+[12:49:00.616] [CHOKE] i=1 note=57 ch=10
+[12:49:00.813] [SysEx TX] F0 00 7D 00 05 03 01 00 02 02 F7
+[12:49:00.903] [CHOKE] i=1 note=57 ch=10
+[12:49:00.941] [CHOKE] i=1 note=57 ch=10
+[12:49:01.062] [SysEx TX] F0 00 7D 00 05 03 01 00 11 11 F7
+[12:49:01.065] [CHOKE] i=1 note=57 ch=10
+[12:49:01.185] [SysEx TX] F0 00 7D 00 05 03 01 00 7F 7F F7
+[12:49:01.189] [CHOKE] i=1 note=57 ch=10
+[12:49:01.199] [CHOKE] i=1 note=57 ch=10
+[12:49:01.230] [SysEx TX] F0 00 7D 00 05 03 01 00 5B 5B F7
+[12:49:01.262] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[12:49:01.269] [CHOKE] i=1 note=57 ch=10
+[12:49:01.382] [CHOKE] i=1 note=57 ch=10
+[12:49:01.445] [CHOKE] i=1 note=57 ch=10
+[12:49:01.465] [CHOKE] i=1 note=57 ch=10
+[12:49:01.482] [CHOKE] i=1 note=57 ch=10
+[12:49:01.506] [CHOKE] i=1 note=57 ch=10
+[12:49:01.533] [CHOKE] i=1 note=57 ch=10
+[12:49:01.548] [CHOKE] i=1 note=57 ch=10
+[12:49:01.567] [CHOKE] i=1 note=57 ch=10
+[12:49:01.578] [CHOKE] i=1 note=57 ch=10
+[12:49:01.599] [CHOKE] i=1 note=57 ch=10
+[12:49:01.622] [CHOKE] i=1 note=57 ch=10
+[12:49:01.642] [CHOKE] i=1 note=57 ch=10
+[12:49:01.665] [CHOKE] i=1 note=57 ch=10
+[12:49:01.683] [CHOKE] i=1 note=57 ch=10
+[12:49:01.702] [CHOKE] i=1 note=57 ch=10
+[12:49:01.722] [CHOKE] i=1 note=57 ch=10
+[12:49:01.743] [CHOKE] i=1 note=57 ch=10
+[12:49:01.763] [CHOKE] i=1 note=57 ch=10
+[12:49:01.781] [CHOKE] i=1 note=57 ch=10
+[12:49:01.802] [CHOKE] i=1 note=57 ch=10
+[12:49:01.823] [CHOKE] i=1 note=57 ch=10
+[12:49:01.842] [CHOKE] i=1 note=57 ch=10
+[12:49:01.864] [CHOKE] i=1 note=57 ch=10
+[12:49:01.883] [CHOKE] i=1 note=57 ch=10
+[12:49:01.902] [CHOKE] i=1 note=57 ch=10
+[12:49:01.922] [CHOKE] i=1 note=57 ch=10
+[12:49:01.943] [CHOKE] i=1 note=57 ch=10
+[12:49:01.962] [CHOKE] i=1 note=57 ch=10
+[12:49:01.982] [CHOKE] i=1 note=57 ch=10
+[12:49:02.001] [CHOKE] i=1 note=57 ch=10
+[12:49:02.022] [CHOKE] i=1 note=57 ch=10
+[12:49:02.044] [CHOKE] i=1 note=57 ch=10
+[12:49:02.062] [CHOKE] i=1 note=57 ch=10
+[12:49:02.082] [CHOKE] i=1 note=57 ch=10
+[12:49:02.102] [CHOKE] i=1 note=57 ch=10
+[12:49:02.122] [CHOKE] i=1 note=57 ch=10
+[12:49:02.144] [CHOKE] i=1 note=57 ch=10
+[12:49:02.162] [CHOKE] i=1 note=57 ch=10
+[12:49:02.182] [CHOKE] i=1 note=57 ch=10
+[12:49:02.205] [SysEx TX] F0 00 7D 00 05 03 01 00 0C 0C F7
+[12:49:02.206] [CHOKE] i=1 note=57 ch=10
+[12:49:02.211] [CHOKE] i=1 note=57 ch=10
+[12:49:02.222] [CHOKE] i=1 note=57 ch=10
+[12:49:02.253] [CHOKE] i=1 note=57 ch=10
+[12:49:02.267] [SysEx TX] F0 00 7D 00 05 03 01 00 04 04 F7
+[12:49:02.286] [CHOKE] i=1 note=57 ch=10
+[12:49:02.310] [CHOKE] i=1 note=57 ch=10
+[12:49:02.353] [SysEx TX] F0 00 7D 00 05 03 01 00 05 05 F7
+[12:49:02.371] [SysEx TX] F0 00 7D 00 05 03 01 00 1E 1E F7
+[12:49:02.381] [CHOKE] i=1 note=57 ch=10
+[12:49:02.415] [CHOKE] i=1 note=57 ch=10
+[12:49:02.421] [CHOKE] i=1 note=57 ch=10
+[12:49:02.441] [CHOKE] i=1 note=57 ch=10
+[12:49:02.572] [SysEx TX] F0 00 7D 00 05 03 01 00 01 01 F7
+[12:49:02.679] [SysEx TX] F0 00 7D 00 05 03 01 00 03 03 F7
+=== Session ended 2026-07-11T12:49:05.079048 ===

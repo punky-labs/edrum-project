@@ -22,14 +22,21 @@ static InputConfig defaultInput(uint8_t idx) {
     // headSensitivity 800 is the upper ADC bound for velocity scaling.
     c.threshold        = 20;   // raw ADC units — scan-trigger point
     c.velocityCurve    = 4;    // Aggressive (LOG2) velocity curve
-    // Retrigger-cancel cutoff, in SAMPLES (not ms) — max samples-to-peak for a hit
-    // to count as a genuine strike vs. a mechanical rebound (added 2026-07-06,
-    // repurposed from a previously-unused field). 5 is a first-pass default from
-    // real PDX-12 captures (genuine hits ~1-2 samples, rebounds ~7-14); expect to
-    // tune per pad type once more data is gathered.
-    c.retriggerTime    = 5;
+    // Retrigger-cancel MARGIN, in raw ADC counts (repurposed 'retrig' field, v2).
+    // 0 = DISABLED for this input (an explicit, meaningful value — retrigger-cancel
+    // is skipped entirely, straight Scan→Mask→Idle). Non-zero = the prominence a
+    // rise must clear to count as a genuine new peak/trough / new strike.
+    // Default 0 because hardware testing (2026-07-08) showed most pads (PD-7, KD-80)
+    // don't need this — it's opt-in per pad, for mesh-type pads with oscillating
+    // decay (e.g. PDX-12). When enabled, the margin value still needs real per-pad
+    // calibration from recorded waveforms (open item in the v2 spec).
+    c.retriggerTime    = 0;
     c.headSensitivity  = 800;  // raw ADC upper bound for velocity scaling
-    c.scanTime         = 3;    // peak scan window, ms
+    // v3: scanTime is now the confirmation-based Scan HARD-CAP (ms), not a fixed
+    // window. 30 ms is a generous backstop — well above the slowest real attack
+    // measured (PDX-8 ~5 ms to true peak) plus settle + margin-fall headroom, so it
+    // only ever catches a pathological signal; normal hits settle-exit in a few ms.
+    c.scanTime         = 30;
     c.maskTime         = 80;   // post-hit ignore window, ms (flat mask; no decay model)
     c.rimRatioThreshold = 40;  // ratio*100: rim/head > 0.40 = rim hit
     c.chokeThreshold   = 50;
@@ -55,6 +62,19 @@ static InputConfig defaultInput(uint8_t idx) {
     c.decayEstLenMs         = 40;    // 4.0 ms  [unused until 2b]
     c.decayEstFactDb        = 160;   // 16.0 dB [unused until 2b]
     c.clipCompAmpmapStep    = 8;     // 0.08    [unused until 2b]
+
+    // v3 Scan-redesign / EMA tunables (telnet-`w` only). All placeholders needing
+    // real per-pad calibration (same treatment as retrig margin / kRetrigSeedCap).
+    c.scanMargin   = 40;   // raw ADC counts — safely above the ~4-17 noise floor so
+                           // jitter can't false-confirm a peak, low enough to catch
+                           // real ones. Independent of retrig's margin (attack vs
+                           // decay are different processes — see spec open item).
+    c.settleWaitMs = 5;    // ms — spans the piezo 3-peak inter-peak spacing so Scan
+                           // doesn't commit between peaks, while keeping latency low.
+    c.emaAlpha     = 50;   // alpha 0.5 (~1-2 sample time constant). Must stay SAFELY
+                           // faster than the fastest real attack (2-3 samples) or it
+                           // would blunt the transients Scan needs. Reasoned start,
+                           // not validated — first test is an `a` dump before/after.
 
     switch (idx) {
         case 0:  c.midiNote = 36; c.zone2MidiNote = 36; break;  // kick

@@ -1,5 +1,7 @@
 # eDrum Project State
-Last updated: 2026-06-30 (Stage 2a detection working on hardware; dev-process docs added)
+Last updated: 2026-07-12 (Scan Redesign v3 + EMA + tunable constants
+hardware-validated — working trigger module across 3 pad types, no audible
+double-triggering or missed hits. See "Scan Redesign" section.)
 
 ---
 
@@ -67,8 +69,11 @@ process after a Stage 2a session burned hours/tokens on code-reading and guessin
   the pad (many large transients in quick succession), and had never been seen
   on the old RP2040 build running the same core algorithm — consistent with a
   fixed `SPIKE_THRESHOLD` tuned for different ADC range/sample-rate hardware.
-- **Retrigger-cancel v1 (added 2026-07-06) is BROKEN — currently inverted, not
-  just imperfect.** Added a samples-to-peak (`peakSampleIdx`) based accept/reject
+- **Retrigger-cancel v1 (added 2026-07-06) is BROKEN and SUPERSEDED — do not
+  patch it, it has been replaced by a full redesign.** See the "Retrigger-Cancel
+  Design Spec (v2, 2026-07-07)" section below for the agreed replacement
+  mechanism; this entry is kept only as the historical record of what was tried
+  and why it failed. Added a samples-to-peak (`peakSampleIdx`) based accept/reject
   check to `PDrumTrigger::sensing()` (repurposing the previously-dead `retrig`
   config field as the cutoff), on the theory that a genuine strike's attack is
   near-instant (~1-2 samples, per earlier scope captures) while a mesh head's
@@ -80,28 +85,29 @@ process after a Stage 2a session burned hours/tokens on code-reading and guessin
   the high-20s/low-30s, while small residual tail events (`truepeak` 34-870)
   were ACCEPTED with `peakidx` 0-5. This contradicts the earlier scope-based
   characterisation (fast 2-3 sample rise to plateau) for the same pad/scenario.
-  **Two things parked, likely related, both centred on "scope's view of the
-  signal" vs "what the detection path's per-sample tracking actually measures"
-  not agreeing:**
-  1. Scope-capture duplication bug (found same evening, still unconfirmed root
-     cause): two `[SCOPE]` dumps ~617ms apart contained bit-identical `T,H,R`
-     sample data, despite `SampleStream`'s ring depth (8192 @ 8kHz, ~1.02s) being
-     nowhere near a wraparound for that gap. `PDrumTrigger`'s `crossAbsIndex_`/
-     `triggerBack_` logic and `SampleStream::readWindow()` both look structurally
-     correct on inspection — the bug is likely in how they interact at runtime
-     (e.g. `g_scopeSnap` computation in `main_esp32s3.cpp`'s arm-time logic),
-     not visible from static code reading alone.
-  2. `peakSampleIdx` mismatch: rejected genuine hits show `peakidx` clustering
-     right around ~24-31 — suspiciously close to a FULL `scantime`-worth of
-     samples (3ms @ 8kHz = 24), suggesting the peak is being (re-)recorded near
-     the END of the scan window, not early in it, for real hits. This directly
-     contradicts the earlier scope-derived "fast 2-3 sample rise" finding for
-     what should be the same kind of event.
-  **Do not resume tuning `retrig` until the measurement itself is trusted.**
+  **Root design flaw identified 2026-07-07:** v1 measured "samples until THIS
+  window's own peak" in isolation — it had no concept of comparing against the
+  previous peak's level/trend, which is what actually distinguishes a decaying
+  oscillation from a genuine new strike. A single-window attack-rate proxy
+  cannot substitute for a real peak-to-peak trend comparison. v2 (see below)
+  fixes this structurally rather than by re-tuning v1's cutoff number.
+  **Two side-bugs found during v1 investigation, still parked/unconfirmed, kept
+  for reference in case they recur or turn out relevant to v2:**
+  1. Scope-capture duplication bug: two `[SCOPE]` dumps ~617ms apart contained
+     bit-identical `T,H,R` sample data, despite `SampleStream`'s ring depth (8192
+     @ 8kHz, ~1.02s) being nowhere near a wraparound for that gap. `PDrumTrigger`'s
+     `crossAbsIndex_`/`triggerBack_` logic and `SampleStream::readWindow()` both
+     look structurally correct on inspection — the bug is likely in how they
+     interact at runtime (e.g. `g_scopeSnap` computation in `main_esp32s3.cpp`'s
+     arm-time logic), not visible from static code reading alone.
+  2. The `peakSampleIdx` values themselves clustering suspiciously close to a
+     full `scantime`-worth of samples (~24 @ 8kHz for 3ms) for genuine hits —
+     this may or may not be connected to (1); not required to resolve either to
+     implement v2, since v2 doesn't rely on this specific measurement.
   All TEMP DIAGNOSTIC instrumentation from this investigation is left in place
   (`[REJECT]` print, `peakidx=` on `[HIT]`/`[RIM]`, `hasReject()`/`clearReject()`
-  latch pattern) — no re-instrumenting needed next session, just reproduce and
-  read.
+  latch pattern) — some of it (the reject-event visibility pattern) is directly
+  reusable for v2's implementation.
 - Future debug channel: **WiFi telnet/TCP console** (dev-build-only) replaces the dead
   USB serial RX without clashing with MIDI. See `dev_workflow_plan.md`.
 
@@ -363,8 +369,15 @@ Fully implemented dev-mode floating window (app/ui/scope_window.py).
 Opened from Dev menu → ADC Scope…
 
 **Architecture:**
-- Independent serial connection (115200 baud) to RP2040 USB CDC
-- _SerialReader(QThread): state-machine parser for [SCOPE]/T,H,R/CSV protocol
+- Serial connection (115200 baud, pyserial) to whichever COM port is selected —
+  a generic port picker, not RP2040-specific (corrected 2026-07-11; this
+  predates the ESP32-S3 migration and was stale). Unrelated to the WiFi telnet
+  console path (`tools/telnet_logger.py`) used elsewhere in this project for
+  live debugging — this is a separate, direct-serial transport.
+- _SerialReader(QThread): decodes lines, delegates parsing to _ScopeParser
+  (extracted 2026-07-11 so the same state machine also drives file loading —
+  see "Load from log file" below), dispatches parser events to the existing
+  signals unchanged.
 - pyqtgraph chart: head (teal #2dd4bf) and rim (orange #fb923c) traces
 - Overlays: Floor line, Trigger marker, Threshold line, Scan region, Mask region
 - Session log: one row per capture, click to replot
@@ -376,6 +389,20 @@ Opened from Dev menu → ADC Scope…
 - Auto-save: timestamped CSVs to app/logs/scope/
 - Export CSV: full session log
 - Copy from serial output: select lines + Ctrl+C or right-click → Copy
+
+**Load from log file (added 2026-07-11):**
+- "Load Log…" button in the connection bar, always enabled (works fully
+  offline, no serial/device connection needed)
+- Reads a tools/telnet_logger.py log file, strips the "[HH:MM:SS.mmm] "
+  timestamp prefix telnet_logger.py adds to every line, feeds the rest through
+  the same _ScopeParser used for live serial — not a separate implementation
+- One log file can contain many captures (one per armed hit during that
+  session); each becomes its own Session Log row using the log's own
+  timestamps, exactly as if it had arrived live
+- Malformed/partial captures (log copied mid-write, a hit-debug line
+  interrupting a capture) are detected and skipped without crashing or
+  corrupting other captures in the same file; skip count is reported in the
+  Serial Output panel
 
 **Firmware scope protocol:**
 - 'o <input> <floor>' — arm scope on input, floor=noise gate
@@ -536,6 +563,475 @@ Pads: Roland KD-80
 
 ---
 
+## Retrigger-Cancel Design Spec (v2, agreed 2026-07-07; revised 2026-07-08
+after hardware validation)
+
+**Status: IMPLEMENTED AND HARDWARE-TESTED 2026-07-07/08 — v2's core mechanism
+works as designed, but hardware testing surfaced a real structural gap requiring
+the revisions below before it's usable.** Do not re-implement the core
+peak/trough state machine (it's correct, see Hardware Validation Findings) —
+the changes needed are: (1) make retrigger-cancel opt-in per input via
+`retrig=0`, not always-on, and (2) cap the seed value below the ADC ceiling.
+Both are additive changes to the existing v2 implementation, not a redesign.
+
+### Hardware validation findings (2026-07-08)
+
+Tested on both the PDX-12 (mesh, oscillating decay) and PD-7 (rubber, clean
+decay) with full `[RCEXIT]` visibility:
+
+- **PDX-12: works well.** Real hits produced fast natural exits (`dur=16ms`,
+  `dur=0ms` in testing — nowhere near the 900ms hard cap), confirming the
+  peak/trough reversal logic correctly recognises this pad's genuine
+  oscillating decay and ratchets `lastConfirmedPeak` down quickly. One
+  separate, real issue surfaced in the same test (see below) — not a
+  retrigger-cancel bug.
+- **PD-7: found two compounding structural problems, not implementation bugs.**
+  A moderate strike produced `[RCEXIT] exit=1 lcp=4091 dur=902ms` — i.e.
+  `lastConfirmedPeak` NEVER MOVED from its seeded value for the entire 900ms
+  monitor window, only ending via the hard cap.
+  1. **Root cause: PD-7's decay is smooth/monotonic, so it never produces a
+     confirmed peak/trough reversal at all.** Traced step by step: Mask ends →
+     MONITOR starts in FALLING, tracking the running minimum as the signal
+     smoothly decays. Since a smooth decay never rises, the
+     FALLING→RISING confirmation ("signal rises more than `margin` above the
+     running minimum") never fires — so the RISING→FALLING confirmation that
+     ratchets `lastConfirmedPeak` down can never fire either. The reference
+     is stuck at the original seed value until the hard cap forces an exit.
+     **This generalises beyond "smooth decay" specifically: it happens
+     whenever a pad's real decay oscillation amplitude is smaller than
+     `margin`** — including a genuinely oscillating pad if `margin` is set
+     larger than that pad's real wobble size.
+  2. **`truepeak=4091` (this hit clipped the 12-bit ADC, ceiling ~4095).**
+     With `lastConfirmedPeak` frozen at 4091, the new-strike accept bar for
+     the whole 900ms was `4091 + margin` — a value the hardware can never
+     physically produce. **No strike, however hard, could register as a new
+     hit during that window.** This is a distinct, compounding problem on
+     top of (1): it would still occur even on a pad with genuine oscillation,
+     any time the initiating hit clips the ADC (a normal occurrence on a
+     firm-to-hard hit, not a rare edge case).
+- **Attempted fix explored and rejected: lowering `margin` to catch smaller
+  oscillations.** Traced through explicitly and found to be a genuine dead
+  end, not just a tuning trade-off: a `margin` small enough to confirm a real
+  but subtle oscillation is also small enough for ordinary sample noise to
+  trip the same FALLING→RISING→FALLING confirmation logic — and because noise
+  churns constantly (unlike the pad's real decay timeline), this can ratchet
+  `lastConfirmedPeak` down to near the noise floor almost instantly, firing a
+  premature natural exit **while the pad is still genuinely ringing at real
+  amplitude** — reopening the exact false-retrigger problem this mechanism
+  exists to solve, via a different path. `margin` cannot be tuned small enough
+  to solve the PD-7 case without this cost; there is no single value serving
+  both jobs (noise rejection vs. oscillation detection) for a pad whose real
+  oscillation is close to its own noise-floor size.
+
+### Retrigger-cancel is opt-in per input, not universal (revised 2026-07-08)
+
+**Re-reading Roland's own TD-3 manual wording resolved the above tension by
+dissolving it rather than finding a clever `margin` value:** "*Important if you
+are using acoustic drum triggers.* Such triggers can produce altered
+waveforms..." — explicitly conditional language, describing a specific class
+of pad (complex/distorted decay), not a universal requirement. This matches
+the hardware findings exactly: the PDX-12 has the kind of decay this feature
+is for; the PD-7 doesn't need it and Scan+Mask+Threshold already handle it
+correctly on their own (confirmed working for the PD-7 well before v2 existed).
+
+**Mechanism: `retrig=0` (the existing repurposed field) means "retrigger-cancel
+disabled for this input," not "margin=0."** This must be an explicit code path,
+NOT a mathematical consequence of margin=0 — plugging 0 into the existing
+formulas makes the system maximally *aggressive* (any 1-count rise trips both
+checks instantly), the opposite of "off". Required behaviour: when `retrig==0`,
+`serviceMask()`'s hand-off skips `MONITOR` entirely and returns straight to
+`IDLE` — i.e. exactly the pre-v2 Scan→Mask→Idle behaviour, unchanged.
+**Fresh-install default changes to 0 (off)** — matches the finding that most
+tested pads (PD-7, KD-80) don't need this feature; it's something a person
+opts a specific (mesh-type) pad into, not a universal default.
+
+### Seed cap for ADC-ceiling clipping (new, 2026-07-08)
+
+For inputs that DO have retrigger-cancel enabled, separately fix problem (2)
+above: seed `lastConfirmedPeak` as `min(velocityRaw, capValue)` rather than
+`velocityRaw` directly, where `capValue` sits comfortably below the ADC
+ceiling (~4095) with enough headroom that `capValue + margin` stays physically
+achievable. `capValue` needs a real placeholder now and proper calibration
+later (same recorded-waveform methodology as `margin` — see Open Items),
+not a guess treated as tuned.
+**This recovers real, meaningful functionality**: a genuine second hit that's
+moderate-to-hard but does NOT itself clip can now clear the (capped) accept
+bar and register correctly — this is the common case for most real second
+hits in a roll or accent.
+**It does not, and cannot, fully solve the clipped-vs-clipped case** — see
+Known Limitations below, this is a fundamental information limit, not
+something a cap value can tune around.
+
+### Known limitations, accepted deliberately
+
+1. **A genuine second strike quieter than wherever the decay currently sits is
+   indistinguishable from a decaying residual peak using peak level alone**
+   (original v2 limitation, unchanged) — both look like "a rise that doesn't
+   clear margin." Judged a fundamental limit of amplitude-based
+   discrimination, not unique to this design (TD-3's own wording doesn't claim
+   to solve this either). The peak-to-previous-peak (not peak-to-original)
+   comparison narrows this: a genuine second hit only needs to clear wherever
+   the decay currently sits, not the original strike's full level.
+2. **Clipped-vs-clipped (new, 2026-07-08): if BOTH the initiating strike and a
+   genuine close second strike clip the ADC, they read identically (~4095),
+   and the seed cap above cannot distinguish them** — the amplitude
+   information that would tell them apart was destroyed by clipping itself,
+   not lost due to how the cap was chosen. **Concrete musical scenario: a hard
+   flam** (two full-force hits close together, but far enough apart to clear
+   Mask) **on a pad whose decay is being monitored — the second hit may not
+   register.** Checked and ruled out: using attack-rate to break the tie (the
+   technique that worked for the original v1 machine-gun problem) does NOT
+   help here — that worked because it compared a genuine strike's attack
+   shape against a *different physical process* (the pad's own rebound); here
+   we'd be comparing one genuine strike's attack against another genuine
+   strike's attack on the same pad, which have no reason to differ (mesh heads
+   in particular have an inherently slower attack than rubber/cymbal, due to
+   membrane flexibility, but that's constant across hits, not a discriminator
+   between them). **Accepted as a known trade-off** — the only theoretical
+   full fix is hardware that doesn't clip in the first place (see Future
+   Hardware Idea below), which is out of scope for the current PCB revision.
+
+### Future hardware idea: dual-gain head-channel sensing (not in scope now)
+
+Raised while discussing the clipped-vs-clipped limitation, worth recording for
+the satellite module design specifically (2 jacks per satellite vs. 4 per head
+unit — spare ADC channels available where the head unit has none):
+- Tap the same piezo signal into TWO ADC channels: one unchanged
+  (high-gain/sensitive), one through an added series resistor forming a
+  voltage divider with the existing pull-down (low-gain/robust — attenuated
+  enough that no realistic hit, however hard, clips it).
+- Firmware: if the high-gain channel isn't clipped, use it directly (best
+  resolution). If it IS clipped, fall back to the low-gain channel's reading,
+  scaled back up by the known divider ratio — recovering a true-amplitude
+  estimate that a single clipped channel cannot provide.
+- This would fully solve the clipped-vs-clipped limitation above, IF sized
+  with enough low-gain headroom that no real hit ever clips that channel too.
+- **Rim does not need this** — rim is a discrimination signal (not something
+  we're extracting fine velocity nuance from) and isn't the channel driving
+  the retrigger-cancel/decay-oscillation problem.
+- Real design work needed before building this: the attenuation ratio has to
+  be chosen from real hit-amplitude data (same methodology as margin/capValue
+  calibration), not guessed — too little added headroom doesn't help, too much
+  loses resolution in the "moderate hit" crossover zone.
+- Not started; recorded here so it isn't lost, not an active task.
+
+### The three-phase model
+
+Hit detection is three distinct phases, each solving a different problem.
+They are complementary, not overlapping — confirmed explicitly against the
+TD-3 manual's own Mask Time vs Retrigger Cancel distinction:
+
+1. **Scan** (existing, unchanged) — threshold crossing starts a fixed-duration
+   window; the running max seen during that window becomes the hit velocity.
+2. **Mask** (existing, unchanged) — a flat, short, user-tunable blackout window
+   immediately after scan ends. Purpose: suppress **genuine physical re-contact**
+   that's real but musically unwanted — e.g. a kick beater bouncing back and
+   striking again, or a stick not rebounding cleanly. Per Roland's TD-3 manual:
+   "the beater can bounce back and hit the pad a second time immediately after
+   the intended note... Mask Time does not detect trigger signals if they occur
+   within the specified time after the previous trigger." This is a drummer/
+   mechanism-side problem — the tuning goal is "as short as possible while still
+   preventing bounce-back," a musical choice, unaffected by anything below.
+3. **Retrigger-cancel** (NEW, this spec) — starts the instant Mask ends. Purpose:
+   distinguish a pad's own decay/oscillation (real signal, but not a new strike)
+   from a genuine new impact. This is a pad-physics-side problem, structurally
+   different from what Mask solves, and needs a different mechanism because the
+   relevant timescale (pad decay, confirmed up to ~600-700ms on the PDX-12) is
+   far too long for a flat blackout window without destroying playability.
+
+### Retrigger-cancel mechanism
+
+Two processes run concurrently, every sample, from the moment Mask ends:
+
+**(a) New-strike check — fast, unconditional, no debounce:**
+```
+if (rawSignal > lastConfirmedPeak + margin):
+    genuine new strike detected
+    cancel retrigger-cancel monitoring
+    start a fresh Scan window immediately, from this sample
+```
+No confirmation delay needed here — `lastConfirmedPeak` is already a trusted
+reference, so clearing it by a real margin is decisive on its own. This is also
+what gives correct velocity for a second strike: it's captured by its own fresh
+Scan window, not estimated from the retrigger-cancel logic.
+
+**(b) Reference tracking — debounced, ratchets `lastConfirmedPeak` downward as
+decay progresses:**
+```
+state: FALLING or RISING
+
+FALLING: track running minimum.
+  Once signal rises more than `margin` above that minimum → confirmed trough,
+  switch to RISING.
+
+RISING: track running maximum.
+  Once signal falls more than `margin` below that maximum → confirmed peak.
+  Since (a) never fired, this peak is <= lastConfirmedPeak, i.e. genuinely
+  smaller — update lastConfirmedPeak DOWN to this new value.
+  Switch back to FALLING.
+```
+The `margin` requirement in both (a) and (b) is a single, shared parameter for
+now (see "Open items" below) — it exists specifically to reject small spurious
+rises from being mistaken for a genuine new peak/trough, whether those rises
+come from ordinary sample noise OR from a pad's decay being genuinely
+non-uniform (mesh heads in particular can wobble/fluctuate slightly during
+decay rather than falling smoothly — this is part of what TD-3's manual is
+describing when it mentions "altered waveforms" at the decaying edge). Treating
+both causes with the same margin-based prominence rule is deliberate: from the
+detector's point of view they're indistinguishable, and both need the same
+answer (ignore small wobbles, react to large ones).
+
+**Continuity at phase start:** `lastConfirmedPeak`'s initial value, at the exact
+moment retrigger-cancel begins (Mask just ended), is the Scan window's own
+recorded max — no separate seeding logic needed.
+
+**Exit conditions (two, not one):**
+- **Natural exit:** once `lastConfirmedPeak` has decayed down near the noise
+  floor / `headThreshold`, retrigger-cancel and plain threshold detection become
+  functionally identical — exit early rather than waiting out a fixed timer.
+- **Hard safety cap** (~800ms–1s, sized generously above the slowest decay
+  measured so far — the PDX-12's ~600-700ms rebound gaps, with real headroom):
+  guarantees the system always returns to normal state even if natural exit
+  can't cleanly fire. Concretely needed for pads like the KD-80 with a bouncy
+  beater providing sustained, irregular low-level contact — `lastConfirmedPeak`
+  may never cleanly settle near the noise floor in that case, so the timer is
+  the only guaranteed way out.
+  A fixed, generous cap costs nothing on fast pads (rubber etc.) since natural
+  exit fires well before the cap is ever relevant there — it only acts as a
+  backstop for the pads that actually need it.
+
+### What's user-tunable, and what changed as a result
+
+- **`margin` is the real tunable parameter** — not a time length. This is a
+  genuine simplification enabled by the natural-exit design: since exit
+  duration adapts automatically to how long each specific pad's decay actually
+  takes, a separate "retrigger length" setting per pad type is no longer
+  needed — only `margin` needs characterising per pad type.
+- The hard safety cap is a **fixed, non-user-facing constant**, not something
+  to expose — it's a backstop, not a musical control.
+- Starting with **one shared margin** for both (a) and (b) above, per pad — not
+  split into two separate values — until real data shows a reason to separate
+  them.
+
+### Known limitation, accepted deliberately
+
+A genuine second strike that happens to be **quieter** than wherever the decay
+currently sits is indistinguishable from a decaying residual peak using peak
+level alone — both look like "a rise that doesn't clear margin." This is judged
+to be a fundamental limit of amplitude-based discrimination (not a flaw unique
+to this design — TD-3's own "weeding out false trigger signals" wording doesn't
+claim to solve this either), and is accepted as a trade-off rather than solved
+here. The upside of the peak-to-previous-peak (not peak-to-original-strike)
+comparison: a genuine second hit only needs to clear wherever the decay
+currently sits, not the original strike's full level — so this limitation is
+narrower than it could be.
+
+### Open items for implementation / next steps
+
+- **Implement the two 2026-07-08 revisions** (retrig=0 opt-out path, seed cap)
+  against the existing v2 state machine — additive changes, not a rewrite.
+- **Margin calibration methodology** — almost certainly needs real recorded-
+  waveform data per pad type (mesh especially, now that scope is narrowed to
+  pads that actually need this feature), not a guessed constant. Natural home
+  for the previously-filed "recorded-waveform-driven decay/mask tuning"
+  future-phase idea (see Pending section).
+- **`capValue` (seed cap) also needs real calibration**, same methodology,
+  once the mechanism itself is confirmed working with a placeholder.
+- Whether the `peakSampleIdx` (attack-rate) concept has any remaining role as
+  a secondary confirmation signal was raised, then specifically re-examined
+  for the clipped-vs-clipped case and found NOT to help there (see Known
+  Limitations #2) — considered closed for now, not just deferred.
+
+---
+
+## Scan Redesign + EMA Smoothing + Tunable Constants (v3, agreed 2026-07-12)
+
+**Status: IMPLEMENTED AND HARDWARE-VALIDATED 2026-07-12 — genuinely working
+trigger module.** Tested across three pads simultaneously (PDX-8 mesh, CY-5,
+PD-7 rubber): **no audible double-triggering, no discernible missed hits.**
+This is the first session where the whole system played like a real trigger
+module end-to-end, not just individual mechanisms tested in isolation.
+
+### Hardware validation findings (2026-07-12)
+
+- **`[CHOKE]` flood immediately after `uploadfs` — expected side effect of the
+  reset, not a bug.** `PDrumTrigger`'s constructor default is `padType=1`
+  (PIEZO_SWITCH_CHOKE); a fresh config reset put every input back on that
+  default, including jack 0 (PDX-8, which needs `type=0` DUAL_PIEZO). Under
+  `type=1` the rim channel is read as a choke switch, so the PDX-8's genuine
+  rim piezo signal repeatedly registered as sustained choke contact. Fixed
+  with `w 0 type 0`. **If this recurs after any future `uploadfs`, check
+  `padType` first before assuming a new bug** — it's the constructor default
+  reasserting itself, every time.
+- **`scanexit=1` (hard-cap) fires broadly across the strength range, not just
+  on extreme/clipping hits — confirmed across a full soft-to-hard sweep on
+  the PDX-8.** Only the very softest hits (`truepeak` 24-90) reliably settle
+  before the cap; from roughly `truepeak=272` upward, hard-cap dominates,
+  with `confirms` often 8-10 — i.e. the signal is genuinely producing that
+  many separate confirmed local peaks in quick succession, each resetting the
+  5ms settle timer, right up until the 30ms cap forces a decision. **Not a
+  correctness bug** — the safety-net floor (`max(scanHeadBest_,
+  scanHeadTrk_.runMax)`, verified in code review) means the reported velocity
+  is still correct throughout (confirmed sensible values across the whole
+  sweep) — but it means Scan is spending close to the full hard-cap duration
+  on most non-trivial PDX-8 hits, relying on the backstop as the *normal*
+  path rather than the rare case it was designed for. Currently inaudible
+  (system plays great), but a real, specific latency characteristic —
+  `scanMargin` is the likely lever if this ever needs tightening (see Open
+  Items). Not urgent given how well it's playing right now — recorded so it's
+  understood, not chased further this session.
+
+### Implementation summary (for reference; see git history for full detail)
+
+Built in `PDrumTrigger.cpp/.h`: shared `ExtremumTracker` primitive (used by
+both the unchanged MONITOR ratchet-DOWN and the new Scan ratchet-UP, proven
+equivalent to the old inline MONITOR logic via a 5000-sequence differential
+port test); confirmation-based Scan on all three pad types (DUAL head+rim
+independently tracked, head-driven exit); EMA smoothing after spike-rejection
+(confirmed in code review — spike-rejection's history capture genuinely
+precedes the EMA reassignment); new telnet-`w` tunables `scanmargin`/
+`settlewait`/`ema` (raw `InputConfig` fields, NOT in SysEx; `scan` repurposed
+as Scan's hard-cap ms, default 30); `kRetrigSeedCap` reverted 4095→3500
+(was a temporary diagnostic override, see the Retrigger-Cancel section).
+Diagnostics: `scanexit`/`confirms`/`scandur` on `[HIT]`/`[RIM]`.
+
+### Open items
+
+- `scanMargin` tuning to reduce hard-cap reliance on the PDX-8 (see Hardware
+  Validation Findings above) — optional refinement, not currently a problem
+  a listener notices; revisit only if it becomes worth chasing.
+- Whether `scanMargin` ends up needing its own value or can share `retrig`'s
+  margin is still explicitly UNRESOLVED (only PDX-8 has been characterized in
+  depth for Scan specifically).
+- `settleWaitMs` and `emaAlpha` starting values remain placeholders — real
+  per-pad-type calibration is still an open, deferred task (same methodology
+  as `margin`/`capValue`).
+- Original full design rationale (why confirmation-based ratchet-UP was
+  chosen over Edrumulus's FIFO/pre-scan approach, the EMA-vs-band-pass
+  trade-off reasoning, pipeline ordering reasoning) preserved below for
+  reference — all still accurate, no changes needed after hardware testing.
+
+**Original status: DESIGNED, NOT YET IMPLEMENTED.** Grew out of testing the retrig=0/
+seed-cap revisions above on the PDX-8: found `scan=1` (and `scan=0.8` rounded
+to 0/1) badly undercounting some real hits — one moderate strike's true peak
+(1849) didn't arrive until ~40 samples (~5ms) after threshold crossing, while
+`scan=1` (~8 samples) locked in ~491 instead. Root cause identified: **this
+pad's attack SPEED varies with hit force** — hard/clipping hits peak in 2-3
+samples, moderate hits can take 5ms+. No single fixed `scantime` can be
+correct for both. Separately, investigating why the PDX-8 consistently
+produced exactly 3 registered hits per strike (confirmed independent of the
+seed-cap value via a live test — varying the seed 3500→4095 made zero
+difference to the "always 3" pattern, ruling that theory out) led to reading
+corrados/edrumulus's actual algorithm docs, which independently confirmed:
+band-pass-filtered piezo signals characteristically show **three distinct
+peaks "no matter what the original peak looks like"** — this is a known,
+general property of piezo signals, not a pad-specific mystery.
+
+### Confirmation-based Scan (replaces fixed-window Scan)
+
+**Core idea, agreed after evaluating and rejecting Edrumulus's FIFO/pre-scan
+approach as more machinery than needed:** rather than buffering samples and
+searching backward for the true peak (Edrumulus's method), make Scan
+structurally the mirror image of the already-working Monitor mechanism —
+ratchet **UP** toward the true peak instead of ratcheting **DOWN** as decay
+progresses. Reuses the same margin-debounced local-extremum-confirmation
+primitive Monitor already uses; implement as ONE shared helper used by both
+(ratchet direction as the only difference), not duplicated logic.
+
+Mechanism:
+1. Threshold crossing starts Scan (unchanged). Track a running candidate max.
+2. Once the signal falls more than `scanMargin` below that candidate → this
+   local max is CONFIRMED (same debounce as Monitor's peak/trough tracker).
+   Do NOT lock in and report yet — set it as the current best-confirmed-peak
+   and keep watching (this is the key difference from a naive "confirm once
+   and stop" version — needed specifically because Edrumulus found the
+   SECOND peak in the three-peak structure can be bigger than the first;
+   locking in on first confirmation would sometimes report the smaller one).
+3. If a NEW confirmed local max exceeds the current best → ratchet the
+   best-confirmed-peak UP to that new value (mirrors Monitor's downward
+   ratchet exactly, just inverted).
+4. **Settle exit:** once no new, higher confirmed peak has appeared for
+   `settleWaitMs` → commit the current best-confirmed-peak as final velocity,
+   transition to Mask.
+5. **Hard cap:** generous backstop duration so Scan can never hang
+   indefinitely on a pathological signal — same safety role as Monitor's
+   900ms cap, sized for Scan's much shorter real timescale.
+
+**`scantime`'s OLD meaning (fixed window duration) is retired — repurposed as
+Scan's hard-cap**, same pattern as `retrig` being repurposed for Monitor's
+margin. `scanMargin` is a genuinely NEW, separate parameter from `retrig`/
+Monitor's margin — explicitly NOT assumed to be the same value: attack rate
+and decay rate are different physical processes and may need different
+margins; may turn out one shared value works, may not — real data needed
+before concluding either way, not decided in the abstract.
+
+### EMA smoothing (approximates band-pass filtering, stays in raw ADC units)
+
+Investigated whether a proper band-pass filter (Edrumulus uses 40-400Hz) is
+worth adding. Conclusion: **not now** — real costs (filter delay needing
+compensation, and critically, it changes the signal's scale/shape enough that
+EVERY threshold/sens value tuned so far this week would need re-tuning, not
+just nudging). Instead: a band-pass filter is really a high-pass + low-pass
+stacked. **We already have the high-pass half** — DC-offset removal (the
+existing slow one-pole IIR) mathematically IS a high-pass filter, already
+blocking slow baseline drift. Adding a simple **EMA (exponential moving
+average)** provides the missing low-pass half, attenuating ordinary
+sample-to-sample ADC jitter (the noise-floor phenomenon measured repeatedly
+this project, ~4-17 counts). Together, DC-offset + EMA approximates a
+band-pass filter using only simple, already-trusted operations —
+**deliberately chosen over a proper filter for lower implementation risk,
+per this project's "simple version first, refine from data" working
+philosophy.**
+**Critically: both operations are plain subtract/average within the existing
+0-4095 raw ADC domain — no rescaling.** Every `thresh`/`sens`/`margin`/
+`scanMargin` value tuned this week stays meaningful. This was explicitly
+identified as the deciding advantage over a proper band-pass filter.
+
+**Pipeline order (decided): DC-offset removal → spike-rejection (existing,
+unchanged) → EMA (new).** Reasoning: spike-rejection specifically targets
+large single-sample outliers (the `SPIKE_THRESHOLD=200` mechanism); if EMA
+ran BEFORE spike-rejection, a genuine large glitch would get smeared across
+several samples by the EMA's own averaging instead of being cleanly caught
+and rejected as one bad sample. Running spike-rejection first on the more-raw
+signal, then EMA afterward on what's left, avoids this.
+
+**Starting alpha: ~0.5** (roughly equal weight on current sample vs. running
+smoothed value — effective time constant ~1-2 samples). Reasoning: must stay
+SAFELY FASTER than the fastest real attack measured (2-3 samples on a hard
+clipping hit) or the EMA would blunt exactly the fast transients the new
+confirmation-based Scan needs to see accurately — working against the very
+thing just designed. This is a REASONED starting point, not a validated one
+(same category as `kRetrigSeedCap`'s placeholder) — first real test is the
+same `a` (ADC dump) before/after comparison used for every other noise-floor
+measurement this project.
+
+### Tunable constants — telnet `w`, not the config file, as the fast-iteration path
+
+Given this phase is active algorithm tuning/building (not pad tuning), and
+given `w <input> <param> <value>` already works well for exactly this (used
+for `retrig` extensively this week) — new algorithm constants
+(`scanMargin`, `settleWaitMs`, `emaAlpha`) should be added the same way:
+new fields settable live via `w`, persisted in `InputConfig`/LittleFS like
+existing fields, taking effect immediately without a reboot.
+**Explicitly NOT wired into the SysEx protocol for now** — telnet-only,
+same bootstrap pattern `retrig` itself followed before any UI work existed
+for it. Avoids protocol/app changes while these values are still being
+found, not yet validated enough to expose to end users.
+
+### Open items
+
+- Whether `scanMargin` ends up needing its own value or can share `retrig`'s
+  margin is explicitly UNRESOLVED — build both as independent parameters,
+  let real testing (not reasoning) decide if they converge.
+- `settleWaitMs` and `emaAlpha` starting values are placeholders (see reasoning
+  above) — same calibration-later treatment as `margin`/`capValue`.
+- Real risk flagged, not yet tested: could add latency (however small) even to
+  pads that already work well (PD-7, CY-5) if their fast, clean attacks now
+  wait out a settle window before committing. Needs checking once built —
+  don't assume it's fine.
+
+---
+
 ## pdrum Library — Rewrite Plan
 
 Current difference-based algorithm is unreliable across all tested pads.
@@ -622,20 +1118,21 @@ the full picture. Summary of remaining gaps:
 
 ## Pending — Next Sessions
 
-**Immediate — fix retrigger-cancel measurement (top priority, added 2026-07-06):**
-- See "Retrigger-cancel v1 is BROKEN" under Hardware/debugging constraints above
-  for full detail. Short version: the samples-to-peak approach correctly killed
-  the machine-gun cascade, but is currently rejecting genuine hard hits and
-  accepting small residual tail events instead — backwards from intent.
-- Two parked, possibly-related bugs to investigate first (both about the scope's
-  view of a signal disagreeing with the detection path's own per-sample tracking):
-  the scope-capture duplication bug, and the `peakSampleIdx` mismatch itself.
-- Do NOT resume tuning `retrig`/`maxFastAttackSamples` values until the
-  measurement is trusted — the cutoff number isn't the problem, the thing being
-  measured is suspect.
-- `retrig` config field meaning changed 2026-07-06: now samples-to-peak cutoff
-  (not ms). Default changed 50 → 5 in `Config.cpp`. `w <input> retrig <value>`
-  already wired through `applyConfig()`/`setRetriggerTime()`.
+**[DONE 2026-07-12] Scan Redesign v3 + EMA + Tunable Constants + the two
+2026-07-08 retrigger-cancel revisions.** All implemented, hardware-validated
+across 3 pads (PDX-8, CY-5, PD-7), no audible double-triggering or missed
+hits. See "Scan Redesign + EMA Smoothing + Tunable Constants (v3)" section
+above for full detail and remaining minor open items (scanMargin tuning,
+margin/capValue calibration — none urgent).
+
+**Immediate — pad-specific tuning and setup (next focus, 2026-07-12):**
+General triggering behaviour is now considered "good enough" — shift focus
+from algorithm work to per-pad calibration (thresh/sens/margins) using the
+methodical characterization process established earlier this project
+(noise floor → dynamic range sweep → curve check → rim discrimination →
+choke calibration → mask/retrigger tuning), now with the ADC Scope's
+load-from-log-file + Config-block overlay tooling available to make this
+visual rather than reading raw numbers.
 
 **Future — recorded-waveform-driven decay/mask tuning (added 2026-07-06, do not
 start until the pdrum-revival Phase 1 + Phase 2 below are independently confirmed

@@ -1,0 +1,13 @@
+
+=== Session started 2026-07-11T12:43:13.020712 (192.168.1.168:23) ===
+[12:43:13.024] [dev] eDrum telnet console
+[12:43:13.732] [CHOKE] i=1 note=57 ch=10
+[12:43:14.754] [Config]
+[12:43:14.757]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=0 mask=8 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[12:43:14.759]   [1] en=1 type=1 note=57 ch=10 z2note=40 z2ch=10 thresh=20 sens=1023 scan=3 mask=39 ratio=40 chokethresh=50 choke=1 curve=0 retrig=50 seeds=-1 builds=-1
+[12:43:14.765]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:43:14.767]   [3] en=1 type=2 note=60 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[12:43:14.767]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[12:43:15.593] [CHOKE] i=1 note=57 ch=10
+[12:43:17.515] [CHOKE] i=1 note=57 ch=10
+=== Session ended 2026-07-11T12:43:23.550579 ===

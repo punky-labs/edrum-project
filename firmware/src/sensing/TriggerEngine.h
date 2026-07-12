@@ -71,19 +71,30 @@ public:
     virtual float getDebugDcOffsetHead()  const { return -1.0f; }
     virtual int   getDebugSpikeRejects()  const { return -1; }
 
-    // TEMP DIAGNOSTIC (retrigger-cancel validation): count of hits rejected for a
-    // too-slow attack (likely a mechanical rebound, not a genuine strike).
-    virtual int   getDebugRetriggerRejects() const { return -1; }
+    // TEMP DIAGNOSTIC (retrigger-cancel v2): live state-machine snapshot.
+    //   getDebugRcState(): 0=IDLE 1=SCAN 2=MASK 3=MONITOR (sentinel -1 = n/a).
+    //   getDebugLastConfirmedPeak(): reference the new-strike bar rides on.
+    //   getDebugRefRising(): reference sub-state (true=RISING, false=FALLING).
+    virtual int   getDebugRcState()           const { return -1; }
+    virtual int   getDebugLastConfirmedPeak() const { return -1; }
+    virtual bool  getDebugRefRising()         const { return false; }
 
-    // TEMP DIAGNOSTIC (retrigger-cancel validation cont'd): per-event detail for
-    // the most recent rejection, since rejections otherwise produce no visible
-    // signal at all (no hit, no MIDI, nothing for main to print). Mirrors the
-    // hasChoke()/clearChoke() latch pattern. Default no-op for other engines.
-    virtual bool  hasReject()               { return false; }
-    virtual void  clearReject()             {}
-    virtual int   getLastRejectPeakIdx()    const { return -1; }
-    virtual int   getLastRejectVelocityRaw() const { return -1; }
-    virtual int   getLastPeakIdx()          const { return -1; }
+    // TEMP DIAGNOSTIC (retrigger-cancel v2 event latch): MONITOR exits are momentary
+    // and would be missed between debug polls, so they're latched (mirrors
+    // hasChoke()/clearChoke()). getLastRetrigExit(): 0=NATURAL 1=HARDCAP 2=NEWSTRIKE.
+    // Default no-op for engines that don't implement retrigger-cancel.
+    virtual bool  hasRetrigEvent()               { return false; }
+    virtual void  clearRetrigEvent()             {}
+    virtual int   getLastRetrigExit()      const { return -1; }
+    virtual int   getLastRetrigExitLcp()   const { return -1; }
+    virtual int   getLastRetrigExitDurMs() const { return -1; }
+
+    // TEMP DIAGNOSTIC (confirmation-based Scan v3): last-commit detail (a Scan commit
+    // is always a [HIT]/[RIM], so these ride the hit print). getDebugScanExit():
+    // 0=SETTLE 1=HARDCAP (sentinel -1 = n/a). Confirms/DurMs describe the last scan.
+    virtual int   getDebugScanExit()     const { return -1; }
+    virtual int   getDebugScanConfirms() const { return -1; }
+    virtual int   getDebugScanDurMs()    const { return -1; }
 
     // Configuration — applied from g_inputs[] by applyConfig()
     virtual void setPadType(uint8_t t)               = 0;
@@ -100,6 +111,11 @@ public:
     // previously stored/shown but never applied). Default no-op so engines that
     // don't implement it (PDrum2Trigger) need no changes.
     virtual void setRetriggerTime(uint16_t)          {}
+    // NEW v3 tunables (telnet-`w` only; deliberately NOT in the SysEx protocol).
+    // Default no-op so engines that don't implement them (PDrum2Trigger) need no change.
+    virtual void setScanMargin(uint16_t)             {}
+    virtual void setSettleWaitMs(uint16_t)           {}
+    virtual void setEmaAlphaPct(uint16_t)            {}
     virtual uint8_t getNoteHead()    const           = 0;
 
     // Force any deferred, config-dependent rebuild to happen NOW (synchronously),

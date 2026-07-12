@@ -1,0 +1,49 @@
+
+=== Session started 2026-07-11T10:13:30.087983 (192.168.1.168:23) ===
+[10:13:30.091] [dev] eDrum telnet console
+[10:13:35.553] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:13:37.046] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:13:37.609] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:13:41.463] [eDrum] Build 0 — p=ping  i=identify  s=config  n=test note  r=reboot
+[10:13:41.467]   a=toggle ADC dump  d=toggle hit debug print  m=toggle diag mode (detection+MIDI off)
+[10:13:41.468]   o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope
+[10:13:41.469]   w <input> <param> <value> = set param (e.g. w 0 scan 3)
+[10:13:41.473]   params: thresh sens scan mask retrig type ratio chokethresh choke enable
+[10:13:57.604] [DBG] hit output ON
+[10:14:00.438] [HIT] t=39384 i=3 note=36 vel=127 raw=127 truepeak=4089 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=2779.0 dchead=30.1 spikerej=80 rcstate=2 lcp=3500 refrise=0
+[10:14:00.447] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:00.284] [HIT] t=99236 i=3 note=36 vel=127 raw=127 truepeak=2288 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=1291.0 dchead=24.1 spikerej=95 rcstate=2 lcp=2288 refrise=0
+[10:15:00.294] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:00.804] [HIT] t=99755 i=3 note=36 vel=127 raw=127 truepeak=2048 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=1339.0 dchead=50.7 spikerej=110 rcstate=2 lcp=2048 refrise=0
+[10:15:00.819] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:01.295] [HIT] t=100242 i=3 note=36 vel=127 raw=127 truepeak=4049 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=2402.0 dchead=82.7 spikerej=136 rcstate=2 lcp=3500 refrise=0
+[10:15:01.302] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:01.797] [HIT] t=100750 i=3 note=36 vel=127 raw=127 truepeak=266 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=395.0 dchead=66.7 spikerej=138 rcstate=2 lcp=266 refrise=0
+[10:15:01.812] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:02.366] [HIT] t=101317 i=3 note=36 vel=127 raw=127 truepeak=4066 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=1298.0 dchead=55.3 spikerej=165 rcstate=2 lcp=3500 refrise=0
+[10:15:02.375] [SysEx TX] F0 00 7D 00 05 03 03 00 7F 7F F7
+[10:15:21.221] [HIT] t=120170 i=0 note=38 vel=31 raw=31 truepeak=809 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=2922.0 dchead=22.1 spikerej=11 rcstate=2 lcp=809 refrise=0
+[10:15:21.229] [SysEx TX] F0 00 7D 00 05 03 00 00 1F 1F F7
+[10:15:21.333] [RCEXIT] t=120282 i=0 exit=0 lcp=42 dur=52ms margin=30
+[10:15:21.334] [HIT] t=120286 i=0 note=38 vel=1 raw=1 truepeak=32 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=-37.0 dchead=80.3 spikerej=38 rcstate=2 lcp=32 refrise=0
+[10:15:21.346] [SysEx TX] F0 00 7D 00 05 03 00 00 01 01 F7
+[10:15:21.400] [RCEXIT] t=120346 i=0 exit=0 lcp=32 dur=0ms margin=30
+[10:15:35.326] [Config]
+[10:15:35.326]   [0] en=1 type=2 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=3250 scan=3 mask=57 ratio=40 chokethresh=50 choke=1 curve=0 retrig=30 seeds=-1 builds=-1
+[10:15:35.326]   [1] en=0 type=1 note=38 ch=10 z2note=40 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[10:15:35.326]   [2] en=0 type=1 note=42 ch=10 z2note=46 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[10:15:35.333]   [3] en=1 type=2 note=36 ch=10 z2note=53 z2ch=10 thresh=149 sens=152 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=0 retrig=0 seeds=-1 builds=-1
+[10:15:35.336]   [4] en=1 type=1 note=44 ch=10 z2note=44 z2ch=10 thresh=20 sens=800 scan=3 mask=80 ratio=40 chokethresh=50 choke=1 curve=4 retrig=50 seeds=-1 builds=-1
+[10:16:12.965] [HIT] t=171916 i=0 note=38 vel=78 raw=78 truepeak=1999 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=685.0 dchead=27.6 spikerej=49 rcstate=2 lcp=1999 refrise=0
+[10:16:13.021] [SysEx TX] F0 00 7D 00 05 03 00 00 4E 4E F7
+[10:16:13.025] [RCEXIT] t=171979 i=0 exit=2 lcp=535 dur=1ms margin=30
+[10:16:13.029] [HIT] t=171983 i=0 note=38 vel=23 raw=23 truepeak=590 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=-47.0 dchead=65.6 spikerej=60 rcstate=2 lcp=590 refrise=1
+[10:16:13.039] [SysEx TX] F0 00 7D 00 05 03 00 00 17 17 F7
+[10:16:13.111] [RCEXIT] t=172043 i=0 exit=0 lcp=-4 dur=4ms margin=30
+[10:16:15.299] [HIT] t=174252 i=0 note=38 vel=3 raw=3 truepeak=94 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=3832.0 dchead=27.5 spikerej=68 rcstate=2 lcp=94 refrise=0
+[10:16:15.308] [SysEx TX] F0 00 7D 00 05 03 00 00 03 03 F7
+[10:16:15.364] [RCEXIT] t=174312 i=0 exit=0 lcp=37 dur=0ms margin=30
+[10:16:15.366] [HIT] t=174320 i=0 note=38 vel=2 raw=2 truepeak=58 ch=10 rescues=0 thresh=-1.000 peak=-1.000 mask=-1 decay=-1 decaylen=-1 xfilt=-1.000 xfiltdecay=-1.000 loopt=0 piezodc=-71.0 dchead=70.5 spikerej=97 rcstate=2 lcp=58 refrise=0
+[10:16:15.377] [SysEx TX] F0 00 7D 00 05 03 00 00 02 02 F7
+[10:16:16.329] [RCEXIT] t=175282 i=0 exit=1 lcp=58 dur=903ms margin=30
+=== Session ended 2026-07-11T10:38:44.367216 ===
