@@ -1,6 +1,6 @@
 # eDrum Project — MIDI SysEx Protocol Specification
-**Version:** 0.2  
-**Last updated:** 2026-06-08
+**Version:** 0.3  
+**Last updated:** 2026-07-14
 
 ---
 
@@ -55,10 +55,38 @@ Example: value 1000 (0x03E8) → `07 68`
 | `02 06` | `[INPUT_ID]` | Get pad config | Request current config for one input |
 | `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RRATIO_HI] [RRATIO_LO] [CHOKETHRESH_HI] [CHOKETHRESH_LO] [CHOKE_EN]` | Pad config response | Full config dump for one input (19 bytes). `RRATIO` = DUAL_PIEZO rim ratio threshold (ratio×100). `CHOKETHRESH` = PIEZO_SWITCH_CHOKE switch threshold (ADC units). `CHOKE_EN` = choke enabled (0/1). |
 | `02 0B` | `[INPUT_ID] [SENS_HI] [SENS_LO]` | Set head sensitivity | Upper ADC bound for velocity scaling, 14-bit split |
-| `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split |
+| `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split (v3: repurposed as Scan's hard-cap ms — see below) |
 | `02 0D` | `[INPUT_ID] [MASK_HI] [MASK_LO]` | Set mask time | Post-hit ignore window in ms, 14-bit split |
-| `02 0E` | `[INPUT_ID] [RSENS_HI] [RSENS_LO]` | Set rim sensitivity | Rim/zone-2 sensitivity, 14-bit split |
-| `02 0F` | `[INPUT_ID] [RTHRESH_HI] [RTHRESH_LO]` | Set rim threshold | Rim/zone-2 threshold, 14-bit split |
+| `02 0E` | `[INPUT_ID] [RRATIO_HI] [RRATIO_LO]` | Set rim ratio threshold | **Repurposed 2026-06 from its original "rim sensitivity" name** — sets `rimRatioThreshold` (DUAL_PIEZO classify gate, ratio×100), 14-bit split. NOT the same field as `rimSensitivity` added in `02 15` below — see that command's note. |
+| `02 0F` | `[INPUT_ID] [CHOKETHRESH_HI] [CHOKETHRESH_LO]` | Set choke threshold | **Repurposed 2026-06 from its original "rim threshold" name** — sets `chokeThreshold` (PIEZO_SWITCH_CHOKE switch level, ADC units), 14-bit split. NOT the same field as `rimThreshold` added in `02 14` below — see that command's note. |
+| `02 10` | `[INPUT_ID] [ENABLED]` | Set choke enabled | `chokeEnabled` (PIEZO_SWITCH_CHOKE), 0/1. **Command byte existed since this table's 0x0B–0x0F block was added, but had no firmware handler until 2026-07-14 — the app's "Choke" checkbox was silently failing until this fix.** |
+
+### Secondary Trigger Behaviours v1 + Scan v3 tunables (added 2026-07-14)
+
+Twelve fields added to firmware 2026-07-12 (telnet-`w`-only until this SysEx
+exposure). Three apply to every pad type (Scan v3, not gated by `padType`);
+nine are DUAL_PIEZO- or PIEZO_SWITCH_CHOKE-specific. `02 1D`/`02 1E` is a
+bundled GET/response for all twelve, mirroring the `02 06`/`02 07` pattern
+rather than requiring twelve separate round-trips. These fields are also
+appended (same order, 19 bytes) to the end of each per-input record in the
+`04 06` preset export — see that command's note.
+
+| Command | Data bytes | Name | Description |
+|---|---|---|---|
+| `02 11` | `[INPUT_ID] [MARGIN_HI] [MARGIN_LO]` | Set scan margin | `scanMargin` — raw ADC counts, Scan confirmation prominence. Applies to ALL pad types. 14-bit split. |
+| `02 12` | `[INPUT_ID] [WAIT_HI] [WAIT_LO]` | Set settle wait | `settleWaitMs` — Scan settle-exit wait in ms. Applies to ALL pad types. 14-bit split. |
+| `02 13` | `[INPUT_ID] [ALPHA]` | Set EMA alpha | `emaAlpha` — EMA smoothing alpha ×100 (0–100). Applies to ALL pad types. Single byte. |
+| `02 14` | `[INPUT_ID] [RTHRESH_HI] [RTHRESH_LO]` | Set rim threshold | `rimThreshold` (DUAL_PIEZO) — rim's own independent fire gate, raw ADC. Distinct from `rimRatioThreshold` (`02 0E`) — this is the prerequisite floor gate, that's the head-vs-rim classify ratio. 14-bit split. |
+| `02 15` | `[INPUT_ID] [RSENS_HI] [RSENS_LO]` | Set rim sensitivity | `rimSensitivity` (DUAL_PIEZO) — rim's own independent velocity-scaling upper bound, raw ADC. Distinct from the legacy `02 0E` slot. 14-bit split. |
+| `02 16` | `[INPUT_ID] [CURVE_TYPE]` | Set rim curve | `rimCurve` (DUAL_PIEZO) — same curve enum as `02 03`, applied to the rim zone independently of the head's curve. Single byte. |
+| `02 17` | `[INPUT_ID] [NOTE]` | Set cross-stick note | `crossStickNote` (DUAL_PIEZO) — MIDI note for a soft (cross-stick) rim hit. Single byte. |
+| `02 18` | `[INPUT_ID] [VELOCITY]` | Set cross-stick cutoff | `crossStickCutoff` (DUAL_PIEZO) — **MIDI VELOCITY units 0–127, NOT raw ADC** (deliberately different domain from every other threshold/margin in this protocol). Below this curved rim velocity → cross-stick note; above → normal rim note. Single byte. |
+| `02 19` | `[INPUT_ID] [NOTE]` | Set alternate note | `alternateNote` (PIEZO_SWITCH_CHOKE) — MIDI note sent instead of the head note when a hit coincides with an already-elevated switch channel. Single byte. |
+| `02 1A` | `[INPUT_ID] [MINVEL_HI] [MINVEL_LO]` | Set alt-note min velocity | `minAltNoteVelocity` (PIEZO_SWITCH_CHOKE) — min head peak (raw ADC) required to qualify for the alternate note. 14-bit split. |
+| `02 1B` | `[INPUT_ID] [HOLD_HI] [HOLD_LO]` | Set choke hold time | `chokeHoldMs` (PIEZO_SWITCH_CHOKE) — sustain time in ms to confirm a choke (real-world target ~500ms). 14-bit split. |
+| `02 1C` | `[INPUT_ID] [GRACE_HI] [GRACE_LO]` | Set choke release grace | `chokeReleaseGraceMs` (PIEZO_SWITCH_CHOKE) — release-side debounce window in ms; a dip below `chokeThreshold` shorter than this doesn't reset the hold accumulator. 14-bit split. |
+| `02 1D` | `[INPUT_ID]` | Get extended pad config | Request the 12 fields above for one input, bundled (mirrors `02 06`). |
+| `02 1E` | `[INPUT_ID] [MARGIN_HI] [MARGIN_LO] [WAIT_HI] [WAIT_LO] [ALPHA] [RTHRESH_HI] [RTHRESH_LO] [RSENS_HI] [RSENS_LO] [RCURVE] [XSTICK_NOTE] [XSTICK_CUTOFF] [ALT_NOTE] [MINVEL_HI] [MINVEL_LO] [HOLD_HI] [HOLD_LO] [GRACE_HI] [GRACE_LO]` | Extended pad config response | Response to `02 1D` (20 bytes). Field order matches the SET commands above. |
 
 ### Pad type values
 00 = piezo (single zone)
@@ -109,7 +137,7 @@ Preset names are ASCII, maximum 16 characters, length-prefixed.
 | `04 03` | none | List presets | Request all saved preset IDs and names |
 | `04 04` | `[COUNT] [PRESET_ID] [NAME_LEN] [NAME_BYTES...]...` | List presets response | Returns all presets |
 | `04 05` | `[PRESET_ID]` | Delete preset | Remove a preset from flash |
-| `04 06` | `[PRESET_ID] [ALL_PAD_CONFIG...]` | Export preset | Full preset data dump for Python-side saving (24 bytes per input) |
+| `04 06` | `[PRESET_ID] [ALL_PAD_CONFIG...]` | Export preset | Full preset data dump for Python-side saving (43 bytes per input as of 2026-07-14, grown from 24 — append-only, so the first 24 bytes of each record are unchanged. The appended 19 bytes are the Secondary Trigger Behaviours v1 + Scan v3 fields, same order/encoding as the `02 1E` response body minus its leading `INPUT_ID` byte.) |
 
 ---
 

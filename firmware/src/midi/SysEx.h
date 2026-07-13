@@ -41,8 +41,31 @@
 #define SYSEX_PAD_SET_SENS        0x0B
 #define SYSEX_PAD_SET_SCAN        0x0C
 #define SYSEX_PAD_SET_MASK        0x0D
-#define SYSEX_PAD_SET_RIM_SENS    0x0E
-#define SYSEX_PAD_SET_RIM_THRESH  0x0F
+#define SYSEX_PAD_SET_RIM_SENS    0x0E   // repurposed: sets rimRatioThreshold (DUAL_PIEZO classify gate)
+#define SYSEX_PAD_SET_RIM_THRESH  0x0F   // repurposed: sets chokeThreshold (PIEZO_SWITCH_CHOKE)
+#define SYSEX_PAD_SET_CHOKE_EN    0x10   // chokeEnabled — byte already used by the app; handler added 2026-07
+
+// ---- Added 2026-07: Secondary Trigger Behaviours v1 + Scan v3 tunables.
+// These fields have existed in InputConfig/firmware since 2026-07-12 (telnet-`w`
+// only until now) — this is the first SysEx exposure. See project_state.md,
+// "SysEx Extension — Secondary Trigger Behaviours v1 + Scan v3" for the design.
+#define SYSEX_PAD_SET_SCAN_MARGIN   0x11  // scanMargin (raw ADC), 14-bit
+#define SYSEX_PAD_SET_SETTLE_WAIT   0x12  // settleWaitMs, 14-bit
+#define SYSEX_PAD_SET_EMA_ALPHA     0x13  // emaAlpha (0-100), 1 byte
+#define SYSEX_PAD_SET_RIM_GATE      0x14  // rimThreshold (raw ADC) — DUAL_PIEZO rim's own fire gate.
+                                          // NOT the same field as SYSEX_PAD_SET_RIM_SENS (0x0E, which
+                                          // is rimRatioThreshold) — deliberately distinct name to avoid
+                                          // repeating the 0x0E/0x0F naming collision.
+#define SYSEX_PAD_SET_RIM_SCALE     0x15  // rimSensitivity (raw ADC) — DUAL_PIEZO rim's own scaling bound
+#define SYSEX_PAD_SET_RIM_CURVE     0x16  // rimCurve (enum, same values as velocityCurve), 1 byte
+#define SYSEX_PAD_SET_XSTICK_NOTE   0x17  // crossStickNote (MIDI note), 1 byte
+#define SYSEX_PAD_SET_XSTICK_CUTOFF 0x18  // crossStickCutoff — MIDI VELOCITY units (0-127), NOT raw ADC
+#define SYSEX_PAD_SET_ALT_NOTE      0x19  // alternateNote (MIDI note), 1 byte
+#define SYSEX_PAD_SET_ALT_MIN_VEL   0x1A  // minAltNoteVelocity (raw ADC), 14-bit
+#define SYSEX_PAD_SET_CHOKE_HOLD    0x1B  // chokeHoldMs, 14-bit
+#define SYSEX_PAD_SET_CHOKE_GRACE   0x1C  // chokeReleaseGraceMs, 14-bit
+#define SYSEX_PAD_GET_EXT           0x1D  // [INPUT_ID] -> bundled GET for all 12 fields above
+#define SYSEX_PAD_RESP_EXT          0x1E  // response payload, see SysEx.cpp for byte layout
 
 // Category 03 — MIDI mapping
 #define SYSEX_MIDI_SET_NOTE  0x01

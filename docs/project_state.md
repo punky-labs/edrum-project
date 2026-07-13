@@ -1,12 +1,12 @@
 # eDrum Project State
-Last updated: 2026-07-14 — MILESTONE: all basic firmware trigger functions
-implemented (Scan v3, Retrigger-Cancel v2, Snare Rim, Cymbal Choke +
-Alternate-Note). Project transitions from synthetic/structured testing to
-REAL-WORLD PLAYING TESTING from here — expect this to surface issues no
-sweep caught. Next major initiative: bring the config app's UI up to date
-with the many new tunable fields added during this firmware phase (currently
-telnet-`w`-only) — to be tackled in a NEW chat within this project, starting
-with an inventory pass (app UI vs. real firmware fields) before any changes.
+Last updated: 2026-07-14 — App UI wiring for the Secondary Trigger
+Behaviours v1 + Scan v3 fields is IMPLEMENTED and self-verified via a
+headless PyQt6 instantiation test (see "App UI Wiring" section below) —
+NOT YET validated on real hardware/emulator, that's the next step. SysEx
+wiring (firmware + Python protocol layer) was completed and self-tested
+earlier this same session — see "SysEx Extension" section. Underlying
+milestone still stands: all basic firmware trigger functions implemented,
+project in REAL-WORLD PLAYING TESTING mode.
 
 ---
 
@@ -457,12 +457,17 @@ Opened from Dev menu → ADC Scope…
 
 ## Protocol
 
-- SysEx v0.2, manufacturer ID 00 7D
+- SysEx v0.3, manufacturer ID 00 7D
 - Spec: docs/sysex_spec.md (authoritative)
 - NUM_INPUTS = 5 (4 jacks + 1 hi-hat)
 - INPUT_ID range: 00–04
-- Link/unlink/input-status commands removed (02 08, 02 09, 02 0A)
-- 57 Python self-tests passing
+- Link/unlink/input-status commands (`02 08`/`02 09`/`02 0A`) are
+  IMPLEMENTED and in active use (`pad_config_tab.py`'s refresh worker calls
+  `02 0A` on every input load) — an earlier version of this doc incorrectly
+  said they'd been removed; corrected 2026-07-14 after checking `SysEx.cpp`
+  directly rather than trusting the old note.
+- 108 Python self-tests passing (expanded 2026-07-14 for the Secondary
+  Trigger Behaviours v1 + Scan v3 SysEx extension — see that section above)
 
 ---
 
@@ -1433,6 +1438,230 @@ found, not yet validated enough to expose to end users.
 
 ---
 
+## SysEx Extension — Secondary Trigger Behaviours v1 + Scan v3 (2026-07-14)
+
+**Status: IMPLEMENTED AND SELF-TESTED 2026-07-14 (firmware + Python protocol
+layer only — app UI wiring is the separate next task, not started).** This
+is the prerequisite work identified by the App UI parity inventory pass (see
+Pending section below for that history): the 12 fields added during the
+Secondary Trigger Behaviours v1 + Scan v3 firmware phase were telnet-`w`-only
+and had no SysEx commands, so no UI slider could round-trip them even once
+built. This session designed and implemented the wire additions; UI widgets
+themselves are untouched.
+
+### What was built
+
+**Firmware (`firmware/src/midi/SysEx.h` + `SysEx.cpp`):**
+- 12 new individual `SET` commands, Category 02, bytes `0x11`–`0x1C` — one
+  per field, matching the existing one-command-per-field pattern (not
+  bundled), so live slider drags stay cheap single-field writes.
+- One new bundled `GET`/`RESP` pair, `0x1D`/`0x1E`, mirroring the existing
+  `02 06`/`02 07` pattern rather than requiring 12 separate round-trips on
+  every input refresh.
+- Preset export (`04 06`) grew from 24 to 43 bytes per input (append-only —
+  first 24 bytes byte-for-byte unchanged) so presets round-trip the new
+  fields too.
+- **Real bug fixed along the way:** `chokeEnabled` (`0x10`) was already
+  defined in both `SysEx.h` and `protocol/sysex.py`, and the app's existing
+  "Choke" checkbox was already sending it — but `SysEx.cpp`'s `handlePad()`
+  had no `case` for it, so every toggle of that checkbox silently fell
+  through to the unknown-command ack. Added the missing handler.
+- Encoding follows existing precedent exactly: single byte for anything
+  ≤127 (`emaAlpha`, `rimCurve`, `crossStickNote`, `crossStickCutoff`,
+  `alternateNote`), 14-bit split via the existing `encode14`/`decode14`
+  helpers for raw-ADC/ms fields.
+
+**Python (`app/protocol/sysex.py`):**
+- Matching constants, 12 new builders, the bundled GET/RESP parser, and an
+  updated preset-export parser for the 43-byte records.
+- **Naming landmine found and fixed:** the file had two aliases —
+  `build_set_rim_sensitivity = build_set_rim_ratio_threshold` and
+  `build_set_rim_threshold = build_set_choke_threshold` — left over from
+  when `02 0E`/`02 0F` were repurposed in June. Now that *real*
+  `rimThreshold`/`rimSensitivity` fields exist as of this session, those
+  alias names would have silently pointed at the wrong command if reused.
+  Confirmed unused (`pad_config_tab.py` already calls the explicit
+  `build_set_rim_ratio_threshold`/`build_set_choke_threshold` names) and
+  deleted; new fields got unambiguous names instead (`build_set_rim_gate_
+  threshold`, `build_set_rim_scale` — deliberately avoiding "threshold"/
+  "sensitivity" alone, since those words are already claimed by the ratio/
+  choke fields).
+- Self-test suite expanded from the prior count to **108 assertions**,
+  covering: all 12 new builders' cmd_low + payload round-trip, a regression
+  guard that the new rim commands' byte values never collide with `0x0E`/
+  `0x0F` and that the deleted aliases genuinely don't exist, the
+  `crossStickCutoff` 0–127 MIDI-velocity range validation, the bundled
+  GET/RESP round-trip, the `chokeEnabled` fix, and a full 43-byte preset
+  export record round-trip. **Run and confirmed passing** (copied into a
+  sandbox and executed directly — genuinely run, not just written) with
+  zero regressions against every pre-existing test in the file.
+
+**Docs (`docs/sysex_spec.md`):** updated to v0.3 — new `02 11`–`02 1E` rows,
+`04 06`'s grown record documented, and the `02 0E`/`02 0F` rows corrected to
+state their actual repurposed meaning (the doc previously still called them
+"rim sensitivity"/"rim threshold" despite `SysEx.cpp` having repurposed them
+months earlier — a real doc-vs-code drift caught during this pass, not just
+a gap).
+
+### Command layout reference
+
+| Byte | Field | Encoding |
+|---|---|---|
+| `0x10` | `chokeEnabled` (handler was missing — now fixed) | 1 byte bool |
+| `0x11` | `scanMargin` (ALL pad types) | 14-bit |
+| `0x12` | `settleWaitMs` (ALL pad types) | 14-bit |
+| `0x13` | `emaAlpha` (ALL pad types) | 1 byte (0–100) |
+| `0x14` | `rimThreshold` (DUAL_PIEZO) | 14-bit |
+| `0x15` | `rimSensitivity` (DUAL_PIEZO) | 14-bit |
+| `0x16` | `rimCurve` (DUAL_PIEZO) | 1 byte |
+| `0x17` | `crossStickNote` (DUAL_PIEZO) | 1 byte |
+| `0x18` | `crossStickCutoff` (DUAL_PIEZO) — MIDI velocity 0–127, NOT raw ADC | 1 byte |
+| `0x19` | `alternateNote` (PIEZO_SWITCH_CHOKE) | 1 byte |
+| `0x1A` | `minAltNoteVelocity` (PIEZO_SWITCH_CHOKE) | 14-bit |
+| `0x1B` | `chokeHoldMs` (PIEZO_SWITCH_CHOKE) | 14-bit |
+| `0x1C` | `chokeReleaseGraceMs` (PIEZO_SWITCH_CHOKE) | 14-bit |
+| `0x1D`/`0x1E` | bundled GET/RESP for all 12 fields above | — |
+
+### Other findings surfaced during this pass, deliberately not fixed now
+
+- **`presets_tab.py`** (the dev "Presets Editor" floating window, a
+  *different* preset system from `pad_config_tab.py`'s "My Presets"
+  dropdown — both go through `ui/presets.py`'s local JSON file, but with
+  inconsistent field names) still reads/writes local preset dicts under the
+  keys `rim_threshold`/`rim_sensitivity`, while `pad_config_tab.py`'s own
+  preset-apply code reads `rim_ratio_threshold`/`choke_threshold` for the
+  same conceptual slot. This mismatch predates this session and is
+  independent of the SysEx work above (it's local-JSON-schema drift, not a
+  wire issue) — flagged for whoever next touches the Presets Editor, not
+  fixed here.
+- **`project_state.md`'s own Protocol section** (below) previously stated
+  "Link/unlink/input-status commands removed (02 08, 02 09, 02 0A)" — false;
+  confirmed via `SysEx.cpp` that all three are implemented and in active use
+  (`pad_config_tab.py`'s refresh worker calls `02 0A` on every input load).
+  Corrected below.
+
+### Open items — next task
+
+- **App UI wiring is now DONE** — see "App UI Wiring — Secondary Trigger
+  Behaviours v1" section immediately below for full detail.
+
+---
+
+## App UI Wiring — Secondary Trigger Behaviours v1 (2026-07-14)
+
+**Status: IMPLEMENTED and self-verified via headless PyQt6 instantiation
+test. NOT YET validated on real hardware or the emulator — that's the
+immediate next step, and the actual visual layout (panel width/crowding)
+hasn't been eyeballed on a real screen.**
+
+### Scope agreed before building (design decisions, not defaults picked
+unilaterally)
+
+Of the 12 fields the SysEx Extension exposed, three were deliberately cut
+from UI scope this round, and one got a simplified treatment:
+- **`rimCurve`** — parked. Kept as an implicit linear curve for now; Andrew's
+  call is that a real curve-type selector for this field is a bigger design
+  exercise belonging in the Velocity Curve graph panel, not a bolt-on combo
+  here. The SysEx command (`02 16`) and Python builder
+  (`build_set_rim_curve`) still exist and work — just nothing in the UI
+  calls them yet.
+- **`scanMargin`, `settleWaitMs`, `emaAlpha`** — kept OUT of the UI
+  entirely, per Andrew: these are system/algorithm-tuning parameters, not
+  musician-facing pad behaviour, and don't belong in this app's UI at all
+  for now. Also fully wired at the SysEx layer (`02 11`/`02 12`/`02 13`) and
+  reachable via telnet `w` if ever needed — just no widget.
+- **`crossStickCutoff`** — built as a plain slider in Trigger Settings, no
+  special range labelling or visual treatment, per Andrew ("a slider is
+  probably visual enough indication"). Its 0–127 MIDI-velocity domain (vs.
+  raw-ADC for its slider neighbours) is left unmarked for now; friendlier
+  range labelling is a deferred, later task once user-facing ranges are
+  designed generally (see the parked 1–16-abstraction discussion earlier
+  this session).
+
+That left **8 fields** actually built this round.
+
+### What was built
+
+**Trigger Settings panel (`app/ui/pad_config_tab.py`) — 6 new sliders,**
+following the exact existing pattern (`_TRIGGER_BUILDERS` entry + `params`
+list entry + `_update_zone_visibility` group), same mechanism applied 6
+times, not 6 separate designs:
+- DUAL_PIEZO-only: `rimThreshold`, `rimSensitivity` (both raw ADC, 0–1023 —
+  matches the existing `_sens` slider's range convention), `crossStickCutoff`
+  (0–127, MIDI velocity)
+- PIEZO_SWITCH_CHOKE-only: `minAltNoteVelocity` (raw ADC, 0–1023),
+  `chokeHoldMs` (0–1000ms, headroom above the ~500ms real-world target),
+  `chokeReleaseGraceMs` (0–200ms, headroom above the 30ms placeholder)
+
+**MIDI tab — 2 new note-combo rows**, confirmed against firmware
+(`main_esp32s3.cpp`) that neither needs its own channel field:
+- `crossStickNote` (DUAL_PIEZO-only) — fires on the existing Rim Channel
+  spinbox (firmware: uses `zone2MidiChannel`)
+- `alternateNote` (PIEZO_SWITCH_CHOKE-only) — fires on the existing Head
+  Channel spinbox (firmware: uses `midiChannel`)
+
+**Refresh worker (`_RefreshWorker._fetch_input`) — 4th fetch step added.**
+A real gap caught before it shipped: the worker only fetched status/pad-
+config/MIDI-mapping (3 SysEx round-trips per input); without a 4th step
+calling the new bundled `02 1D` GET, none of the new sliders/combos would
+ever show real device values on refresh — only their populate-time fallback
+defaults. Added, matching the existing 3 steps' structure exactly.
+
+**Visibility grouping**: `_rim_midi_widgets` gained the cross-stick row;
+a new `_choke_midi_widgets` group was added for the alternate-note row
+(the MIDI tab previously only had dual/hi-hat groups, no choke-only group).
+
+### Verification performed (this session, before declaring done)
+
+No real hardware or emulator available in this environment, so verification
+was done in layers, each one designed to catch a different class of bug:
+1. **Syntax check** (`ast.parse`) — clean.
+2. **Structural check** — confirmed every `_TRIGGER_BUILDERS` key has
+   exactly one matching entry in the Trigger Settings `params` list and
+   vice versa (no orphaned slider config, no unwired slider).
+3. **Real headless PyQt6 instantiation** (`QT_QPA_PLATFORM=offscreen`) —
+   built the actual `PadConfigTab` widget tree using the real, already-
+   tested `protocol/sysex.py` (only non-logic dependencies like `theme.py`/
+   `asset_loader.py` were stubbed). Confirmed the whole tree constructs
+   without exception.
+4. **Populated from fake device data** for both a DUAL_PIEZO and a
+   PIEZO_SWITCH_CHOKE config, covering all 8 new fields — confirmed every
+   new slider and both new note-combos land on the exact expected value.
+5. **Visibility toggling verified across all 3 real pad types**, for both
+   the Trigger Settings panel and the MIDI tab rows. First attempt showed
+   false negatives across the board (including on `_rim_ratio`, pre-existing
+   untouched code) — traced to a test-harness gap, not a real bug: the
+   detail page sits on a `QStackedWidget` page and the MIDI rows sit on a
+   non-default `QTabWidget` tab, and Qt's `isVisible()` only reflects reality
+   once those parent pages are actually current. Fixed the test (drove it
+   through the real `_select_input()`/tab-switch path instead of poking
+   internals directly) and reran — all checks passed cleanly after that.
+6. Slider-change and MIDI-change handlers exercised directly with no live
+   transport connected — confirmed they no-op safely rather than raising.
+
+**Explicitly NOT verified** (needs Andrew, hardware or emulator, real eyes):
+- Live SysEx round-trip against real firmware (send/ack/refresh cycle)
+- Actual visual layout — the Trigger Settings panel grew from 7 to 13
+  possible columns (max 9 shown at once for any single pad type, since
+  DUAL_PIEZO/CHOKE-specific groups are mutually exclusive) — whether that
+  reads well on a real screen hasn’t been checked
+- Preset apply/save round-trip for the new fields (deliberately NOT wired
+  into `_on_preset_apply`/`_on_preset_save` this round — those still only
+  cover the original 7 fields; extending the local "My Presets" schema to
+  the new fields wasn't in scope and would compound the already-flagged
+  `presets_tab.py` key-name mismatch if done carelessly)
+
+### Next steps
+
+- Andrew: connect real hardware or launch the emulator, confirm the new
+  sliders/combos round-trip correctly and the panel reads well visually.
+- Deferred, not urgent: extend local preset save/apply to the 8 new fields;
+  resolve the `presets_tab.py` key-name mismatch (flagged in the SysEx
+  Extension section above); revisit `rimCurve` alongside the Velocity Curve
+  panel; the 1–16 abstraction layer discussed earlier this session.
+
+---
+
 ## pdrum Library — Rewrite Plan
 
 Current difference-based algorithm is unreliable across all tested pads.
@@ -1526,22 +1755,26 @@ implemented, awaiting hardware validation — see below). Project moves from
 structured/synthetic testing to REAL-WORLD PLAYING as the primary testing
 mode from here.
 
-**Immediate, TOP PRIORITY — App UI parity (NEW CHAT recommended, see below):**
-The config app's UI has not kept pace with the many new tunable fields added
-during this firmware phase — rim threshold/sensitivity/curve, cross-stick
-note/cutoff, alternate note/velocity, choke hold/release-grace, retrigger
-margin, scan margin, settle-wait, EMA alpha — currently ALL telnet-`w`-only,
-none exposed in the app. This is a different domain (Python/PyQt6 app code,
-not firmware/C++) with almost no technical overlap to the rest of this
-document's recent history — start a NEW chat within this project for this
-work (project_state.md is the continuity mechanism, not chat history).
-Recommended approach: an INVENTORY pass first (cross-reference the app's
-current UI code against every real tunable field now in firmware, grounded
-in actual code on both sides, not memory) to build a concrete list — then
-work through that list one feature at a time, not all at once (this
-firmware phase repeatedly found that features which looked simple grew real
-complexity once actually worked through — cross-stick alone went through
-three designs; expect UI work to be similar).
+**Immediate, TOP PRIORITY — App UI parity (SysEx wiring DONE 2026-07-14,
+UI widgets DONE 2026-07-14, pending Andrew's hardware/emulator validation):**
+The config app's UI has not kept pace with the many new tunable fields
+added during the firmware phase below — rim threshold/sensitivity, cross-
+stick note/cutoff, alternate note/velocity, choke hold/release-grace. The
+inventory pass, the SysEx wiring those fields needed, AND the actual UI
+widgets are now all complete — see "SysEx Extension" and "App UI Wiring —
+Secondary Trigger Behaviours v1" sections above for full detail. UI work
+was self-verified via a headless PyQt6 instantiation test (widget tree
+builds, populates from fake device data correctly, visibility toggles
+correctly across all pad types) but **has NOT been run against real
+hardware or the emulator, and the actual visual layout hasn't been
+eyeballed on a real screen** — that's the immediate next step. Four
+fields (`rimCurve`, `scanMargin`, `settleWaitMs`, `emaAlpha`) were
+deliberately left out of UI scope per Andrew's call (rimCurve belongs with
+a future Velocity Curve panel redesign; the other three are system-level,
+not musician-facing) — fully wired at the SysEx layer regardless, just no
+widget. UI sliders use raw ADC values matching firmware directly, per
+Andrew's explicit call — the abstracted 1–16-style user-facing scale
+discussed is a deliberately deferred, later, presentation-only pass.
 
 **Immediate — choke hold-time release-debounce (2026-07-14, IMPLEMENTED,
 NOT YET HARDWARE-VALIDATED):** `chokeReleaseGraceMs` fix confirmed present

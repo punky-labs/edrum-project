@@ -71,16 +71,27 @@ try:
         PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
         PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
         PAD_SET_CHOKE_EN,
+        PAD_SET_RIM_GATE, PAD_SET_RIM_SCALE,
+        PAD_SET_XSTICK_NOTE, PAD_SET_XSTICK_CUTOFF,
+        PAD_SET_ALT_NOTE, PAD_SET_ALT_MIN_VEL,
+        PAD_SET_CHOKE_HOLD, PAD_SET_CHOKE_GRACE,
+        PAD_GET_EXT, PAD_RESP_EXT,
         MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
         SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
+        build_get_pad_config_ext,
         build_set_pad_type, build_set_threshold, build_set_velocity_curve,
         build_set_retrigger_time, build_set_head_sensitivity,
         build_set_scan_time, build_set_mask_time,
         build_set_rim_ratio_threshold, build_set_choke_threshold, build_set_choke_enabled,
+        build_set_rim_gate_threshold, build_set_rim_scale,
+        build_set_cross_stick_note, build_set_cross_stick_cutoff,
+        build_set_alternate_note, build_set_alt_min_velocity,
+        build_set_choke_hold_ms, build_set_choke_release_grace_ms,
         build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
         build_save_to_flash,
-        parse_pad_config_response, parse_midi_mapping_response,
+        parse_pad_config_response, parse_pad_config_ext_response,
+        parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         INPUT_ACTIVE, INPUT_RESERVED,
     )
@@ -95,16 +106,27 @@ except ImportError:
         PAD_SET_TYPE, PAD_SET_THRESH, PAD_SET_CURVE, PAD_SET_RETRIG,
         PAD_SET_SENS, PAD_SET_SCAN, PAD_SET_MASK, PAD_SET_RIM_SENS, PAD_SET_RIM_THRESH,
         PAD_SET_CHOKE_EN,
+        PAD_SET_RIM_GATE, PAD_SET_RIM_SCALE,
+        PAD_SET_XSTICK_NOTE, PAD_SET_XSTICK_CUTOFF,
+        PAD_SET_ALT_NOTE, PAD_SET_ALT_MIN_VEL,
+        PAD_SET_CHOKE_HOLD, PAD_SET_CHOKE_GRACE,
+        PAD_GET_EXT, PAD_RESP_EXT,
         MIDI_SET_NOTE, MIDI_SET_Z2, MIDI_SET_CC,
         SYS_SAVE,
         build_get_pad_config, build_get_midi_mapping, build_get_input_status,
+        build_get_pad_config_ext,
         build_set_pad_type, build_set_threshold, build_set_velocity_curve,
         build_set_retrigger_time, build_set_head_sensitivity,
         build_set_scan_time, build_set_mask_time,
         build_set_rim_ratio_threshold, build_set_choke_threshold, build_set_choke_enabled,
+        build_set_rim_gate_threshold, build_set_rim_scale,
+        build_set_cross_stick_note, build_set_cross_stick_cutoff,
+        build_set_alternate_note, build_set_alt_min_velocity,
+        build_set_choke_hold_ms, build_set_choke_release_grace_ms,
         build_set_note_mapping, build_set_zone2_mapping, build_set_cc_mapping,
         build_save_to_flash,
-        parse_pad_config_response, parse_midi_mapping_response,
+        parse_pad_config_response, parse_pad_config_ext_response,
+        parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         INPUT_ACTIVE, INPUT_RESERVED,
     )
@@ -227,6 +249,13 @@ _TRIGGER_BUILDERS: dict[str, tuple] = {
     "_retrig":       (build_set_retrigger_time,      CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",      0,  200,  " ms"),
     "_rim_ratio":    (build_set_rim_ratio_threshold, CAT_PAD, PAD_SET_RIM_SENS,   "rim_ratio_threshold", 0,  100,  ""),
     "_choke_thresh": (build_set_choke_threshold,     CAT_PAD, PAD_SET_RIM_THRESH, "choke_threshold",     0,  200,  ""),
+    # ---- Secondary Trigger Behaviours v1 (2026-07-14 UI wiring) ----
+    "_rim_thresh":   (build_set_rim_gate_threshold,        CAT_PAD, PAD_SET_RIM_GATE,      "rim_threshold",          0, 1023, ""),
+    "_rim_sens":     (build_set_rim_scale,                 CAT_PAD, PAD_SET_RIM_SCALE,     "rim_sensitivity",        0, 1023, ""),
+    "_xstick_cutoff":(build_set_cross_stick_cutoff,        CAT_PAD, PAD_SET_XSTICK_CUTOFF, "cross_stick_cutoff",     0,  127, ""),
+    "_alt_min_vel":  (build_set_alt_min_velocity,          CAT_PAD, PAD_SET_ALT_MIN_VEL,   "min_alt_note_velocity", 0, 1023, ""),
+    "_choke_hold":   (build_set_choke_hold_ms,             CAT_PAD, PAD_SET_CHOKE_HOLD,    "choke_hold_ms",          0, 1000, " ms"),
+    "_choke_grace":  (build_set_choke_release_grace_ms,    CAT_PAD, PAD_SET_CHOKE_GRACE,   "choke_release_grace_ms", 0,  200, " ms"),
 }
 
 
@@ -636,6 +665,29 @@ class _RefreshWorker(QThread):
         if midi_cfg:
             result.update(midi_cfg)
 
+        # --- extended pad config (Secondary Trigger Behaviours v1, 02 1D/1E) ---
+        # Bundled GET added 2026-07-14 alongside the UI widgets that need it —
+        # rim threshold/sensitivity, cross-stick note/cutoff, alternate note,
+        # min-alt-velocity, choke hold/release-grace. Without this fetch those
+        # sliders/combos would only ever show their populate-time fallback
+        # defaults, never the device's actual stored values.
+        event4  = threading.Event()
+        ext_cfg: dict = {}
+
+        def on_ext(msg: dict) -> None:
+            if (msg["cmd_high"] == CAT_PAD and msg["cmd_low"] == 0x1E
+                    and len(msg["payload"]) >= 20
+                    and msg["payload"][0] == input_id):
+                ext_cfg.update(parse_pad_config_ext_response(msg["payload"]))
+                event4.set()
+
+        transport.add_listener("refresh_worker", on_ext)
+        transport.send(build_get_pad_config_ext(input_id))
+        if not event4.wait(2.0):
+            log.warning("Timeout fetching input %d (step=%s)", input_id, "pad_config_ext")
+        if ext_cfg:
+            result.update(ext_cfg)
+
         return result
 
 
@@ -927,7 +979,13 @@ class PadConfigTab(QWidget):
             ("Mask\n(ms)",      "_mask"),
             ("Retrigger\n(ms)", "_retrig"),
             ("Rim\nRatio",      "_rim_ratio"),
+            ("Rim\nThresh",     "_rim_thresh"),
+            ("Rim\nSens",       "_rim_sens"),
+            ("X-Stick\nCutoff", "_xstick_cutoff"),
             ("Choke\nThresh",   "_choke_thresh"),
+            ("Choke\nHold",     "_choke_hold"),
+            ("Choke\nGrace",    "_choke_grace"),
+            ("Alt Min\nVel",    "_alt_min_vel"),
         ]
 
         self._param_widgets: dict[str, tuple[QWidget, QWidget]] = {}
@@ -1071,7 +1129,31 @@ class PadConfigTab(QWidget):
         self._combo_midi_rim_note.currentIndexChanged.connect(self._on_midi_rim_changed)
         self._spin_midi_rim_ch.valueChanged.connect(self._on_midi_rim_changed)
 
-        # Row 2: CC number + channel (hihat only)
+        # Row 2: Cross-stick note (dual-zone only) — fires on the Rim Channel
+        # above (firmware: crossStickNote uses zone2MidiChannel), so no
+        # separate channel field is needed here.
+        self._lbl_xstick_note        = _lbl("Cross-Stick Note")
+        self._combo_midi_xstick_note = self._make_note_combo()
+        self._combo_midi_xstick_note.setToolTip("Fires on the Rim Channel above")
+
+        grid.addWidget(self._lbl_xstick_note,         2, 0)
+        grid.addWidget(self._combo_midi_xstick_note,  2, 1)
+
+        self._combo_midi_xstick_note.currentIndexChanged.connect(self._on_midi_xstick_changed)
+
+        # Row 3: Alternate note (choke-only) — fires on the Head Channel
+        # above (firmware: alternateNote uses midiChannel), so no separate
+        # channel field is needed here.
+        self._lbl_alt_note        = _lbl("Alternate Note")
+        self._combo_midi_alt_note = self._make_note_combo()
+        self._combo_midi_alt_note.setToolTip("Fires on the Head Channel above")
+
+        grid.addWidget(self._lbl_alt_note,        3, 0)
+        grid.addWidget(self._combo_midi_alt_note, 3, 1)
+
+        self._combo_midi_alt_note.currentIndexChanged.connect(self._on_midi_alt_changed)
+
+        # Row 4: CC number + channel (hihat only)
         self._lbl_cc_num       = _lbl("CC Number")
         self._spin_midi_cc_num = QSpinBox()
         self._spin_midi_cc_num.setRange(0, 127)
@@ -1079,10 +1161,10 @@ class PadConfigTab(QWidget):
         self._lbl_cc_ch        = _lbl("CC Channel")
         self._spin_midi_cc_ch  = _ch_spin()
 
-        grid.addWidget(self._lbl_cc_num,              2, 0)
-        grid.addWidget(self._spin_midi_cc_num,        2, 1)
-        grid.addWidget(self._lbl_cc_ch,               2, 3)
-        grid.addWidget(self._spin_midi_cc_ch,         2, 4)
+        grid.addWidget(self._lbl_cc_num,              4, 0)
+        grid.addWidget(self._spin_midi_cc_num,        4, 1)
+        grid.addWidget(self._lbl_cc_ch,               4, 3)
+        grid.addWidget(self._spin_midi_cc_ch,         4, 4)
 
         self._spin_midi_cc_num.valueChanged.connect(self._on_midi_cc_changed)
         self._spin_midi_cc_ch.valueChanged.connect(self._on_midi_cc_changed)
@@ -1090,6 +1172,10 @@ class PadConfigTab(QWidget):
         self._rim_midi_widgets: list[QWidget] = [
             self._lbl_rim_note, self._combo_midi_rim_note,
             self._lbl_rim_ch,   self._spin_midi_rim_ch,
+            self._lbl_xstick_note, self._combo_midi_xstick_note,
+        ]
+        self._choke_midi_widgets: list[QWidget] = [
+            self._lbl_alt_note, self._combo_midi_alt_note,
         ]
         self._hihat_midi_widgets: list[QWidget] = [
             self._lbl_cc_num, self._spin_midi_cc_num,
@@ -1390,6 +1476,14 @@ class PadConfigTab(QWidget):
             self._set_slider("_rim_ratio",    cfg.get("rim_ratio_threshold", 40))
             self._set_slider("_choke_thresh", cfg.get("choke_threshold", 50))
 
+            # Secondary Trigger Behaviours v1 sliders (2026-07-14 UI wiring)
+            self._set_slider("_rim_thresh",    cfg.get("rim_threshold", 0))
+            self._set_slider("_rim_sens",      cfg.get("rim_sensitivity", 0))
+            self._set_slider("_xstick_cutoff", cfg.get("cross_stick_cutoff", 25))
+            self._set_slider("_alt_min_vel",   cfg.get("min_alt_note_velocity", 0))
+            self._set_slider("_choke_hold",    cfg.get("choke_hold_ms", 500))
+            self._set_slider("_choke_grace",   cfg.get("choke_release_grace_ms", 30))
+
             choke_en = cfg.get("choke_enabled", True)
             self._choke_enabled_cb.blockSignals(True)
             self._choke_enabled_cb.setChecked(choke_en)
@@ -1406,6 +1500,12 @@ class PadConfigTab(QWidget):
             z2c = cfg.get("zone2_channel", 1)
             self._set_note_combo(self._combo_midi_rim_note, z2n)
             self._spin_midi_rim_ch.setValue(z2c)
+
+            # Cross-stick / alternate note MIDI (2026-07-14 UI wiring) — both
+            # reuse the channel spinboxes above (rim channel / head channel
+            # respectively), so no channel value to set here.
+            self._set_note_combo(self._combo_midi_xstick_note, cfg.get("cross_stick_note", 37))
+            self._set_note_combo(self._combo_midi_alt_note,    cfg.get("alternate_note", 53))
 
             # CC MIDI
             self._spin_midi_cc_num.setValue(cfg.get("cc_number", 0))
@@ -1430,8 +1530,11 @@ class PadConfigTab(QWidget):
             self._slider_thresh, self._slider_sens, self._slider_scan,
             self._slider_mask, self._slider_retrig,
             self._slider_rim_ratio, self._slider_choke_thresh, self._choke_enabled_cb,
+            self._slider_rim_thresh, self._slider_rim_sens, self._slider_xstick_cutoff,
+            self._slider_alt_min_vel, self._slider_choke_hold, self._slider_choke_grace,
             self._combo_midi_head_note, self._spin_midi_head_ch,
             self._combo_midi_rim_note,  self._spin_midi_rim_ch,
+            self._combo_midi_xstick_note, self._combo_midi_alt_note,
             self._spin_midi_cc_num,     self._spin_midi_cc_ch,
         ]
 
@@ -1444,14 +1547,28 @@ class PadConfigTab(QWidget):
         col, _ = self._param_widgets["_rim_ratio"]
         col.setVisible(is_dual)
 
+        # Rim threshold/sensitivity + cross-stick cutoff sliders: DUAL_PIEZO only
+        for key in ("_rim_thresh", "_rim_sens", "_xstick_cutoff"):
+            col, _ = self._param_widgets[key]
+            col.setVisible(is_dual)
+
         # Choke threshold slider + checkbox: PIEZO_SWITCH_CHOKE only
         col, _ = self._param_widgets["_choke_thresh"]
         col.setVisible(is_choke)
         self._choke_enabled_cb.setVisible(is_choke)
 
-        # MIDI rim fields: DUAL_PIEZO only
+        # Choke hold/release-grace + alt-note min-velocity sliders: PIEZO_SWITCH_CHOKE only
+        for key in ("_choke_hold", "_choke_grace", "_alt_min_vel"):
+            col, _ = self._param_widgets[key]
+            col.setVisible(is_choke)
+
+        # MIDI rim fields (incl. cross-stick note): DUAL_PIEZO only
         for widget in self._rim_midi_widgets:
             widget.setVisible(is_dual)
+
+        # MIDI choke fields (alternate note): PIEZO_SWITCH_CHOKE only
+        for widget in self._choke_midi_widgets:
+            widget.setVisible(is_choke)
 
         # MIDI CC fields: hi-hat types only
         for widget in self._hihat_midi_widgets:
@@ -1545,6 +1662,30 @@ class PadConfigTab(QWidget):
         cfg["zone2_channel"] = ch
         msg = build_set_zone2_mapping(self._selected_id, note, ch)
         self._enqueue_write(self._selected_id, "midi_z2", msg, CAT_MIDI, MIDI_SET_Z2)
+
+    def _on_midi_xstick_changed(self) -> None:
+        if self._selected_id is None:
+            return
+        note = self._combo_midi_xstick_note.currentData()
+        if note is None:
+            return
+        self._configs.setdefault(self._selected_id, {})["cross_stick_note"] = note
+        msg = build_set_cross_stick_note(self._selected_id, note)
+        self._enqueue_write(
+            self._selected_id, "cross_stick_note", msg, CAT_PAD, PAD_SET_XSTICK_NOTE
+        )
+
+    def _on_midi_alt_changed(self) -> None:
+        if self._selected_id is None:
+            return
+        note = self._combo_midi_alt_note.currentData()
+        if note is None:
+            return
+        self._configs.setdefault(self._selected_id, {})["alternate_note"] = note
+        msg = build_set_alternate_note(self._selected_id, note)
+        self._enqueue_write(
+            self._selected_id, "alternate_note", msg, CAT_PAD, PAD_SET_ALT_NOTE
+        )
 
     def _on_midi_cc_changed(self) -> None:
         if self._selected_id is None:

@@ -232,6 +232,139 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
             break;
 
+        case SYSEX_PAD_SET_CHOKE_EN:
+            // Byte 0x10 was already defined and sent by the app's "Choke" checkbox;
+            // this handler was missing, so the checkbox has been silently failing.
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].chokeEnabled = (p[1] != 0);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        // ---- Secondary Trigger Behaviours v1 + Scan v3 tunables (2026-07-12 in
+        // firmware, first exposed over SysEx here). All write directly into the
+        // matching InputConfig field; applyConfig()/syncConfig() (main_esp32s3.cpp)
+        // already picks these up unchanged, so no engine-side change is needed.
+
+        case SYSEX_PAD_SET_SCAN_MARGIN:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].scanMargin = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_SETTLE_WAIT:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].settleWaitMs = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_EMA_ALPHA:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].emaAlpha = p[1];
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RIM_GATE:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].rimThreshold = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RIM_SCALE:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].rimSensitivity = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_RIM_CURVE:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].rimCurve = p[1];
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_XSTICK_NOTE:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].crossStickNote = p[1];
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_XSTICK_CUTOFF:
+            // MIDI velocity units (0-127), NOT raw ADC — single byte, no decode14.
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].crossStickCutoff = p[1];
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_ALT_NOTE:
+            if (pLen < 2 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].alternateNote = p[1];
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_ALT_MIN_VEL:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].minAltNoteVelocity = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_CHOKE_HOLD:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].chokeHoldMs = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_SET_CHOKE_GRACE:
+            if (pLen < 3 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            g_inputs[p[0]].chokeReleaseGraceMs = decode14(p[1], p[2]);
+            g_apply_requested = true;
+            sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_OK);
+            break;
+
+        case SYSEX_PAD_GET_EXT: {
+            // Bundled GET for all 12 fields above — mirrors the SYSEX_PAD_GET (0x06)
+            // pattern rather than requiring 12 separate round-trips.
+            if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
+            const InputConfig& c = g_inputs[p[0]];
+            uint8_t scanm_hi, scanm_lo, settle_hi, settle_lo;
+            uint8_t rimt_hi, rimt_lo, rims_hi, rims_lo;
+            uint8_t altmin_hi, altmin_lo, chold_hi, chold_lo, cgrace_hi, cgrace_lo;
+            encode14(c.scanMargin,          &scanm_hi,  &scanm_lo);
+            encode14(c.settleWaitMs,        &settle_hi, &settle_lo);
+            encode14(c.rimThreshold,        &rimt_hi,   &rimt_lo);
+            encode14(c.rimSensitivity,      &rims_hi,   &rims_lo);
+            encode14(c.minAltNoteVelocity,  &altmin_hi, &altmin_lo);
+            encode14(c.chokeHoldMs,         &chold_hi,  &chold_lo);
+            encode14(c.chokeReleaseGraceMs, &cgrace_hi, &cgrace_lo);
+            uint8_t buf[20] = {
+                p[0],
+                scanm_hi, scanm_lo,
+                settle_hi, settle_lo,
+                (uint8_t)c.emaAlpha,
+                rimt_hi, rimt_lo,
+                rims_hi, rims_lo,
+                c.rimCurve,
+                c.crossStickNote,
+                c.crossStickCutoff,
+                c.alternateNote,
+                altmin_hi, altmin_lo,
+                chold_hi, chold_lo,
+                cgrace_hi, cgrace_lo
+            };
+            sysexSendResponse(deviceId, SYSEX_CAT_PAD, SYSEX_PAD_RESP_EXT, buf, 20);
+            break;
+        }
+
         default:
             sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_UNKNOWN);
             break;
@@ -360,7 +493,10 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
                 sendAck(deviceId, SYSEX_CAT_PRESET, cmd, SYSEX_ACK_ERROR);
                 return;
             }
-            uint8_t buf[2 + PRESET_NAME_LEN + NUM_INPUTS * 24];
+            // Record grew from 24 to 43 bytes/input on 2026-07 (append-only — the
+            // first 24 bytes are byte-for-byte unchanged, so this is backward
+            // compatible with anything that only reads the original fields).
+            uint8_t buf[2 + PRESET_NAME_LEN + NUM_INPUTS * 43];
             uint8_t nlen = (uint8_t)strlen(pr.name);
             size_t pos = 0;
             buf[pos++] = p[0]; // preset ID
@@ -403,6 +539,32 @@ static void handlePreset(uint8_t deviceId, uint8_t cmd,
                 buf[pos++] = c.ccNumber;
                 buf[pos++] = c.ccChannel;
                 buf[pos++] = (c.linkedInput == 0xFF) ? SYSEX_LINKED_NONE : c.linkedInput;
+
+                // ---- Appended 2026-07: Secondary Trigger Behaviours v1 + Scan v3
+                // (19 bytes, same field order/encoding as SYSEX_PAD_RESP_EXT minus
+                // the leading INPUT_ID byte, which this record doesn't repeat).
+                uint8_t scanm_hi, scanm_lo, settle_hi, settle_lo;
+                uint8_t rimt_hi, rimt_lo, rims_hi, rims_lo;
+                uint8_t altmin_hi, altmin_lo, chold_hi, chold_lo, cgrace_hi, cgrace_lo;
+                encode14(c.scanMargin,          &scanm_hi,  &scanm_lo);
+                encode14(c.settleWaitMs,        &settle_hi, &settle_lo);
+                encode14(c.rimThreshold,        &rimt_hi,   &rimt_lo);
+                encode14(c.rimSensitivity,      &rims_hi,   &rims_lo);
+                encode14(c.minAltNoteVelocity,  &altmin_hi, &altmin_lo);
+                encode14(c.chokeHoldMs,         &chold_hi,  &chold_lo);
+                encode14(c.chokeReleaseGraceMs, &cgrace_hi, &cgrace_lo);
+                buf[pos++] = scanm_hi;   buf[pos++] = scanm_lo;
+                buf[pos++] = settle_hi;  buf[pos++] = settle_lo;
+                buf[pos++] = (uint8_t)c.emaAlpha;
+                buf[pos++] = rimt_hi;    buf[pos++] = rimt_lo;
+                buf[pos++] = rims_hi;    buf[pos++] = rims_lo;
+                buf[pos++] = c.rimCurve;
+                buf[pos++] = c.crossStickNote;
+                buf[pos++] = c.crossStickCutoff;
+                buf[pos++] = c.alternateNote;
+                buf[pos++] = altmin_hi;  buf[pos++] = altmin_lo;
+                buf[pos++] = chold_hi;   buf[pos++] = chold_lo;
+                buf[pos++] = cgrace_hi;  buf[pos++] = cgrace_lo;
             }
             sysexSendResponse(deviceId, SYSEX_CAT_PRESET, SYSEX_PRE_EXPORT, buf, pos);
             break;

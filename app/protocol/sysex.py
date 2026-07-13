@@ -67,9 +67,32 @@ PAD_GET_STATUS     = 0x0A
 PAD_SET_SENS       = 0x0B
 PAD_SET_SCAN       = 0x0C
 PAD_SET_MASK       = 0x0D
-PAD_SET_RIM_SENS   = 0x0E
-PAD_SET_RIM_THRESH = 0x0F
+PAD_SET_RIM_SENS   = 0x0E   # repurposed: sets rimRatioThreshold (DUAL_PIEZO classify gate)
+PAD_SET_RIM_THRESH = 0x0F   # repurposed: sets chokeThreshold (PIEZO_SWITCH_CHOKE)
 PAD_SET_CHOKE_EN   = 0x10   # Set chokeEnabled for PIEZO_SWITCH_CHOKE pads
+
+# ---------------------------------------------------------------------------
+# Added 2026-07 — Secondary Trigger Behaviours v1 + Scan v3 tunables.
+# These InputConfig fields have existed in firmware since 2026-07-12 (telnet-`w`
+# only until now); this is their first SysEx exposure. Mirrors SysEx.h exactly.
+# ---------------------------------------------------------------------------
+PAD_SET_SCAN_MARGIN   = 0x11   # scanMargin (raw ADC), 14-bit
+PAD_SET_SETTLE_WAIT   = 0x12   # settleWaitMs, 14-bit
+PAD_SET_EMA_ALPHA     = 0x13   # emaAlpha (0-100), 1 byte
+PAD_SET_RIM_GATE      = 0x14   # rimThreshold (raw ADC) — DUAL_PIEZO rim's own fire gate.
+                                # Distinct from PAD_SET_RIM_SENS (0x0E, rimRatioThreshold) —
+                                # deliberately different name to avoid the 0x0E/0x0F
+                                # naming collision below.
+PAD_SET_RIM_SCALE     = 0x15   # rimSensitivity (raw ADC) — DUAL_PIEZO rim's own scaling bound
+PAD_SET_RIM_CURVE     = 0x16   # rimCurve (enum, same values as velocity curve), 1 byte
+PAD_SET_XSTICK_NOTE   = 0x17   # crossStickNote (MIDI note), 1 byte
+PAD_SET_XSTICK_CUTOFF = 0x18   # crossStickCutoff — MIDI VELOCITY units (0-127), NOT raw ADC
+PAD_SET_ALT_NOTE      = 0x19   # alternateNote (MIDI note), 1 byte
+PAD_SET_ALT_MIN_VEL   = 0x1A   # minAltNoteVelocity (raw ADC), 14-bit
+PAD_SET_CHOKE_HOLD    = 0x1B   # chokeHoldMs, 14-bit
+PAD_SET_CHOKE_GRACE   = 0x1C   # chokeReleaseGraceMs, 14-bit
+PAD_GET_EXT           = 0x1D   # [INPUT_ID] -> bundled GET for all 12 fields above
+PAD_RESP_EXT          = 0x1E   # response, see parse_pad_config_ext_response for layout
 
 # Pad type values
 PAD_TYPE_DUAL_PIEZO         = 0x00   # Head piezo + rim piezo (PDX-8, PDX-12)
@@ -374,9 +397,118 @@ def build_set_choke_enabled(input_id: int, enabled: bool,
     return _build(CAT_PAD, PAD_SET_CHOKE_EN, [input_id, 1 if enabled else 0], device_id)
 
 
-# Aliases — these now target the new firmware parameters
-build_set_rim_sensitivity = build_set_rim_ratio_threshold
-build_set_rim_threshold   = build_set_choke_threshold
+# NOTE: this file used to alias build_set_rim_sensitivity/build_set_rim_threshold
+# to the ratio/choke builders above, from when 0x0E/0x0F were repurposed. Real
+# rimSensitivity/rimThreshold fields now exist (see build_set_rim_scale /
+# build_set_rim_gate_threshold below) and would collide with those alias names,
+# so the aliases were removed rather than silently pointing at the wrong command.
+# They were unused (pad_config_tab.py already calls the explicit names below).
+
+
+# ---------------------------------------------------------------------------
+# Category 02 builders (cont.) — Secondary Trigger Behaviours v1 + Scan v3
+# ---------------------------------------------------------------------------
+
+def build_set_scan_margin(input_id: int, value: int,
+                           device_id: int = DEV_HEAD) -> bytearray:
+    """Set scanMargin (raw ADC) — applies to all pad types, not type-gated."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_SCAN_MARGIN, [input_id, hi, lo], device_id)
+
+
+def build_set_settle_wait_ms(input_id: int, ms: int,
+                              device_id: int = DEV_HEAD) -> bytearray:
+    """Set settleWaitMs — applies to all pad types, not type-gated."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(ms)
+    return _build(CAT_PAD, PAD_SET_SETTLE_WAIT, [input_id, hi, lo], device_id)
+
+
+def build_set_ema_alpha(input_id: int, alpha_pct: int,
+                         device_id: int = DEV_HEAD) -> bytearray:
+    """Set emaAlpha (0-100) — applies to all pad types, not type-gated."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_SET_EMA_ALPHA, [input_id, alpha_pct], device_id)
+
+
+def build_set_rim_gate_threshold(input_id: int, value: int,
+                                  device_id: int = DEV_HEAD) -> bytearray:
+    """Set rimThreshold (raw ADC) — DUAL_PIEZO rim's own fire gate, independent
+    of rimRatioThreshold (build_set_rim_ratio_threshold, a different field)."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_RIM_GATE, [input_id, hi, lo], device_id)
+
+
+def build_set_rim_scale(input_id: int, value: int,
+                         device_id: int = DEV_HEAD) -> bytearray:
+    """Set rimSensitivity (raw ADC) — DUAL_PIEZO rim's own scaling upper bound."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_RIM_SCALE, [input_id, hi, lo], device_id)
+
+
+def build_set_rim_curve(input_id: int, curve_type: int,
+                         device_id: int = DEV_HEAD) -> bytearray:
+    """Set rimCurve (DUAL_PIEZO) — same curve enum as build_set_velocity_curve."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_SET_RIM_CURVE, [input_id, curve_type], device_id)
+
+
+def build_set_cross_stick_note(input_id: int, note: int,
+                                device_id: int = DEV_HEAD) -> bytearray:
+    """Set crossStickNote (DUAL_PIEZO) — MIDI note for a soft (cross-stick) rim hit."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_SET_XSTICK_NOTE, [input_id, note], device_id)
+
+
+def build_set_cross_stick_cutoff(input_id: int, velocity: int,
+                                  device_id: int = DEV_HEAD) -> bytearray:
+    """Set crossStickCutoff (DUAL_PIEZO) — MIDI VELOCITY units 0-127, NOT raw ADC
+    (deliberately different domain from every other threshold in this protocol)."""
+    _check_input_id(input_id)
+    if not 0 <= velocity <= 127:
+        raise ValueError(f"crossStickCutoff {velocity} out of MIDI velocity range (0-127)")
+    return _build(CAT_PAD, PAD_SET_XSTICK_CUTOFF, [input_id, velocity], device_id)
+
+
+def build_set_alternate_note(input_id: int, note: int,
+                              device_id: int = DEV_HEAD) -> bytearray:
+    """Set alternateNote (PIEZO_SWITCH_CHOKE) — MIDI note for a coincident edge hit."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_SET_ALT_NOTE, [input_id, note], device_id)
+
+
+def build_set_alt_min_velocity(input_id: int, value: int,
+                                device_id: int = DEV_HEAD) -> bytearray:
+    """Set minAltNoteVelocity (raw ADC, PIEZO_SWITCH_CHOKE) — min head peak to
+    qualify for the alternate note."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(value)
+    return _build(CAT_PAD, PAD_SET_ALT_MIN_VEL, [input_id, hi, lo], device_id)
+
+
+def build_set_choke_hold_ms(input_id: int, ms: int,
+                             device_id: int = DEV_HEAD) -> bytearray:
+    """Set chokeHoldMs (PIEZO_SWITCH_CHOKE) — sustain time to confirm a choke."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(ms)
+    return _build(CAT_PAD, PAD_SET_CHOKE_HOLD, [input_id, hi, lo], device_id)
+
+
+def build_set_choke_release_grace_ms(input_id: int, ms: int,
+                                      device_id: int = DEV_HEAD) -> bytearray:
+    """Set chokeReleaseGraceMs (PIEZO_SWITCH_CHOKE) — release debounce window."""
+    _check_input_id(input_id)
+    hi, lo = encode_14bit(ms)
+    return _build(CAT_PAD, PAD_SET_CHOKE_GRACE, [input_id, hi, lo], device_id)
+
+
+def build_get_pad_config_ext(input_id: int, device_id: int = DEV_HEAD) -> bytearray:
+    """Bundled GET for all 12 fields above (mirrors build_get_pad_config)."""
+    _check_input_id(input_id)
+    return _build(CAT_PAD, PAD_GET_EXT, [input_id], device_id)
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +622,38 @@ def parse_pad_config_response(payload: bytes) -> dict:
     }
 
 
+def parse_pad_config_ext_response(payload: bytes) -> dict:
+    """
+    02 1E -> {input_id, scan_margin, settle_wait_ms, ema_alpha,
+             rim_threshold, rim_sensitivity, rim_curve, rim_curve_name,
+             cross_stick_note, cross_stick_cutoff,
+             alternate_note, min_alt_note_velocity,
+             choke_hold_ms, choke_release_grace_ms}
+
+    Bundled response to PAD_GET_EXT (0x1D) — the 12 fields added 2026-07 for
+    Secondary Trigger Behaviours v1 + Scan v3. Separate command from
+    parse_pad_config_response's rim_ratio_threshold/choke_threshold (see
+    PAD_SET_RIM_GATE's docstring for why those are different fields).
+    """
+    _require_len(payload, 20, "pad_config_ext_response")
+    return {
+        "input_id":               payload[0],
+        "scan_margin":            decode_14bit(payload[1],  payload[2]),
+        "settle_wait_ms":         decode_14bit(payload[3],  payload[4]),
+        "ema_alpha":              payload[5],
+        "rim_threshold":          decode_14bit(payload[6],  payload[7]),
+        "rim_sensitivity":        decode_14bit(payload[8],  payload[9]),
+        "rim_curve":              payload[10],
+        "rim_curve_name":         CURVE_NAMES.get(payload[10], f"0x{payload[10]:02X}"),
+        "cross_stick_note":       payload[11],
+        "cross_stick_cutoff":     payload[12],
+        "alternate_note":         payload[13],
+        "min_alt_note_velocity":  decode_14bit(payload[14], payload[15]),
+        "choke_hold_ms":          decode_14bit(payload[16], payload[17]),
+        "choke_release_grace_ms": decode_14bit(payload[18], payload[19]),
+    }
+
+
 def parse_input_status_response(payload: bytes) -> dict:
     """02 0A -> {input_id, status, status_name}"""
     _require_len(payload, 2, "input_status_response")
@@ -537,7 +701,8 @@ def parse_list_presets_response(payload: bytes) -> dict:
 
 def _parse_input_record(data: bytes, offset: int) -> dict:
     """
-    Parse the 24-byte per-input record used by the export command.
+    Parse the 43-byte per-input record used by the export command (grew from
+    24 bytes 2026-07 — append-only, so the first 24 bytes are unchanged).
     Layout:
       PAD_TYPE
       THRESH_HI THRESH_LO
@@ -547,12 +712,25 @@ def _parse_input_record(data: bytes, offset: int) -> dict:
       SENS_HI SENS_LO
       SCAN_HI SCAN_LO
       MASK_HI MASK_LO
-      RIM_SENS_HI RIM_SENS_LO
-      RIM_THRESH_HI RIM_THRESH_LO
+      RIM_SENS_HI RIM_SENS_LO       <- rimRatioThreshold (legacy slot name)
+      RIM_THRESH_HI RIM_THRESH_LO   <- chokeThreshold (legacy slot name)
       MIDI_NOTE MIDI_CH Z2_NOTE Z2_CH CC_NUM CC_CH
       LINKED (0x7F = none)
+      -- appended 2026-07 (Secondary Trigger Behaviours v1 + Scan v3) --
+      SCANMARGIN_HI SCANMARGIN_LO
+      SETTLEWAIT_HI SETTLEWAIT_LO
+      EMA_ALPHA
+      RIMGATE_HI RIMGATE_LO         <- real rimThreshold (independent of RIM_SENS above)
+      RIMSCALE_HI RIMSCALE_LO       <- real rimSensitivity (independent of RIM_SENS above)
+      RIM_CURVE
+      XSTICK_NOTE
+      XSTICK_CUTOFF
+      ALT_NOTE
+      ALTMINVEL_HI ALTMINVEL_LO
+      CHOKEHOLD_HI CHOKEHOLD_LO
+      CHOKEGRACE_HI CHOKEGRACE_LO
     """
-    if offset + 24 > len(data):
+    if offset + 43 > len(data):
         raise ValueError(f"input record at offset {offset}: truncated")
     d = data[offset:]
     linked_raw = d[23]
@@ -567,8 +745,8 @@ def _parse_input_record(data: bytes, offset: int) -> dict:
         "head_sensitivity": decode_14bit(d[7],  d[8]),
         "scan_time":        decode_14bit(d[9],  d[10]),
         "mask_time":        decode_14bit(d[11], d[12]),
-        "rim_sensitivity":  decode_14bit(d[13], d[14]),
-        "rim_threshold":    decode_14bit(d[15], d[16]),
+        "rim_ratio_threshold": decode_14bit(d[13], d[14]),
+        "choke_threshold":     decode_14bit(d[15], d[16]),
         "midi_note":        d[17],
         "midi_channel":     d[18],
         "zone2_note":       d[19],
@@ -576,24 +754,40 @@ def _parse_input_record(data: bytes, offset: int) -> dict:
         "cc_number":        d[21],
         "cc_channel":       d[22],
         "linked_input":     None if linked_raw == LINKED_NONE else linked_raw,
+        # ---- appended 2026-07 fields ----
+        "scan_margin":            decode_14bit(d[24], d[25]),
+        "settle_wait_ms":         decode_14bit(d[26], d[27]),
+        "ema_alpha":              d[28],
+        "rim_threshold":          decode_14bit(d[29], d[30]),
+        "rim_sensitivity":        decode_14bit(d[31], d[32]),
+        "rim_curve":              d[33],
+        "rim_curve_name":         CURVE_NAMES.get(d[33], f"0x{d[33]:02X}"),
+        "cross_stick_note":       d[34],
+        "cross_stick_cutoff":     d[35],
+        "alternate_note":         d[36],
+        "min_alt_note_velocity":  decode_14bit(d[37], d[38]),
+        "choke_hold_ms":          decode_14bit(d[39], d[40]),
+        "choke_release_grace_ms": decode_14bit(d[41], d[42]),
     }
 
 
 def parse_export_preset_response(payload: bytes) -> dict:
     """
-    04 06 -> {preset_id, name, inputs: [9 × input dict]}
+    04 06 -> {preset_id, name, inputs: [NUM_INPUTS × input dict]}
 
-    Each input dict is the 14-byte per-input record emitted by SysEx.cpp's
-    SYSEX_PRE_EXPORT handler; field names match parse_pad_config_response
-    plus the midi/cc/linked fields from parse_midi_mapping_response.
+    Each input dict is the 43-byte per-input record emitted by SysEx.cpp's
+    SYSEX_PRE_EXPORT handler (grew from 24 bytes 2026-07); field names match
+    parse_pad_config_response plus the midi/cc/linked fields from
+    parse_midi_mapping_response, plus the appended Secondary Trigger
+    Behaviours v1 + Scan v3 fields (same names as parse_pad_config_ext_response).
     """
     _require_len(payload, 2, "export_preset_response")
     preset_id = payload[0]
     name_len  = payload[1]
-    _require_len(payload, 2 + name_len + NUM_INPUTS * 24, "export_preset_response")
+    _require_len(payload, 2 + name_len + NUM_INPUTS * 43, "export_preset_response")
     name   = payload[2 : 2 + name_len].decode("ascii", errors="replace")
     offset = 2 + name_len
-    inputs = [_parse_input_record(payload, offset + i * 24) for i in range(NUM_INPUTS)]
+    inputs = [_parse_input_record(payload, offset + i * 43) for i in range(NUM_INPUTS)]
     return {"preset_id": preset_id, "name": name, "inputs": inputs}
 
 
@@ -732,6 +926,90 @@ if __name__ == "__main__":
     _check("rim_ratio_threshold == 40",      result["rim_ratio_threshold"] == 40)
     _check("choke_threshold == 80",          result["choke_threshold"]     == 80)
     _check("choke_enabled is True",          result["choke_enabled"]       is True)
+
+    # ── New Category 02 tunables (2026-07 SysEx extension) ────────────────────
+    print("\nNew SET builders (0x11-0x1C) — cmd_low + payload round-trip:")
+    _new_set_cases = [
+        ("scan_margin",            lambda: build_set_scan_margin(0, 200),            PAD_SET_SCAN_MARGIN,   True,  200),
+        ("settle_wait_ms",         lambda: build_set_settle_wait_ms(0, 5),           PAD_SET_SETTLE_WAIT,   True,  5),
+        ("ema_alpha",              lambda: build_set_ema_alpha(0, 50),               PAD_SET_EMA_ALPHA,     False, 50),
+        ("rim_gate_threshold",     lambda: build_set_rim_gate_threshold(0, 300),     PAD_SET_RIM_GATE,      True,  300),
+        ("rim_scale",              lambda: build_set_rim_scale(0, 900),              PAD_SET_RIM_SCALE,     True,  900),
+        ("rim_curve",              lambda: build_set_rim_curve(0, CURVE_PUNCHY),      PAD_SET_RIM_CURVE,     False, CURVE_PUNCHY),
+        ("cross_stick_note",       lambda: build_set_cross_stick_note(0, 37),        PAD_SET_XSTICK_NOTE,   False, 37),
+        ("cross_stick_cutoff",     lambda: build_set_cross_stick_cutoff(0, 100),     PAD_SET_XSTICK_CUTOFF, False, 100),
+        ("alternate_note",         lambda: build_set_alternate_note(0, 53),          PAD_SET_ALT_NOTE,      False, 53),
+        ("alt_min_velocity",       lambda: build_set_alt_min_velocity(0, 400),       PAD_SET_ALT_MIN_VEL,   True,  400),
+        ("choke_hold_ms",          lambda: build_set_choke_hold_ms(0, 500),          PAD_SET_CHOKE_HOLD,    True,  500),
+        ("choke_release_grace_ms", lambda: build_set_choke_release_grace_ms(0, 30),  PAD_SET_CHOKE_GRACE,   True,  30),
+    ]
+    for name, builder, expected_cmd_low, is_14bit, expected_value in _new_set_cases:
+        msg = builder()
+        parsed = parse_message(msg)
+        p = parsed["payload"]
+        _check(f"{name}: cmd_high == CAT_PAD",  parsed["cmd_high"] == CAT_PAD)
+        _check(f"{name}: cmd_low  == 0x{expected_cmd_low:02X}", parsed["cmd_low"] == expected_cmd_low)
+        _check(f"{name}: input_id == 0",         p[0] == 0)
+        if is_14bit:
+            _check(f"{name}: 14-bit round-trips to {expected_value}", decode_14bit(p[1], p[2]) == expected_value)
+        else:
+            _check(f"{name}: single byte == {expected_value}", p[1] == expected_value)
+
+    print("\nRegression guard — new rim commands don't collide with 0x0E/0x0F:")
+    _check("PAD_SET_RIM_GATE != PAD_SET_RIM_SENS",   PAD_SET_RIM_GATE  != PAD_SET_RIM_SENS)
+    _check("PAD_SET_RIM_SCALE != PAD_SET_RIM_THRESH", PAD_SET_RIM_SCALE != PAD_SET_RIM_THRESH)
+    _check("build_set_rim_sensitivity no longer exists", "build_set_rim_sensitivity" not in dir())
+    _check("build_set_rim_threshold no longer exists",   "build_set_rim_threshold" not in dir())
+
+    print("\ncrossStickCutoff velocity-range validation:")
+    try:
+        build_set_cross_stick_cutoff(0, 128)
+        _check("cutoff 128 -> ValueError", False)
+    except ValueError:
+        _check("cutoff 128 -> ValueError", True)
+
+    print("\nBundled GET/RESP (02 1D / 02 1E):")
+    msg = build_get_pad_config_ext(1)
+    parsed = parse_message(msg)
+    _check("get_ext: cmd_low == PAD_GET_EXT", parsed["cmd_low"] == PAD_GET_EXT)
+    _check("get_ext: input_id == 1",          parsed["payload"][0] == 1)
+
+    sm_hi, sm_lo   = encode_14bit(180)
+    sw_hi, sw_lo   = encode_14bit(8)
+    rt_hi, rt_lo   = encode_14bit(250)
+    rs_hi, rs_lo   = encode_14bit(850)
+    av_hi, av_lo   = encode_14bit(320)
+    ch_hi, ch_lo   = encode_14bit(500)
+    cg_hi, cg_lo   = encode_14bit(30)
+    fake = bytes([
+        1,
+        sm_hi, sm_lo, sw_hi, sw_lo, 60,
+        rt_hi, rt_lo, rs_hi, rs_lo, CURVE_SENSITIVE,
+        37, 100, 53,
+        av_hi, av_lo, ch_hi, ch_lo, cg_hi, cg_lo,
+    ])
+    result = parse_pad_config_ext_response(fake)
+    _check("ext: input_id == 1",               result["input_id"] == 1)
+    _check("ext: scan_margin == 180",           result["scan_margin"] == 180)
+    _check("ext: settle_wait_ms == 8",          result["settle_wait_ms"] == 8)
+    _check("ext: ema_alpha == 60",              result["ema_alpha"] == 60)
+    _check("ext: rim_threshold == 250",         result["rim_threshold"] == 250)
+    _check("ext: rim_sensitivity == 850",       result["rim_sensitivity"] == 850)
+    _check("ext: rim_curve == SENSITIVE",       result["rim_curve"] == CURVE_SENSITIVE)
+    _check("ext: rim_curve_name == 'Sensitive'", result["rim_curve_name"] == "Sensitive")
+    _check("ext: cross_stick_note == 37",       result["cross_stick_note"] == 37)
+    _check("ext: cross_stick_cutoff == 100",    result["cross_stick_cutoff"] == 100)
+    _check("ext: alternate_note == 53",         result["alternate_note"] == 53)
+    _check("ext: min_alt_note_velocity == 320", result["min_alt_note_velocity"] == 320)
+    _check("ext: choke_hold_ms == 500",         result["choke_hold_ms"] == 500)
+    _check("ext: choke_release_grace_ms == 30", result["choke_release_grace_ms"] == 30)
+
+    print("\nchoke_enabled (02 10) — regression check for the missing firmware handler fix:")
+    msg = build_set_choke_enabled(2, True)
+    parsed = parse_message(msg)
+    _check("choke_en: cmd_low == PAD_SET_CHOKE_EN", parsed["cmd_low"] == PAD_SET_CHOKE_EN)
+    _check("choke_en: input_id == 2",               parsed["payload"][0] == 2)
+    _check("choke_en: enabled byte == 1",           parsed["payload"][1] == 1)
 
     # ── Link / unlink ─────────────────────────────────────────────────────────
     print("\nLink inputs (02 08):")
