@@ -1870,6 +1870,33 @@ working on hardware):**
 3. Interface mode preference — replace --dev flag with persistent QSettings
 4. Hi-hat controller UI
 5. Scope window: fix Ctrl+C copy, MIDI transport warning
+6. **In-app help/reference page** (added 2026-07-14, menu-launched) —
+   lists every field, what it does, and its range. Real content-authoring
+   task, not a quick add — covers 12+ new Secondary Trigger Behaviours v1
+   fields plus everything pre-existing. Open design question: static
+   reference vs. context-sensitive to the selected pad type.
+7. **Extract `GM_PERCUSSION` (currently hardcoded in `pad_config_tab.py`)
+   into a standalone loaded file** (added 2026-07-14) — matches the
+   load-from-file pattern `pad_names.py`/`presets.py` already use in this
+   codebase; mechanically the simplest item in this backlog. Open design
+   question before starting: file format — plain text (as literally
+   asked for) vs. JSON like the other two loaders — worth deciding
+   deliberately since it constrains item 8.
+8. **Support loading a different/alternate instrument list at runtime**
+   (added 2026-07-14) — builds directly on item 7, sequence after it.
+   Needs a picker UI. Worth confirming deliberately (not assuming): what
+   happens to an already-assigned note with no friendly name in the new
+   list — `gm_note_display()`'s existing "Note N" fallback likely already
+   covers this.
+9. **Save current settings to a file / load a previous settings file**
+   (added 2026-07-14) — the one item here that genuinely needs a design
+   pass before being built, not just glue code. This app already has TWO
+   overlapping preset concepts — device flash presets (`04 06`) and the
+   local "My Presets" JSON (`ui/presets.py`) — plus the already-flagged
+   `presets_tab.py` key-name mismatch between them (see SysEx Extension
+   section above). A third, file-based save/load bolted on without first
+   deciding its relationship to those two would compound that confusion
+   rather than fix anything.
 
 **Stage 2 firmware (after PDrum2Trigger):**
 1. ESP-NOW transport layer (head unit central, satellites peripheral)
