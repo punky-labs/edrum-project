@@ -69,6 +69,22 @@ struct __attribute__((packed)) InputConfig {
     uint16_t scanMargin;    // raw ADC counts — Scan confirmation prominence
     uint16_t settleWaitMs;  // ms — Scan settle-exit wait (no new confirmed peak)
     uint16_t emaAlpha;      // EMA alpha ×100 (0..100); 0 or 100 = smoothing off
+
+    // ---- Secondary Trigger Behaviours v1 (2026-07-12). Same telnet-`w`-only,
+    // LittleFS-persisted, NOT-in-SysEx bootstrap as the v3 block above; appended at
+    // the end so earlier offsets are unchanged (still grows the struct → uploadfs /
+    // config reset required). PART A (DUAL_PIEZO snare rim) + PART B (choke-pad alt note).
+    uint16_t rimThreshold;        // DUAL: rim fire threshold (raw ADC)
+    uint16_t rimSensitivity;      // DUAL: rim velocity-scaling upper bound (raw ADC)
+    uint8_t  rimCurve;            // DUAL: rim velocity curve (same enum as velocityCurve)
+    uint8_t  crossStickNote;      // DUAL: MIDI note for a soft (cross-stick) rim hit
+    uint8_t  crossStickCutoff;    // DUAL: MIDI velocity (0-127, NOT raw ADC) below which
+                                  // a rim-won hit is cross-stick vs a normal rim note
+    uint8_t  alternateNote;       // CHOKE: MIDI note sent instead of head note on edge hit
+    uint16_t minAltNoteVelocity;  // CHOKE: min head peak (raw ADC) to qualify for alt note
+    uint16_t chokeHoldMs;         // CHOKE: sustain time (ms) to confirm a choke (was const 5)
+    uint16_t chokeReleaseGraceMs; // CHOKE: release debounce (ms) — a dip below chokeThreshold
+                                  // shorter than this doesn't reset the hold accumulator
 };
 
 struct __attribute__((packed)) Preset {

@@ -45,7 +45,14 @@ void DevLogClass::println(const char* s) {
 }
 
 void DevLogClass::printf(const char* fmt, ...) {
-    char buf[256];
+    // 256 was fine at bring-up but has been quietly too small for a while: both the
+    // [HIT]/[RIM] debug lines (25+ fields now) and the `s` config dump (24+ fields
+    // per input, after Secondary Trigger Behaviours v1) can exceed it, silently
+    // truncating mid-line (see project_state.md, 2026-07-12 housekeeping) --
+    // vsnprintf() cuts off before the trailing '\n', so the next print runs on
+    // directly from wherever it got cut, looking like lost linebreaks. 512 gives
+    // real headroom for both current worst cases and continued field growth.
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);

@@ -20,6 +20,15 @@ public:
     virtual bool hasChoke()        const = 0;
     virtual void clearChoke()            = 0;
 
+    // Secondary trigger behaviours v1 (2026-07-12). Default false so engines that
+    // don't implement them (PDrum2Trigger) need no change.
+    //   hasHitCrossStick(): DUAL_PIEZO cross-stick — send crossStickNote at the rim
+    //     velocity INSTEAD OF the normal rim note (mutually exclusive with hasHitRim).
+    //   hasHitAlt(): PIEZO_SWITCH_CHOKE alternate note — send alternateNote at the
+    //     head velocity INSTEAD OF the normal head note (rides on hasHit()).
+    virtual bool hasHitCrossStick() const { return false; }
+    virtual bool hasHitAlt()        const { return false; }
+
     // Velocity results
     virtual int  getVelocity()     const = 0;
     virtual int  getVelocityRim()  const = 0;
@@ -95,6 +104,9 @@ public:
     virtual int   getDebugScanExit()     const { return -1; }
     virtual int   getDebugScanConfirms() const { return -1; }
     virtual int   getDebugScanDurMs()    const { return -1; }
+    // DUAL_PIEZO rim/head ratio at the last commit, only for the ambiguous
+    // both-channels-fired case (else -1). See PDrumTrigger override.
+    virtual int   getDebugScanRatio()    const { return -1; }
 
     // Configuration — applied from g_inputs[] by applyConfig()
     virtual void setPadType(uint8_t t)               = 0;
@@ -116,6 +128,19 @@ public:
     virtual void setScanMargin(uint16_t)             {}
     virtual void setSettleWaitMs(uint16_t)           {}
     virtual void setEmaAlphaPct(uint16_t)            {}
+    // Secondary trigger behaviours v1 (telnet-`w` only; NOT in SysEx). PART A —
+    // DUAL_PIEZO snare rim: independent rim threshold/sensitivity/curve + cross-stick
+    // note. PART B — PIEZO_SWITCH_CHOKE: alternate note + its min head velocity, and
+    // the now-tunable choke hold time. Default no-op for other engines.
+    virtual void setRimThreshold(uint16_t)           {}
+    virtual void setRimSensitivity(uint16_t)         {}
+    virtual void setRimCurve(uint8_t)                {}
+    virtual void setCrossStickNote(uint8_t)          {}
+    virtual void setCrossStickCutoff(uint8_t)        {}
+    virtual void setAlternateNote(uint8_t)           {}
+    virtual void setMinAltNoteVelocity(uint16_t)     {}
+    virtual void setChokeHoldMs(uint16_t)            {}
+    virtual void setChokeReleaseGraceMs(uint16_t)    {}
     virtual uint8_t getNoteHead()    const           = 0;
 
     // Force any deferred, config-dependent rebuild to happen NOW (synchronously),

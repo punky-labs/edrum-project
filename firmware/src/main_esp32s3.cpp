@@ -106,6 +106,16 @@ static void applyConfig() {
         triggers[i]->setScanMargin(g_inputs[i].scanMargin);
         triggers[i]->setSettleWaitMs(g_inputs[i].settleWaitMs);
         triggers[i]->setEmaAlphaPct(g_inputs[i].emaAlpha);
+        // Secondary Trigger Behaviours v1 (telnet-`w` only; not in SysEx)
+        triggers[i]->setRimThreshold(g_inputs[i].rimThreshold);
+        triggers[i]->setRimSensitivity(g_inputs[i].rimSensitivity);
+        triggers[i]->setRimCurve(g_inputs[i].rimCurve);
+        triggers[i]->setCrossStickNote(g_inputs[i].crossStickNote);
+        triggers[i]->setCrossStickCutoff(g_inputs[i].crossStickCutoff);
+        triggers[i]->setAlternateNote(g_inputs[i].alternateNote);
+        triggers[i]->setMinAltNoteVelocity(g_inputs[i].minAltNoteVelocity);
+        triggers[i]->setChokeHoldMs(g_inputs[i].chokeHoldMs);
+        triggers[i]->setChokeReleaseGraceMs(g_inputs[i].chokeReleaseGraceMs);
         triggers[i]->setHeadThreshold(g_inputs[i].threshold);
         triggers[i]->setHeadSensitivity(g_inputs[i].headSensitivity);
         triggers[i]->setScanTime(g_inputs[i].scanTime);
@@ -175,6 +185,8 @@ static void printHelp() {
     DevLog.println("  o <input> <floor> = scope input (e.g. o 0 10)   o off = disable scope");
     DevLog.println("  w <input> <param> <value> = set param (e.g. w 0 scan 3)");
     DevLog.println("  params: thresh sens scan mask retrig scanmargin settlewait ema type ratio chokethresh choke enable");
+    DevLog.println("          rim: rimthresh rimsens rimcurve xstick xstickcut   choke-pad: altnote minaltvel chokehold chokegrace");
+    DevLog.println("          midi: note ch z2note z2ch");
 }
 
 static bool g_adcDump = false;  // ADC auto-dump off by default now (was on for
@@ -227,6 +239,8 @@ static void handleSerial(char cmd) {
               " thresh=%d sens=%d scan=%d mask=%d"
               " ratio=%d chokethresh=%d choke=%d curve=%d retrig=%d"
               " scanmargin=%d settlewait=%d ema=%d"
+              " rimthresh=%d rimsens=%d rimcurve=%d xstick=%d xstickcut=%d"
+              " altnote=%d minaltvel=%d chokehold=%d chokegrace=%d"
               " seeds=%d builds=%d\n",
                     i,
                     (int)g_inputs[i].enabled,
@@ -239,6 +253,11 @@ static void handleSerial(char cmd) {
                     (int)g_inputs[i].chokeEnabled,
                     g_inputs[i].velocityCurve, g_inputs[i].retriggerTime,
                     g_inputs[i].scanMargin, g_inputs[i].settleWaitMs, g_inputs[i].emaAlpha,
+                    g_inputs[i].rimThreshold, g_inputs[i].rimSensitivity,
+                    g_inputs[i].rimCurve, g_inputs[i].crossStickNote,
+                    g_inputs[i].crossStickCutoff,
+                    g_inputs[i].alternateNote, g_inputs[i].minAltNoteVelocity,
+                    g_inputs[i].chokeHoldMs, g_inputs[i].chokeReleaseGraceMs,
                     triggers[i] ? triggers[i]->getDebugSeedCount()  : -1,
                     triggers[i] ? triggers[i]->getDebugBuildCount() : -1);
             }
@@ -325,11 +344,27 @@ static void handleSerial(char cmd) {
                 else if (p == "scanmargin") { g_inputs[inp].scanMargin        = (uint16_t)val; }
                 else if (p == "settlewait") { g_inputs[inp].settleWaitMs      = (uint16_t)val; }
                 else if (p == "ema")        { g_inputs[inp].emaAlpha          = (uint16_t)val; }
+                // Secondary Trigger Behaviours v1 (telnet-`w` only; not in SysEx)
+                else if (p == "rimthresh")  { g_inputs[inp].rimThreshold       = (uint16_t)val; }
+                else if (p == "rimsens")    { g_inputs[inp].rimSensitivity     = (uint16_t)val; }
+                else if (p == "rimcurve")   { g_inputs[inp].rimCurve           = (uint8_t)val;  }
+                else if (p == "xstick")     { g_inputs[inp].crossStickNote     = (uint8_t)val;  }
+                else if (p == "xstickcut")  { g_inputs[inp].crossStickCutoff   = (uint8_t)val;  }
+                else if (p == "altnote")    { g_inputs[inp].alternateNote      = (uint8_t)val;  }
+                else if (p == "minaltvel")  { g_inputs[inp].minAltNoteVelocity = (uint16_t)val; }
+                else if (p == "chokehold")  { g_inputs[inp].chokeHoldMs        = (uint16_t)val; }
+                else if (p == "chokegrace") { g_inputs[inp].chokeReleaseGraceMs = (uint16_t)val; }
                 else if (p == "type")       { g_inputs[inp].padType           = (uint8_t)val;  }
                 else if (p == "ratio")      { g_inputs[inp].rimRatioThreshold = (uint16_t)val; }
                 else if (p == "chokethresh"){ g_inputs[inp].chokeThreshold    = (uint16_t)val; }
                 else if (p == "choke")      { g_inputs[inp].chokeEnabled      = (bool)val;     }
                 else if (p == "enable")     { g_inputs[inp].enabled          = (bool)val;     }
+                // MIDI note/channel (existing InputConfig fields, also on the SysEx
+                // path) — exposed to `w` for standalone hardware debugging / audible A/B.
+                else if (p == "note")       { g_inputs[inp].midiNote          = (uint8_t)val;  }
+                else if (p == "ch")         { g_inputs[inp].midiChannel       = (uint8_t)val;  }
+                else if (p == "z2note")     { g_inputs[inp].zone2MidiNote      = (uint8_t)val;  }
+                else if (p == "z2ch")       { g_inputs[inp].zone2MidiChannel   = (uint8_t)val;  }
                 else { DevLog.printf("[w] Unknown param '%s'\n", param); ok = false; }
                 if (ok) {
                     // Defer apply+save to loop() (single pause/resume-bracketed path,
@@ -343,6 +378,8 @@ static void handleSerial(char cmd) {
             } else {
                 DevLog.println("[w] Usage: w <input> <param> <value>");
                 DevLog.println("[w] params: thresh sens scan mask retrig scanmargin settlewait ema type ratio chokethresh choke enable");
+                DevLog.println("[w]         rim: rimthresh rimsens rimcurve xstick xstickcut   choke-pad: altnote minaltvel chokehold chokegrace");
+                DevLog.println("[w]         midi: note ch z2note z2ch");
             }
             break;
         }
@@ -624,8 +661,16 @@ void loop() {
         // Absolute stream index of the last head sample in this block.
         uint32_t blockEndIdx = headCursor[i].pos - 1;
 
+        // Secondary Trigger Behaviours v1: head and rim are now INDEPENDENT (a snare
+        // rimshot is head AND rim together), so this is two separate `if`s, not the
+        // old mutually-exclusive if/else. Head can be a normal head note or the
+        // choke-pad alternate note; the rim slot is either a normal rim note or a
+        // cross-stick note (mutually exclusive with each other). evt= tags each event
+        // so the six paths are distinguishable: head, altnote, rim, xstick, layered
+        // (a head + a rim event at the same t), choke ([CHOKE] below).
         if (triggers[i]->hasHit()) {
-            byte note    = triggers[i]->getNoteHead();
+            bool alt     = triggers[i]->hasHitAlt();
+            byte note    = alt ? g_inputs[i].alternateNote : triggers[i]->getNoteHead();
             byte vel     = (byte)constrain(triggers[i]->getVelocity(), 0, 127);
             byte ch      = g_inputs[i].midiChannel;
             byte raw_vel = rawToMidi(triggers[i]->getVelocityRaw(),
@@ -633,19 +678,15 @@ void loop() {
                                      g_inputs[i].headSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d rcstate=%d lcp=%d refrise=%d scanexit=%d confirms=%d scandur=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[HIT] evt=%s t=%lu i=%d note=%d vel=%d raw=%d headpk=%d rimpk=%d ch=%d piezodc=%.1f dchead=%.1f spikerej=%d lcp=%d scanexit=%d confirms=%d scandur=%d ratio=%d\n",
+                         alt ? "altnote" : "head",
                          (unsigned long)millis(), i, note, vel, raw_vel,
-                         triggers[i]->getVelocityRaw(), ch,
-                         triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
-                         triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
-                         triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
-                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
-                         triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
+                         triggers[i]->getVelocityRaw(), triggers[i]->getVelocityRimRaw(), ch,
+                         triggers[i]->getDebugPiezoAfterDc(),
                          triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
-                         triggers[i]->getDebugRcState(), triggers[i]->getDebugLastConfirmedPeak(),
-                         (int)triggers[i]->getDebugRefRising(),
+                         triggers[i]->getDebugLastConfirmedPeak(),
                          triggers[i]->getDebugScanExit(), triggers[i]->getDebugScanConfirms(),
-                         triggers[i]->getDebugScanDurMs());
+                         triggers[i]->getDebugScanDurMs(), triggers[i]->getDebugScanRatio());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel.
             // Sent unconditionally: the config app's hit log depends on this. (Only
             // the noisy serial [HIT] print above is gated; the SysEx event is a
@@ -666,28 +707,30 @@ void loop() {
                     g_scopeIsRim   = false;
                 }
             }
-        } else if (triggers[i]->hasHitRim()) {
-            byte note    = g_inputs[i].zone2MidiNote;
+        }
+        // Rim slot: cross-stick (replaces the rim note) OR a normal/layered rim note.
+        // These two are mutually exclusive; either can co-fire with the head above.
+        if (triggers[i]->hasHitCrossStick() || triggers[i]->hasHitRim()) {
+            bool xstick  = triggers[i]->hasHitCrossStick();
+            byte note    = xstick ? g_inputs[i].crossStickNote : g_inputs[i].zone2MidiNote;
             byte vel     = (byte)constrain(triggers[i]->getVelocityRim(), 0, 127);
             byte ch      = g_inputs[i].zone2MidiChannel;
+            // raw_vel now uses the RIM's own scale (part of the rim-independence fix),
+            // not head's threshold/sensitivity as before.
             byte raw_vel = rawToMidi(triggers[i]->getVelocityRimRaw(),
-                                     g_inputs[i].threshold,
-                                     g_inputs[i].headSensitivity);
+                                     g_inputs[i].rimThreshold,
+                                     g_inputs[i].rimSensitivity);
             MIDI.sendNoteOn(note, vel, ch);
             MIDI.sendNoteOff(note, 0, ch);
-            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] t=%lu i=%d note=%d vel=%d raw=%d truepeak=%d ch=%d rescues=%d thresh=%.3f peak=%.3f mask=%d decay=%d decaylen=%d xfilt=%.3f xfiltdecay=%.3f loopt=%d piezodc=%.1f dchead=%.1f spikerej=%d rcstate=%d lcp=%d refrise=%d scanexit=%d confirms=%d scandur=%d\n",
+            if (g_hitDebug && !g_adcDump) DevLog.printf("[RIM] evt=%s t=%lu i=%d note=%d vel=%d raw=%d headpk=%d rimpk=%d ch=%d piezodc=%.1f dchead=%.1f spikerej=%d lcp=%d scanexit=%d confirms=%d scandur=%d ratio=%d\n",
+                         xstick ? "xstick" : "rim",
                          (unsigned long)millis(), i, note, vel, raw_vel,
-                         triggers[i]->getVelocityRimRaw(), ch,
-                         triggers[i]->getRescueCount(), triggers[i]->getDebugThreshold(),
-                         triggers[i]->getDebugPeakVal(), triggers[i]->getDebugMaskCnt(),
-                         triggers[i]->getDebugDecayCnt(), triggers[i]->getDebugDecayLen(),
-                         triggers[i]->getDebugXFilt(), triggers[i]->getDebugXFiltDecay(),
-                         triggers[i]->getDebugLoopTimes(), triggers[i]->getDebugPiezoAfterDc(),
+                         triggers[i]->getVelocityRaw(), triggers[i]->getVelocityRimRaw(), ch,
+                         triggers[i]->getDebugPiezoAfterDc(),
                          triggers[i]->getDebugDcOffsetHead(), triggers[i]->getDebugSpikeRejects(),
-                         triggers[i]->getDebugRcState(), triggers[i]->getDebugLastConfirmedPeak(),
-                         (int)triggers[i]->getDebugRefRising(),
+                         triggers[i]->getDebugLastConfirmedPeak(),
                          triggers[i]->getDebugScanExit(), triggers[i]->getDebugScanConfirms(),
-                         triggers[i]->getDebugScanDurMs());
+                         triggers[i]->getDebugScanDurMs(), triggers[i]->getDebugScanRatio());
             // 05 03 — 4 bytes: input_id, zone, raw_vel, midi_vel (app hit log depends on this)
             {
                 uint8_t dbg[4] = { (uint8_t)i, SYSEX_ZONE_RIM, raw_vel, vel };
@@ -707,13 +750,31 @@ void loop() {
             }
         }
 
-        // Choke — PIEZO_SWITCH_CHOKE pads only
+        // Choke — PIEZO_SWITCH_CHOKE pads only. Output is a Polyphonic Aftertouch
+        // pulse (127 then 0), NOT Note-Off — matches real e-drum hardware convention
+        // (Roland/Yamaha/2box/ATV/EFnote/Alesis all use polyAT for cymbal choke; see
+        // the "choke OUTPUT MECHANISM CORRECTED 2026-07-14" spec). Sent on BOTH the
+        // head note AND alternateNote (either may still be ringing in the receiving
+        // engine — choke should stop both), both on the head's midiChannel (same
+        // channel alternateNote's own Note-On uses in the hasHit() block above).
+        // Deliberately NOT stateful: reuses the existing one-shot chokeDetected latch
+        // unchanged, sending 127-immediately-followed-by-0 as one pulse (robust for
+        // both level- and edge-triggered receivers). The head-hit Note-On/Note-Off is
+        // unrelated and unchanged; choke no longer sends a Note-Off of its own.
         if (triggers[i]->hasChoke()) {
             triggers[i]->clearChoke();
-            byte note = g_inputs[i].midiNote;
-            byte ch   = g_inputs[i].midiChannel;
-            MIDI.sendNoteOff(note, 0, ch);
-            if (!g_serialQuiet) DevLog.printf("[CHOKE] i=%d note=%d ch=%d\n", i, note, ch);
+            byte note    = g_inputs[i].midiNote;
+            byte altNote = g_inputs[i].alternateNote;
+            byte ch      = g_inputs[i].midiChannel;
+            // 3-arg sendAfterTouch(note, pressure, channel) = Polyphonic (per-note)
+            // AfterTouch (AfterTouchPoly). NOT the 2-arg overload, which is CHANNEL
+            // aftertouch and would affect every note sounding on the channel.
+            MIDI.sendAfterTouch(note,    127, ch);
+            MIDI.sendAfterTouch(note,    0,   ch);
+            MIDI.sendAfterTouch(altNote, 127, ch);
+            MIDI.sendAfterTouch(altNote, 0,   ch);
+            if (!g_serialQuiet) DevLog.printf("[CHOKE] i=%d polyAT 127/0 note=%d altnote=%d ch=%d\n",
+                                              i, note, altNote, ch);
         }
 
         // TEMP DIAGNOSTIC (retrigger-cancel v2): the MONITOR phase exits are

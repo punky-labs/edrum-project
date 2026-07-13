@@ -35,6 +35,8 @@ public:
 
   bool hit;
   bool hitRim;
+  bool hitCrossStick;   // DUAL_PIEZO: rim-only cross-stick (replaces the rim note)
+  bool hitAlt;          // PIEZO_SWITCH_CHOKE: alternate note (replaces the head note)
   bool choke;
 
   // Pad-type sensing parameters. padType encoding matches the firmware-wide
@@ -55,6 +57,26 @@ public:
   byte     pin_1;
   byte     pin_2;
 
+  // ---- Secondary trigger behaviours v1 (2026-07-12; telnet-`w` only, NOT in SysEx).
+  // PART A (DUAL_PIEZO snare rim): rim gets its OWN threshold/sensitivity/curve —
+  // previously it shared head's scale, a real defect since the two piezos see
+  // genuinely different mechanical energy for the same strike. rimRatioThreshold
+  // above is now UNUSED by padType==0 (left in place, not repurposed, per the task).
+  uint16_t rimThreshold;        // DUAL: rim-channel fire threshold (raw ADC)
+  uint16_t rimSensitivity;      // DUAL: rim upper ADC bound for velocity scaling
+  byte     rimCurve;            // DUAL: rim velocity curve (same enum as curvetype)
+  byte     crossStickNote;      // DUAL: note for a soft (cross-stick) rim hit
+  byte     crossStickCutoff;    // DUAL: MIDI VELOCITY (0-127, NOT raw ADC — deliberate)
+                                // below which a rim-won hit is a cross-stick, not a
+                                // normal rim note. Compared vs the CURVED rim velocity.
+  // PART B (PIEZO_SWITCH_CHOKE alternate note): concurrent with (not a toggle vs)
+  // choke. chokeThreshold above is REUSED as the switch level for both.
+  byte     alternateNote;       // note sent instead of head note on a coincident edge hit
+  uint16_t minAltNoteVelocity;  // min head peak (raw ADC) to qualify as an alt-note hit
+  uint16_t chokeHoldMs;         // choke sustain time (ms); was the kChokeHoldMs constant
+  uint16_t chokeReleaseGraceMs; // choke release debounce (ms): a dip below chokeThreshold
+                                // shorter than this does NOT reset the hold accumulator
+
   // ----- TriggerEngine interface -----
   // Fs is stored for reference only: this engine's scan/mask/choke timing is all
   // millis()-based, so it has no sample-rate dependency to derive.
@@ -67,6 +89,8 @@ public:
 
   bool hasHit()            const override { return hit; }
   bool hasHitRim()         const override { return hitRim; }
+  bool hasHitCrossStick()  const override { return hitCrossStick; }
+  bool hasHitAlt()         const override { return hitAlt; }
   bool hasChoke()          const override { return chokeDetected; }
   void clearChoke()              override { chokeDetected = false; }
 
@@ -101,6 +125,11 @@ public:
   int   getDebugScanExit()     const override { return (int)scanLastExit_; }
   int   getDebugScanConfirms() const override { return scanLastConfirms_; }
   int   getDebugScanDurMs()    const override { return (int)scanLastDurMs_; }
+  // DUAL_PIEZO rim/head ratio (rimBest*100/headBest) at the last commit, but ONLY
+  // when both channels cleared their own threshold (the ambiguous both-fired case
+  // where ratio actually decides the note); -1 sentinel otherwise. Lets rimRatioThreshold
+  // keep being tuned from real captures.
+  int   getDebugScanRatio()    const override { return scanLastRatio_; }
 
   // TEMP DIAGNOSTIC (retrigger-cancel v2 event visibility): monitor exits are
   // momentary and would be missed between debug polls, so they're latched here
@@ -130,6 +159,16 @@ public:
   void setScanMargin(uint16_t v)         override { scanMargin_   = v; }
   void setSettleWaitMs(uint16_t v)       override { settleWaitMs_ = v; }
   void setEmaAlphaPct(uint16_t v)        override { emaAlphaPct_  = v; }
+  // Secondary trigger behaviours v1 (telnet-`w` only; not in SysEx).
+  void setRimThreshold(uint16_t v)       override { rimThreshold       = v; }
+  void setRimSensitivity(uint16_t v)     override { rimSensitivity     = v; }
+  void setRimCurve(uint8_t v)            override { rimCurve           = v; }
+  void setCrossStickNote(uint8_t v)      override { crossStickNote     = v; }
+  void setCrossStickCutoff(uint8_t v)    override { crossStickCutoff   = v; }
+  void setAlternateNote(uint8_t v)       override { alternateNote      = v; }
+  void setMinAltNoteVelocity(uint16_t v) override { minAltNoteVelocity = v; }
+  void setChokeHoldMs(uint16_t v)        override { chokeHoldMs        = v; }
+  void setChokeReleaseGraceMs(uint16_t v) override { chokeReleaseGraceMs = v; }
   uint8_t getNoteHead()    const         override { return noteHead; }
 
 private:
@@ -177,9 +216,12 @@ private:
 
   // Choke hold: fire when the switch has stayed above chokeThreshold for this long.
   // millis()-based (was a hardcoded ~45-sample count that assumed ~9kHz sampling).
-  static constexpr unsigned long kChokeHoldMs = 5;
+  // The hold time is now the per-input `chokeHoldMs` field (telnet-`w` tunable);
+  // it was the static kChokeHoldMs=5 constant before Secondary Trigger Behaviours v1.
   bool          chokeAbove_      = false;  // switch currently above threshold
   unsigned long chokeAboveSince_ = 0;      // millis() when it first went above
+  unsigned long belowSince_      = 0;      // millis() of a pending release dip (0 = none);
+                                           // release-side debounce, see the choke block
 
   uint32_t Fs_ = 8000;   // stored only; timing is millis()-based (see initialize)
 
@@ -264,6 +306,7 @@ private:
   uint8_t       scanLastExit_     = SCAN_EXIT_SETTLE;  // exit path of the last commit
   unsigned long scanLastDurMs_    = 0;                 // duration (ms) of the last scan
   int           scanLastConfirms_ = 0;                 // confirmed peaks in the last scan
+  int           scanLastRatio_    = -1;                // DUAL both-fired ratio, else -1
 
   // NEW telnet-`w`-only tunables (v3; NOT in the SysEx protocol — see spec). Member
   // defaults mirror Config.cpp; applyConfig() overwrites them from g_inputs at runtime.

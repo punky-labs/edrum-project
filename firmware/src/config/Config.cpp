@@ -38,7 +38,13 @@ static InputConfig defaultInput(uint8_t idx) {
     // only ever catches a pathological signal; normal hits settle-exit in a few ms.
     c.scanTime         = 30;
     c.maskTime         = 80;   // post-hit ignore window, ms (flat mask; no decay model)
-    c.rimRatioThreshold = 40;  // ratio*100: rim/head > 0.40 = rim hit
+    // DUAL_PIEZO both-fired classification: rim/head % above which the hit is a rim
+    // hit. 70 sits centered in the confirmed real gap between 33% (worst head-hit
+    // reading) and 154% (softest rim-hit reading) from actual PDX-8 captures — but
+    // that's only 4 real data points (2 extremes per side): a reasoned placeholder,
+    // NOT a finished calibration. A proper soft→hard sweep on both zones is a good
+    // future task. (Was 40 under the pre-v1 ratio design, which had no rim gate.)
+    c.rimRatioThreshold = 70;
     c.chokeThreshold   = 50;
     c.chokeEnabled     = true;
     c.crosstalkGroup   = 0;
@@ -75,6 +81,24 @@ static InputConfig defaultInput(uint8_t idx) {
                            // faster than the fastest real attack (2-3 samples) or it
                            // would blunt the transients Scan needs. Reasoned start,
                            // not validated — first test is an `a` dump before/after.
+
+    // Secondary Trigger Behaviours v1 (telnet-`w` only). All UNVALIDATED placeholders
+    // needing real per-pad calibration, same treatment as scanMargin / kRetrigSeedCap.
+    c.rimThreshold       = 20;   // mirror the head threshold default as a start point
+    c.rimSensitivity     = 800;  // mirror headSensitivity — rim now scales on its own
+    c.rimCurve           = 0;    // linear (matches the head curvetype default intent)
+    c.crossStickNote     = 37;   // GM side stick / cross-stick
+    c.crossStickCutoff   = 25;   // MIDI velocity (0-127), NOT raw ADC — a rim-won hit
+                                 // curving softer than this is a cross-stick. Placeholder
+                                 // (Andrew's requested test value); unvalidated.
+    c.alternateNote      = 53;   // GM ride bell — a reasonable cymbal-edge alt note
+    c.minAltNoteVelocity = 200;  // raw ADC — well above threshold so incidental grab
+                                 // contact (hand coming down to mute) can't misfire it
+    c.chokeHoldMs        = 5;    // matches the old hardcoded kChokeHoldMs constant
+    c.chokeReleaseGraceMs = 30;  // release-side debounce (ms): tolerate brief dips below
+                                 // chokeThreshold so a realistic ~500ms hold is reachable
+                                 // despite natural grip variation. Placeholder, unvalidated
+                                 // — real calibration deferred, same as every other constant.
 
     switch (idx) {
         case 0:  c.midiNote = 36; c.zone2MidiNote = 36; break;  // kick

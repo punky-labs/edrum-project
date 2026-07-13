@@ -1,7 +1,12 @@
 # eDrum Project State
-Last updated: 2026-07-12 (Scan Redesign v3 + EMA + tunable constants
-hardware-validated — working trigger module across 3 pad types, no audible
-double-triggering or missed hits. See "Scan Redesign" section.)
+Last updated: 2026-07-14 — MILESTONE: all basic firmware trigger functions
+implemented (Scan v3, Retrigger-Cancel v2, Snare Rim, Cymbal Choke +
+Alternate-Note). Project transitions from synthetic/structured testing to
+REAL-WORLD PLAYING TESTING from here — expect this to surface issues no
+sweep caught. Next major initiative: bring the config app's UI up to date
+with the many new tunable fields added during this firmware phase (currently
+telnet-`w`-only) — to be tackled in a NEW chat within this project, starting
+with an inventory pass (app UI vs. real firmware fields) before any changes.
 
 ---
 
@@ -510,6 +515,11 @@ tested pads. Each requires structurally different sensing logic.
 Pads: Roland PDX-8, PDX-12
 - Head: piezo (tip channel), Rim: piezo (ring channel)
 - Both zones produce velocity-sensitive analog signals
+- **SUPERSEDED 2026-07-12 — see "Secondary Trigger Behaviors v1" section below.**
+  The ratio-based, mutually-exclusive discrimination described below was
+  grounded in the old piezo/switch pad mental model and is being replaced by
+  independent, layered head+rim detection (a real snare rimshot is both
+  sounding together, not one-or-the-other). Kept here as historical record.
 - Discrimination: ratio-based (rimPeak/headPeak) + time-of-first-peak
   as tiebreaker for ambiguous soft hits (PDX-8 soft rim = 1.3:1 ratio)
 - Hard head hit: head:rim ~10:1. Hard rim hit: rim:head ~3.8:1
@@ -560,6 +570,397 @@ Pads: Roland KD-80
 | Roland PDX-8 | DUAL_PIEZO          | 20     | 800  | 3    | 40   | —           |
 | Roland PDX-12| DUAL_PIEZO          | 20     | 800  | 3    | 40   | —           |
 | Roland KD-80 | SINGLE_PIEZO        | 20     | 800  | 3    | 50   | —           |
+
+---
+
+## Secondary Trigger Behaviors v1 — Snare Rim + Cymbal Choke (2026-07-12)
+
+**Status: IMPLEMENTED 2026-07-12; DUAL_PIEZO classification PARTIALLY REVERTED
+2026-07-13, then cross-stick REDEFINED 2026-07-13 (see below). Snare rim
+(ratio classification + redefined cross-stick) CONFIRMED WORKING on real
+hardware 2026-07-13 — all real rimshots and all real cross-stick attempts
+classified correctly across multiple sweeps. Cymbal choke/alternate-note
+implemented but not yet exercised on hardware to the same depth.**
+
+**Cross-stick redefinition CONFIRMED WORKING (2026-07-13):** after the
+redefinition below, a full batch of genuine "stick across rim" attempts
+(the same technique that previously failed under the old head-presence rule)
+all correctly produced `evt=xstick`. **`crossStickCutoff` calibrated by feel
+to 100** (well above the 25 placeholder — real cross-stick technique on this
+pad produces a wider velocity range than expected). **New known limitation,
+deliberately parked:** the cutoff is a hard boundary, so the transition from
+cross-stick to rimshot feels harsh — `vel=99` plays the cross-stick note,
+`vel=101` plays a completely different rimshot note/timbre, no blending.
+Same category as other binary-decision trade-offs already accepted this
+project (quieter-second-hit, clipped-vs-clipped) — a crossfade/blend zone
+would be the natural fix, deliberately deferred in favour of finishing
+cymbal choke first.
+
+**Cross-stick redefinition (2026-07-13) — stop detecting the physical technique;
+cross-stick = "rim won classification AND its curved velocity is soft".** The
+previous rule (rim fired AND head stayed below its own threshold) failed on this pad:
+genuine "stick across the rim, zero head contact" attempts still produced headpk
+519–683 (overlapping a genuine soft head hit at headpk 529) and ~89–109% ratio
+(near-identical to genuine hard rimshots at 95–106%) — this pad's head/rim mechanical
+coupling defeats BOTH head-presence and ratio as cross-stick discriminators. So
+classification (STAGE 1: ratio when both fire, or default-to-rim when only rim fired)
+now only decides whether **rim wins at all**; a SEPARATE STAGE 2 check, applied after
+rim has won, compares the CURVED rim velocity against a new `crossStickCutoff` — soft →
+cross-stick note, hard → normal rim note. New field `crossStickCutoff` is in **MIDI
+velocity units (0–127), NOT raw ADC** (deliberately different from every other
+threshold/margin in this project — flagged in-comment so it isn't "corrected" later);
+telnet `w <input> xstickcut <v>`; placeholder default **25** (Andrew's test value,
+unvalidated). `rimThreshold` still the prerequisite floor gate for "rim fired",
+untouched. Adds one InputConfig field → **uploadfs / config reset required.**
+
+**PART A revision (2026-07-13) — reverted from layering back to RATIO classification,
+based on real hardware data.** First hardware captures on the PDX-8 showed heavy
+head↔rim cross-channel bleed: **confirmed head hits read 19–33% rim/head, confirmed
+rim hits read 153–173%.** That means on essentially ANY strike BOTH zones clear their
+own absolute thresholds, so the "independent layering" model fired a spurious second
+note nearly every hit — ratio classification is the genuinely better fit for this
+pad, not merely the simpler one. What changed and what was kept:
+- CHANGED: when BOTH `headFired` && `rimFired` (the ambiguous case), classification
+  is now mutually-exclusive by ratio — `rimBest*100/headBest > rimRatioThreshold`
+  → rim, else head. Only ONE note fires. `hit`/`hitRim` are no longer both set for a
+  plain dual strike; the two independent `if`s in main still stand (needed for the
+  cross-stick vs rim-slot split) but only one of head/rim fires per dual hit now.
+- KEPT (not reverted): the either-channel Scan-start gate; rim's independent velocity
+  SCALING via `rimThreshold`/`rimSensitivity`/`rimCurve` (only the classify decision
+  reverted, not the scaling); cross-stick exactly as-is (`rimFired && !headFired`).
+- REFINEMENT over the pre-v1 ratio design: `rimThreshold` is now a real prerequisite
+  gate — rim must clear its own absolute floor before the ratio is even considered
+  (cheap guard against tiny rim bleed tipping the decision when head is very quiet).
+- `rimRatioThreshold` default 40 → **70** (centered in the 33%↔154% real gap; only 4
+  data points, a reasoned placeholder — a soft→hard sweep on both zones is a future
+  task). Old `firstPeakChannel` tiebreaker dropped (superseded by the rim gate + data
+  threshold). New `ratio=` diagnostic on `[HIT]`/`[RIM]` (real value only in the
+  both-fired case, else -1) to keep tuning from data.
+
+**Original PART A (2026-07-12, now superseded above):**
+- PART A (DUAL_PIEZO): Scan now starts on EITHER channel crossing its own threshold
+  (the architectural correction); ratio discrimination replaced by independent
+  layered head+rim detection + cross-stick (rim-fired, head-below-threshold); rim
+  scales through its OWN `rimThreshold`/`rimSensitivity`/`rimCurve`; `crossStickNote`
+  added; `rimRatioThreshold` left in place but no longer read. `hit`/`hitRim` can now
+  BOTH be true in one block (layering) — main's old mutually-exclusive if/else split
+  into two independent `if`s; new `hasHitCrossStick()` signal.
+- PART B (PIEZO_SWITCH_CHOKE): existing choke logic UNCHANGED; new concurrent
+  alternate-note (`alternateNote`, gated by instantaneous switch>chokeThreshold AND
+  headBest>`minAltNoteVelocity`) via new `hasHitAlt()` signal; `kChokeHoldMs` constant
+  is now the tunable per-input `chokeHoldMs` field.
+- 7 new telnet-`w`-only InputConfig fields (NOT in SysEx): rimthresh, rimsens,
+  rimcurve, xstick, altnote, minaltvel, chokehold — shown in `s` dump. `[HIT]`/`[RIM]`
+  prints gained `evt=` (head/altnote/rim/xstick) to distinguish all paths.
+- InputConfig grew again → a LittleFS `uploadfs` / config reset is REQUIRED before
+  testing (new fields load at defaults). Original design notes below.
+
+### Context: rim/switch behaviour is per-pad-role, not per-padType
+
+Reframing that unblocked this design: "rim" is not one feature. Real pad
+roles need genuinely different rim/switch behaviours, and `padType` (which
+sensor is on the rim channel — piezo vs switch) doesn't capture that on its
+own. Full behaviour survey by pad role:
+
+| Pad role | Rim channel is | What it should DO |
+|---|---|---|
+| Kick | absent | nothing |
+| Tom | 2nd piezo, usually unused | nothing, or a separate instrument (deferred, v1 doesn't need it) |
+| Cymbal | switch | choke (note-off/aftertouch), sometimes an alternate note |
+| Ride bell | switch, on a SEPARATE jack | alternate note, borrowing the ride jack's velocity — **needs cross-jack coupling, deferred, see below** |
+| Snare | 2nd piezo, genuinely used | rimshot (layered with head) and/or cross-stick |
+
+**Deliberately deferred, not designed here:**
+- **Ride bell (cross-jack coupling).** The only item in this whole survey
+  that breaks a fundamental architecture assumption: today's system is one
+  `TriggerEngine` per jack, fully independent, with zero inter-jack
+  awareness. Needs its own design conversation, not a bolt-on.
+- **Tom rim as an independent second instrument**, and **stereo jack split
+  into two fully independent SINGLE_PIEZO pads** (same physical channels,
+  different config only — architecturally cheap, but real config/UI work).
+  Both explicitly out of scope for v1 per Andrew's own use-case notes.
+
+### Snare rim — full spec
+
+**Core reframe: a real snare rimshot is head AND rim sounding together, not
+an either/or choice.** The old ratio-based mutual-exclusivity was inherited
+from the switch-pad mental model (where rim genuinely can't co-occur with a
+head velocity) and doesn't reflect how a real snare rimshot works physically.
+
+**Design (agreed in full):**
+- **Head:** unchanged — own threshold, own sensitivity, own curve, own note.
+- **Rim:** INDEPENDENT of head — own threshold, own sensitivity/gain, own
+  curve. Rim velocity is no longer computed through the head's `curve()`
+  call (`curve(velocityRim, headThreshold, headSensitivity, curvetype)` —
+  this was flagged as a real existing defect during design, not just a
+  missing feature: head and rim piezos see genuinely different mechanical
+  energy for the same strike, so sharing one scale can only ever be
+  correctly calibrated for one of the two channels).
+- **Layering:** both head and rim can fire from a single physical strike,
+  each sending its own independent MIDI note. No mutual exclusivity.
+- **Cross-stick (exception to layering):** if rim clears its own threshold
+  AND head stays below its own threshold → suppress the head note (moot,
+  since head didn't clear its threshold anyway) and send a dedicated
+  cross-stick note INSTEAD OF the rim note. **Deliberately kept simple for
+  v1** (2026-07-12): a three-way split (distinguishing a true butt-on-head
+  cross-stick from a pure rim-only edge click via a second, lower
+  `headFloor` threshold) was considered and explicitly rejected as
+  over-engineering ahead of real data — the TD-3 manual's own recommended
+  cross-stick technique (stick laid across the rim, not butt-on-head)
+  naturally keeps head signal low without needing a special detection
+  algorithm to compensate for a technique nobody's actually using. Test the
+  simple 2-way rule for real; only add a 3-way split if it turns out to
+  matter in practice.
+- **ARCHITECTURAL CORRECTION (2026-07-12), required for cross-stick to be
+  detectable at all, not optional complexity:** `Scan` currently only starts
+  when HEAD crosses `headThreshold` (`if (piezoValue > headThreshold)
+  startScan(...)` in `IDLE`) — rim is tracked passively only once a
+  head-initiated scan is already underway. Under this gate, head's recorded
+  peak at scan-end is *guaranteed* to already be above `headThreshold` (it's
+  what started the scan), so "head stays below threshold" can structurally
+  never be true — cross-stick could never fire. **Fix: `IDLE` must start a
+  scan when EITHER channel crosses its own threshold** (head > headThreshold
+  OR rim > rimThreshold), with both channels tracked throughout regardless
+  of which one triggered it. This matches the physical reality: a genuine
+  cross-stick may never produce meaningful head signal at all.
+- **Net result: three possible outcomes per strike** — head-only, rim(+head)
+  layered, or cross-stick (exclusive, replaces what would have been the rim
+  note). Not a simple two-way split.
+
+**Design alternatives considered and explicitly rejected, recorded so they
+aren't re-litigated later:**
+- **Ratio-based cross-stick discriminator** (rim high relative to head, not
+  just rim-high-head-low in absolute terms) — correctly identified as more
+  robust against a hypothetical "soft rimshot" edge case, but rejected as
+  solving a case that doesn't really exist musically: a rimshot is played
+  specifically for its sharp/loud character, so a deliberately soft rimshot
+  isn't really a real playing target — it would sound close to a cross-stick
+  anyway. Simple absolute-threshold version matches majority real drum-module
+  precedent (confirmed against TD-3's own manual wording) and is
+  deliberately chosen over the more theoretically robust ratio version, per
+  this project's "solid and simple first, add nuance once proven" discipline.
+- **TD-3's own "rim as fully independent secondary instrument" model**,
+  considered as a wholesale replacement for our discrimination approach, was
+  rejected as a *universal* fix — it's exactly right for snare, but wrong or
+  unwanted for every other pad role in the survey table above. This is why
+  the fix ended up being "add a configurable rim-behaviour concept" rather
+  than "adopt TD-3's mechanism wholesale."
+- **DWe's separate "rim" vs "rimshot" sounds** (a further distinction this
+  project's config app was seen to support) is a real, known further
+  refinement — explicitly deferred, not designed now. Note: since the final
+  cross-stick design uses absolute thresholds rather than a ratio input, this
+  is NOT automatically free later the way it would have been under the
+  rejected ratio-based approach — it would need its own design pass if
+  picked up.
+
+**New config needed (not yet built):**
+- Rim: independent `rimThreshold`, `rimSensitivity`/gain, `rimCurve`
+  (replaces sharing head's threshold/sensitivity/curve)
+- `crossStickNote` (separate from the existing rim note)
+- The existing `rimRatioThreshold` field becomes unused for this mode —
+  decide whether to retire it or repurpose it (matching this project's
+  established repurposing pattern for genuinely-dead fields) once the new
+  fields are known to need config-field slots.
+
+### Cymbal choke — LOCKED SPEC (2026-07-12; choke OUTPUT MECHANISM CORRECTED
+2026-07-14, ready to implement)
+
+**Choke: unchanged, existing detection mechanism.** Sustained-above-
+`chokeThreshold` detection on the switch channel (`chokeHoldMs`, real-world
+calibrated to ~500ms — see below), independent of head piezo scanning.
+The existing one-shot `chokeDetected` latch/timing is COMPLETELY UNCHANGED
+by this correction — only what gets SENT when it fires has changed.
+
+**CORRECTED 2026-07-14: choke output is Polyphonic Aftertouch, NOT
+Note-Off.** The 2026-07-12 "note-off is correct" conclusion was WRONG —
+corrected after real evidence contradicted it (Andrew's actual Addictive
+Drums 2 setup uses a dedicated choke MIDI note, not note-off on the head
+note) and confirmed via targeted research: **"almost every brand uses
+exclusively polyAT for cymbal choke" — Roland, Yamaha, 2box, ATV, EFnote,
+Alesis all use Polyphonic Aftertouch, value 127 on grab / 0 on release,
+sent on the SAME note number(s) the cymbal is already sounding on** (not a
+separate dedicated choke note). Worth remembering for next time: the
+original note-off research checked plausible *drum-engine* conventions in
+the abstract but didn't check real e-drum *hardware* convention specifically
+— the actual installed base of Roland/Yamaha/2box/etc. modules all agree on
+aftertouch, which is a much stronger, more specific signal than generic
+"how do drum engines implement choke groups."
+
+**Real-world constraint that shaped the final design: chokes can come many
+seconds after the original strike** (Andrew: cymbal hits can sustain
+multiple seconds; a choke to cut that sustain may come 3-4+ seconds later,
+routinely, not as a rare edge case). This ruled out an initial "hold the
+Note-On open, send Note-Off only once choked or on a timeout" design that
+was drafted and then correctly rejected: **note duration doesn't need to
+match sample duration** — a drum VST's internal voice engine tracks its own
+sounding voices independently of raw Note-On/Note-Off timing (that's how
+one-shot drum samples work generally), so a quick Note-On/Note-Off exactly
+as already implemented, with aftertouch arriving completely independently
+and arbitrarily later, works correctly for live playing. (The one MIDI
+source that suggested holding notes open longer via "Gate Time" was solving
+a DAW *recording/timeline* problem — some plugins/DAWs can't store an
+aftertouch event against a note already closed in *recorded track data* —
+not a live-playing problem; not applicable here.)
+
+**Final mechanism, deliberately simplified from an initial 127-then-later-0
+stateful design down to a single instantaneous pulse:**
+- On the EXISTING `chokeDetected` firing (unchanged sustained-hold
+  confirmation), send, for BOTH the head note and `alternateNote` (both,
+  unconditionally — either note may still be "ringing" in the receiving
+  engine, choke should stop both): `PolyAftertouch(note, 127)` IMMEDIATELY
+  followed by `PolyAftertouch(note, 0)`.
+- **Deliberately NOT stateful** (no tracking of "currently gripped," no
+  separate release-triggered event) — considered and rejected: the `127`
+  value is what does the real work ("cut this voice now"); a *following*
+  release event has no meaningful further job for a typical one-shot choke
+  implementation, since choking is inherently one-directional (letting go
+  doesn't un-choke a real cymbal either). Sending `127` immediately followed
+  by `0` as ONE pulse is MORE robust than sending `127` alone, not a
+  compromise — it satisfies either a level-triggered engine (reacts to the
+  value) or an edge-triggered one (reacts to the 127→0 transition) without
+  needing to know which convention the receiving software actually uses.
+  Explicitly analogous to how Note-On/Note-Off already fire as one
+  back-to-back pulse in this system rather than being held open — aftertouch
+  is being repurposed the same way, an artifact of MIDI's keyboard/continuous-
+  pressure origins being reused for a discrete drum-trigger event.
+- Reuses the EXISTING `chokeDetected` latch and its exact hold-time timing
+  unchanged — genuinely simpler to build than the earlier stateful draft,
+  not just simpler conceptually. No new state, no timeout, no "does a new
+  hit interrupt an open note" logic needed at all.
+
+**Note-off is dropped entirely for choke** — the existing head-hit
+Note-On/Note-Off (sent at strike time, unrelated to choke) is completely
+unchanged; choke no longer sends its own Note-Off at all, only the
+aftertouch pulse pair described above.
+
+**[DONE 2026-07-14] Confirmed working on real hardware.** Verified via
+library source inspection that `MIDI.sendAfterTouch(note, pressure, ch)`
+(3-arg overload) genuinely sends Polyphonic (per-note) Aftertouch
+(`AfterTouchPoly`, status `0xA0`) — not the 2-arg Channel Aftertouch
+overload, which would have incorrectly affected every note on the channel.
+Both head note and `alternateNote` confirmed receiving the 127→0 pulse pair
+independently (verified by changing `altnote` live and confirming the
+second pulse followed the new number). Andrew confirms it "works really
+well" after live tuning — real settings changes TBD/to be recorded.
+
+### Choke hold-time is fragile against real grip variation — root cause found
+and fix designed (2026-07-14, not yet implemented)
+
+**Symptom, from real hardware tuning:** `chokeHoldMs` had a suspiciously
+narrow, fragile sweet spot — `5` fired too easily, `10` was hard to trigger
+at all — nowhere near the ~500ms Andrew's own real-world domain knowledge
+suggested (see the earlier chokeHoldMs calibration note above). Settled at
+`7` as a working compromise, but investigated further rather than just
+accepting it, since a 5ms-wide window between "too sensitive" and "too hard"
+is itself a red flag, not a normal tuning characteristic.
+
+**Root cause, confirmed via code inspection
+(`PDrumTrigger.cpp`'s choke block):** the hold-time accumulator has ZERO
+tolerance for interruption — `chokeAbove_` resets to false, and
+`chokeAboveSince_` gets discarded, the INSTANT `rimValue` dips even one
+sample below `chokeThreshold`. A real hand gripping a physical switch is
+never perfectly, continuously above a fixed level (grip pressure shifts,
+fingers move, genuine contact bounce) — so a LONGER `chokeHoldMs` doesn't
+make detection more robust, it makes it MORE fragile, since a longer
+required unbroken window gives natural grip variation more opportunity to
+land a brief dip and reset the whole accumulation. This is why 500ms
+(needing perfectly unbroken contact for half a second) is unreachable in
+practice, and why the 5-10ms window itself was so narrow — both symptoms of
+the same underlying gap, not independently-tunable behaviour.
+
+**Fix designed: debounce the RELEASE, not the hold — a grace period that
+tolerates brief dips without resetting the accumulator.** [DONE 2026-07-14,
+IMPLEMENTED, NOT YET HARDWARE-VALIDATED] New parameter
+`chokeReleaseGraceMs` (telnet-`w`-tunable, same pattern as everything else;
+placeholder default 30ms, real calibration deferred same as every other
+constant this project has flagged). Confirmed in code: `belowSince_` member
+added, release-side debounce logic implemented exactly per this spec in
+`PDrumTrigger.cpp`'s choke block. Mechanism: when the switch dips below
+`chokeThreshold` while `chokeAbove_` is already true, don't reset
+immediately — start a separate release-pending timer. Only treat it as a
+genuine release (reset `chokeAbove_`) once the dip itself has persisted for
+`chokeReleaseGraceMs`. Any real contact within the grace window cancels the
+pending release and the original hold-time accumulation continues
+uninterrupted, as if the dip never happened. NEXT: hardware test with
+`chokeHoldMs` raised toward the realistic ~500ms target now that it should
+be reachable, confirm a genuine sustained grab reliably triggers and a
+brief incidental touch does not.
+
+**Design alternatives considered and rejected in favour of this simpler
+option:** a leaky/decaying confidence accumulator (adds a decay RATE to
+tune instead of a duration — less consistent with every other duration-based
+parameter in this system) and an N-of-last-M sliding-window majority vote
+(needs a sample buffer, real added complexity). Release-side debounce solves
+the actual problem with the same shape of mechanism (`w`-tunable millis()
+duration) already used everywhere else in this codebase — matches this
+project's recent pattern (cross-stick, choke output) of favouring the
+simplest mechanism that solves the real problem over a more "thorough" one.
+
+**Separate, smaller thing noticed while investigating (not the bug being
+fixed, just worth knowing):** `chokeDetected` re-arms immediately after
+firing (`chokeAbove_ = false`), so a long continuous grab re-fires choke
+repeatedly, roughly once per `chokeHoldMs`, for as long as it's held — not
+just once. Given choke now sends a discrete aftertouch pulse (not a
+sustained signal), a long grab currently sends that pulse multiple times.
+Likely harmless (each repeat just re-confirms "still choked" to the
+receiving engine) but flagged here in case it ever causes an audible/visible
+issue — not being fixed as part of this task, deliberately out of scope.
+
+**Alternate note: NEW, independent, transient-triggered — runs concurrently
+with choke, not a mode selection between the two.** [unchanged from
+2026-07-12, see mechanism below]
+BOTH behaviours available at once (confirmed against how commercial modules,
+including basic ones like the original HelloDrum, handle this) — they're
+distinguished by signal SHAPE (sustained vs. transient), not a per-pad
+toggle a user picks between.
+
+Mechanism: at the instant a head hit commits (Scan settles, past
+`headThreshold` — the existing hit-confirmation moment), check whether the
+switch channel is ALSO above `chokeThreshold` right then, AND head velocity
+clears a new minimum-velocity field (distinguishes a genuine edge hit from
+incidental contact as a hand comes down to grab the cymbal). If both true →
+send `alternateNote` (using the head hit's own velocity) INSTEAD OF the
+normal head note. No suppression of choke, no delay/wait-and-see — choke
+keeps monitoring in its own fully independent lane regardless of what the
+alternate-note check just did.
+
+**Deliberate benefit of full independence, not just simplicity:** a hard
+edge hit followed by a grab-to-mute plays correctly in sequence with zero
+extra logic — alternate note fires immediately at the strike, choke fires
+shortly after once the grip genuinely sustains past the hold time. Exactly
+matches real playing intent.
+
+**Edge case identified and deliberately deferred (not a gap in the spec, a
+conscious scope decision):** a head hit landing while the switch is ALREADY
+elevated from an existing, ongoing choke (not a fresh coincident peak) would
+still pass the "switch is above threshold" check and could misfire as an
+alternate note. A "freshness" check (recent `chokeAboveSince_`, not a
+long-running grab) would close this, but was explicitly left out: striking a
+cymbal at the same moment as choking it is already an unusual/incorrect
+playing situation, not worth the added complexity for v1. Revisit only if it
+turns out to matter in practice.
+
+**New config fields needed (not yet built):**
+- `alternateNote` (separate from the existing head note)
+- Minimum head velocity for the alternate-note coincidence check (raw ADC
+  domain, matching every other threshold/margin field in this system)
+- `chokeThreshold` is SHARED/REUSED for both choke and the alternate-note
+  check — no new threshold field, same signal interpreted on two timescales
+  (sustained for choke, instantaneous-at-hit for alternate-note).
+
+**Carried over from the original open-items list, still applies:**
+- `kChokeHoldMs` (5ms) becoming a per-input `w`-tunable constant, same
+  placeholder-now-calibrate-later treatment as `margin`/`capValue`/
+  `scanMargin`. **[CALIBRATED 2026-07-12, from real playing]: 5ms is far too
+  short — a proper choke hold is closer to ~500ms in real-world use.** The
+  5ms default was carried over unchanged from the old hardcoded constant
+  with no real-world basis; now implemented as `chokeHoldMs` (telnet `w`),
+  set live via `w <input> chokehold 500` (or similar) rather than needing a
+  reflash. Worth raising the compiled-in default itself next time the
+  firmware is touched, so fresh installs don't start from the same trap.
+- `chokeThreshold` real per-pad calibration — not a design question, a
+  data-gathering task using the same evidence-based methodology as
+  everything else in this project; the field and mechanism already exist.
 
 ---
 
@@ -1118,21 +1519,57 @@ the full picture. Summary of remaining gaps:
 
 ## Pending — Next Sessions
 
+**MILESTONE 2026-07-14 — all basic firmware trigger functions now
+implemented.** Snare rim, cross-stick, cymbal choke, and alternate-note all
+confirmed working on real hardware (choke release-debounce grace period
+implemented, awaiting hardware validation — see below). Project moves from
+structured/synthetic testing to REAL-WORLD PLAYING as the primary testing
+mode from here.
+
+**Immediate, TOP PRIORITY — App UI parity (NEW CHAT recommended, see below):**
+The config app's UI has not kept pace with the many new tunable fields added
+during this firmware phase — rim threshold/sensitivity/curve, cross-stick
+note/cutoff, alternate note/velocity, choke hold/release-grace, retrigger
+margin, scan margin, settle-wait, EMA alpha — currently ALL telnet-`w`-only,
+none exposed in the app. This is a different domain (Python/PyQt6 app code,
+not firmware/C++) with almost no technical overlap to the rest of this
+document's recent history — start a NEW chat within this project for this
+work (project_state.md is the continuity mechanism, not chat history).
+Recommended approach: an INVENTORY pass first (cross-reference the app's
+current UI code against every real tunable field now in firmware, grounded
+in actual code on both sides, not memory) to build a concrete list — then
+work through that list one feature at a time, not all at once (this
+firmware phase repeatedly found that features which looked simple grew real
+complexity once actually worked through — cross-stick alone went through
+three designs; expect UI work to be similar).
+
+**Immediate — choke hold-time release-debounce (2026-07-14, IMPLEMENTED,
+NOT YET HARDWARE-VALIDATED):** `chokeReleaseGraceMs` fix confirmed present
+in code (`belowSince_` member + release-side debounce logic in
+`PDrumTrigger.cpp`'s choke block). Next real-world test: raise `chokeHoldMs`
+toward the realistic ~500ms target now that it should be reachable, confirm
+a genuine sustained grab reliably triggers and a brief incidental touch
+does not. See "Choke hold-time is fragile..." section above for full detail.
+
+**[DONE 2026-07-14] Secondary Trigger Behaviors v1 — Cymbal Choke.**
+Aftertouch output (corrected from an earlier wrong note-off assumption,
+confirmed via real Addictive Drums evidence + hardware-convention research)
+and alternate-note mechanism both confirmed working on real hardware. See
+"Cymbal choke — LOCKED SPEC" section above for full detail.
+
+**[DONE 2026-07-13] Secondary Trigger Behaviors v1 — Snare Rim.** Ratio
+classification (reverted from layering after real bleed data) + redefined
+cross-stick (pure rim-velocity cutoff, not head-presence) both confirmed
+working across multiple real hardware sweeps. `crossStickCutoff` tuning by
+feel is ongoing (Andrew), not a code task. See "Secondary Trigger Behaviors
+v1" section above for full detail.
+
 **[DONE 2026-07-12] Scan Redesign v3 + EMA + Tunable Constants + the two
 2026-07-08 retrigger-cancel revisions.** All implemented, hardware-validated
 across 3 pads (PDX-8, CY-5, PD-7), no audible double-triggering or missed
 hits. See "Scan Redesign + EMA Smoothing + Tunable Constants (v3)" section
 above for full detail and remaining minor open items (scanMargin tuning,
 margin/capValue calibration — none urgent).
-
-**Immediate — pad-specific tuning and setup (next focus, 2026-07-12):**
-General triggering behaviour is now considered "good enough" — shift focus
-from algorithm work to per-pad calibration (thresh/sens/margins) using the
-methodical characterization process established earlier this project
-(noise floor → dynamic range sweep → curve check → rim discrimination →
-choke calibration → mask/retrigger tuning), now with the ADC Scope's
-load-from-log-file + Config-block overlay tooling available to make this
-visual rather than reading raw numbers.
 
 **Future — recorded-waveform-driven decay/mask tuning (added 2026-07-06, do not
 start until the pdrum-revival Phase 1 + Phase 2 below are independently confirmed

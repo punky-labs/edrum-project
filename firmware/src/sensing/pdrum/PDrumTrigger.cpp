@@ -79,7 +79,7 @@ PDrumTrigger::PDrumTrigger(byte pin1, byte pin2)
   headThreshold      = 20;
   scantime           = 30;   // v3: Scan HARD-CAP ms (was old fixed-window duration)
   masktime           = 80;
-  rimRatioThreshold  = 40;
+  rimRatioThreshold  = 70;   // rim/head % above which a both-fired hit classifies as rim
   chokeThreshold     = 50;
   chokeEnabled       = true;
   chokeDetected      = false;
@@ -90,6 +90,16 @@ PDrumTrigger::PDrumTrigger(byte pin1, byte pin2)
   velocityRaw        = 0;
   velocityRimRaw     = 0;
   loopTimes          = 0;
+  // Secondary trigger behaviours v1 defaults (overwritten by applyConfig()).
+  rimThreshold       = 20;
+  rimSensitivity     = 800;
+  rimCurve           = 0;
+  crossStickNote     = 37;   // GM side stick
+  crossStickCutoff   = 25;   // MIDI velocity (0-127), NOT raw ADC
+  alternateNote      = 53;   // GM ride bell (placeholder)
+  minAltNoteVelocity = 200;
+  chokeHoldMs        = 5;
+  chokeReleaseGraceMs = 30;  // release-debounce placeholder (ms), unvalidated
 }
 
 // Fs is stored only — this engine's timing is millis()-based, so there is nothing
@@ -110,9 +120,11 @@ void PDrumTrigger::processBlock(const uint16_t* headBlock, const uint16_t* rimBl
   // Per-block output latches reset ONCE here (not per-sample inside sensing()) so a
   // hit that fires mid-block is still visible to main after the whole block runs.
   // chokeDetected is a separate latch cleared by main via clearChoke().
-  hit    = false;
-  hitRim = false;
-  choke  = false;
+  hit           = false;
+  hitRim        = false;
+  hitCrossStick = false;
+  hitAlt        = false;
+  choke         = false;
 
   if (!headBlock || n == 0) return;
 
@@ -124,7 +136,7 @@ void PDrumTrigger::processBlock(const uint16_t* headBlock, const uint16_t* rimBl
     const int piezo = (int)headBlock[j];
     const int rim   = rimBlock ? (int)rimBlock[j] : 0;
     sensing(piezo, rim, absIdx);
-    if (hit || hitRim) firedThisBlock = true;
+    if (hit || hitRim || hitCrossStick) firedThisBlock = true;
   }
 
   if (firedThisBlock) {
@@ -213,33 +225,80 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   // firing on any sample latches until main consumes it after the block.
 
   // =========================================================================
-  // DUAL_PIEZO — both channels velocity-sensitive; ratio discrimination
+  // DUAL_PIEZO — ratio-based head/rim classification, then velocity-based cross-stick.
+  // Two stages: (1) CLASSIFY whether rim wins at all — ratio when both zones fire, or
+  // default-to-rim when only rim fired; (2) once rim has won, a SEPARATE velocity
+  // check splits a soft rim hit (cross-stick note) from a hard one (normal rim note).
+  // History: reverted 2026-07-13 from the brief v1 "independent layering" model to
+  // ratio (real PDX-8 captures showed heavy head/rim bleed — head hits 19-33% rim/head,
+  // rim hits 153-173% — so both zones clear their thresholds on almost any strike, and
+  // layering fired a spurious second note nearly every hit). Then cross-stick itself
+  // was redefined 2026-07-13: this pad's mechanical coupling defeats physical
+  // cross-stick detection (genuine "stick across rim, zero head contact" attempts
+  // still read headpk 519-683 — overlapping soft head hits, and ~89-109% ratio,
+  // near-identical to hard rimshots at ~95-106%), so head-presence and ratio both fail
+  // as discriminators. Cross-stick is now purely "rim won classification AND its curved
+  // velocity is soft". KEPT from v1: the either-channel Scan start, rim's independent
+  // velocity scaling. rimThreshold stays the prerequisite floor gate for "rim fired".
   // =========================================================================
   if (padType == 0) {
-    // Only the head channel can initiate a scan.
-    // Rim channel is read during scan for discrimination but never starts one.
+    // Scan starts when EITHER channel crosses its OWN threshold (ARCHITECTURAL
+    // CORRECTION 2026-07-12, required for cross-stick to be detectable at all): a
+    // real cross-stick may produce no meaningful head signal, so a head-only start
+    // gate makes "head stays below threshold" structurally impossible. Both channels
+    // are tracked throughout regardless of which one triggered the scan.
     if (rcState_ == RC_IDLE) {
-      if (piezoValue > headThreshold) startScan(piezoValue, rimValue, currentAbsIndex);
+      if (piezoValue > (int)headThreshold || rimValue > (int)rimThreshold)
+        startScan(piezoValue, rimValue, currentAbsIndex);
     } else if (rcState_ == RC_SCAN) {
       if (serviceScan(piezoValue, rimValue)) {
         time_end = millis();
         // Committed peaks: best confirmed, floored by the tracker's current running
         // max so a still-rising unconfirmed peak at hard-cap is never undercounted.
-        velocityRaw    = max(scanHeadBest_, scanHeadTrk_.runMax);
-        velocityRimRaw = max(scanRimBest_,  scanRimTrk_.runMax);
-        // Ratio-based discrimination — UNCHANGED, just fed by confirmation-derived
-        // peaks instead of the old fixed-window running maxes.
-        // ratio = rimPeak * 100 / headPeak (integer, avoids float)
-        int ratio = (velocityRaw > 0) ? (velocityRimRaw * 100 / velocityRaw) : 0;
-        bool isRim = (ratio > (int)rimRatioThreshold) ||
-                     (ratio > 80 && firstPeakChannel == 1);
-        velocity    = curve(velocityRaw,    headThreshold, headSensitivity, curvetype);
-        velocityRim = curve(velocityRimRaw, headThreshold, headSensitivity, curvetype);
-        if (isRim) { hitRim = true; } else { hit = true; }
+        const int headBest = max(scanHeadBest_, scanHeadTrk_.runMax);
+        const int rimBest  = max(scanRimBest_,  scanRimTrk_.runMax);
+        velocityRaw    = headBest;
+        velocityRimRaw = rimBest;
+        const bool headFired = headBest > (int)headThreshold;
+        const bool rimFired  = rimBest  > (int)rimThreshold;
+        scanLastRatio_ = -1;   // diagnostic: only set below in the both-fired case
+        // STAGE 1 — classification: does rim win at all? (ratio when both zones fired,
+        // else default-to-rim when only rim fired). This decides rim-vs-head ONLY; the
+        // cross-stick-vs-normal-rim split is a separate STAGE 2 check below.
+        bool rimWins = false;
+        if (rimFired && !headFired) {
+          rimWins = true;   // no ambiguity — rim is the only thing that fired
+        } else if (rimFired && headFired) {
+          const int ratio = (headBest > 0) ? (rimBest * 100 / headBest) : 0;
+          scanLastRatio_ = ratio;
+          rimWins = ratio > (int)rimRatioThreshold;
+          if (!rimWins) {
+            velocity = curve(headBest, headThreshold, headSensitivity, curvetype);
+            hit      = true;
+          }
+        } else if (headFired) {
+          // Only head cleared its threshold — unambiguous, no ratio needed.
+          velocity = curve(headBest, headThreshold, headSensitivity, curvetype);
+          hit      = true;
+        }
+        // (neither-fired cannot occur: Scan only starts once one channel crosses its
+        // own threshold, and best-so-far is >= that crossing value within the scan.)
+
+        // STAGE 2 — rim won: split cross-stick vs normal rim by CURVED velocity.
+        if (rimWins) {
+          // Rim scales through its OWN threshold/sensitivity/curve (head and rim piezos
+          // see different mechanical energy for the same strike).
+          velocityRim = curve(rimBest, rimThreshold, rimSensitivity, rimCurve);
+          // crossStickCutoff is in MIDI VELOCITY units (0-127), compared against the
+          // CURVED rim velocity — DELIBERATELY not raw ADC like every other threshold
+          // in this file (this pad's coupling makes a soft-velocity rule the only
+          // workable cross-stick discriminator). Do NOT "correct" it to raw ADC.
+          if (velocityRim < (int)crossStickCutoff) hitCrossStick = true;  // soft → cross-stick
+          else                                     hitRim        = true;  // hard → normal rim
+        }
         loopTimes = 0;
-        // Retrigger-cancel: seed the reference to this scan's own head peak and
-        // hand off to MASK → MONITOR. (Rim discrimination above is unchanged; the
-        // MONITOR watches the HEAD channel only, per the v2 scope decision.)
+        // Retrigger-cancel: seed the reference to this scan's own head peak and hand
+        // off to MASK → MONITOR (MONITOR watches the HEAD channel only, per v2).
         lastConfirmedPeak_ = min(velocityRaw, kRetrigSeedCap);  // seed cap (see .h)
         rcState_ = RC_MASK;
       }
@@ -255,15 +314,24 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
   // PIEZO_SWITCH_CHOKE — head piezo (hit only) + rim switch (choke control)
   // =========================================================================
   else if (padType == 1) {
-    // Head piezo: confirmation-based Scan → hit only, no rim note
+    // Head piezo: confirmation-based Scan → hit (or alternate note), plus choke below
     if (rcState_ == RC_IDLE) {
       if (piezoValue > headThreshold) startScan(piezoValue, rimValue, currentAbsIndex);
     } else if (rcState_ == RC_SCAN) {
       if (serviceScan(piezoValue, rimValue)) {
         time_end = millis();
-        velocityRaw = max(scanHeadBest_, scanHeadTrk_.runMax);
+        const int headBest = max(scanHeadBest_, scanHeadTrk_.runMax);
+        velocityRaw = headBest;
         velocity    = curve(velocityRaw, headThreshold, headSensitivity, curvetype);
         hit = true;
+        // Alternate-note check (NEW, independent of and CONCURRENT with choke — not a
+        // mode toggle). At this commit instant, if the switch is ALSO elevated right
+        // now (instantaneous read — deliberately no freshness/staleness check for v1)
+        // AND the head hit is hard enough, main sends alternateNote INSTEAD OF the
+        // head note. Does not suppress or interact with choke, which keeps monitoring
+        // in its own fully independent lane below and can fire immediately after.
+        if (rimValue > (int)chokeThreshold && headBest > (int)minAltNoteVelocity)
+          hitAlt = true;
         loopTimes = 0;
         lastConfirmedPeak_ = min(velocityRaw, kRetrigSeedCap);  // seed cap: keep the
                                                                 // new-strike bar reachable when this hit clips the ADC
@@ -276,23 +344,42 @@ void PDrumTrigger::sensing(int piezoValue, int rimValue, uint32_t currentAbsInde
         startScan(piezoValue, rimValue, currentAbsIndex);
     }
 
-    // Switch/choke monitoring — runs independently of hit scan.
-    // Always monitor switch channel, even during mask window.
-    // Fire when the switch has stayed above threshold for kChokeHoldMs (millis-based,
-    // sample-rate-independent — replaces the old hardcoded ~45-sample count that
-    // assumed ~9kHz sampling and would mistime at our 8kHz rate).
+    // Switch/choke monitoring — runs independently of hit scan (UNCHANGED by the
+    // v1 alternate-note work above; they share chokeThreshold but are otherwise fully
+    // independent lanes). Always monitor switch channel, even during mask window.
+    // Fire when the switch has stayed above threshold for chokeHoldMs (millis-based,
+    // sample-rate-independent; now a per-input tunable, was the kChokeHoldMs=5 const).
+    //
+    // RELEASE-SIDE DEBOUNCE (2026-07-14): a real hand on a physical switch is never
+    // perfectly continuous above a fixed level (grip shifts, contact bounce), so the
+    // old ZERO-tolerance reset ("dip one sample below → discard the whole hold-time
+    // accumulation") made a realistic ~500ms hold unreachable and gave chokeHoldMs a
+    // fragile 5-10ms sweet spot. Fix: a brief dip does NOT reset immediately — start a
+    // release-pending timer, and only treat it as a genuine release once the dip itself
+    // persists for chokeReleaseGraceMs. Any real contact within the grace window cancels
+    // the pending release, and hold-time accumulation continues as if the dip never
+    // happened. (Only the DIP behaviour changes here; the hold-time/chokeHoldMs logic
+    // and the immediate re-arm after firing are deliberately untouched.)
     if (chokeEnabled) {
       if (rimValue > (int)chokeThreshold) {
+        belowSince_ = 0;   // real contact cancels any pending release
         if (!chokeAbove_) {
           chokeAbove_      = true;
           chokeAboveSince_ = millis();
-        } else if (millis() - chokeAboveSince_ >= kChokeHoldMs) {
+        } else if (millis() - chokeAboveSince_ >= (unsigned long)chokeHoldMs) {
           chokeDetected = true;
           chokeAbove_   = false;   // re-arm (matches old count-reset behaviour)
         }
-      } else {
-        chokeAbove_ = false;
+      } else if (chokeAbove_) {
+        if (belowSince_ == 0) {
+          belowSince_ = millis();   // dip just started — hold-time accumulation continues
+        } else if (millis() - belowSince_ >= (unsigned long)chokeReleaseGraceMs) {
+          chokeAbove_ = false;      // dip persisted past the grace window → genuine release
+          belowSince_ = 0;
+        }
+        // else: still within grace — chokeAboveSince_ untouched, accumulation continues
       }
+      // (if !chokeAbove_ and below threshold: nothing to do; belowSince_ is already 0.)
     }
   }
 
