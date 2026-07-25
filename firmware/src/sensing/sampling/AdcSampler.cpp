@@ -40,24 +40,41 @@ AdcSampler::~AdcSampler() {
 
 bool AdcSampler::begin(const uint8_t* channelGpios, uint8_t numChannels, uint32_t perChannelHz) {
     if (handle_) stop();
-    if (numChannels == 0 || numChannels > kMaxChannels) return false;
+    lastError_     = ESP_OK;
+    lastErrorStep_ = "";
+    if (numChannels == 0 || numChannels > kMaxChannels) {
+        lastErrorStep_ = "numChannels range";
+        return false;
+    }
 
-    numChannels_  = numChannels;
-    perChannelHz_ = perChannelHz;
+    // NOTE (2026-07-25): numChannels_/perChannelHz_ are NOT set here anymore —
+    // moved to just before the final `return true` below. Previously they were
+    // set this early and never rolled back on failure, so numChannels()/
+    // sampleRateHz() (and thus the "[ADC] configured..." boot log) would report
+    // the REQUESTED config even when begin() went on to fail — misleading, as seen
+    // when begin() failed with 9ch but still logged "configured ... 9 ch".
     for (uint8_t i = 0; i < kAdcChanCount; i++) adcChanToSlot_[i] = 0xFF;
 
     adc_continuous_handle_cfg_t handleCfg = {};
     handleCfg.max_store_buf_size = kStoreBufBytes;
     handleCfg.conv_frame_size    = kConvFrameBytes;
-    if (adc_continuous_new_handle(&handleCfg, &handle_) != ESP_OK) {
+    esp_err_t err = adc_continuous_new_handle(&handleCfg, &handle_);
+    if (err != ESP_OK) {
         handle_ = nullptr;
+        lastError_     = err;
+        lastErrorStep_ = "new_handle";
         return false;
     }
 
     adc_digi_pattern_config_t pattern[kMaxChannels] = {};
     for (uint8_t i = 0; i < numChannels; i++) {
         adc_channel_t ch;
-        if (!gpioToAdc1Channel(channelGpios[i], ch)) { stop(); return false; }
+        if (!gpioToAdc1Channel(channelGpios[i], ch)) {
+            lastError_     = ESP_ERR_INVALID_ARG;
+            lastErrorStep_ = "gpio_map";
+            stop();
+            return false;
+        }
         pattern[i].atten     = ADC_ATTEN_DB_12;
         // NOTE: do NOT mask to 3 bits (& 0x7). ESP32-S3 ADC1 has 10 channels
         // (0..9, GPIO1..GPIO10); 3 bits only covers 0..7, so & 0x7 collides
@@ -75,9 +92,24 @@ bool AdcSampler::begin(const uint8_t* channelGpios, uint8_t numChannels, uint32_
     digCfg.format         = ADC_DIGI_OUTPUT_FORMAT_TYPE2;
     digCfg.pattern_num    = numChannels;
     digCfg.adc_pattern    = pattern;
-    if (adc_continuous_config(handle_, &digCfg) != ESP_OK) { stop(); return false; }
+    err = adc_continuous_config(handle_, &digCfg);
+    if (err != ESP_OK) {
+        lastError_     = err;
+        lastErrorStep_ = "config";
+        stop();
+        return false;
+    }
 
-    if (adc_continuous_start(handle_) != ESP_OK) { stop(); return false; }
+    err = adc_continuous_start(handle_);
+    if (err != ESP_OK) {
+        lastError_     = err;
+        lastErrorStep_ = "start";
+        stop();
+        return false;
+    }
+
+    numChannels_  = numChannels;
+    perChannelHz_ = perChannelHz;
     return true;
 }
 

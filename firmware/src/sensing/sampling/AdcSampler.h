@@ -24,7 +24,7 @@
 
 class AdcSampler {
 public:
-    static constexpr uint8_t  kMaxChannels = 8;
+    static constexpr uint8_t  kMaxChannels = 9;  // 8 pad channels (GPIO2-9) + hi-hat (GPIO1)
     // Bytes per raw conversion result (SOC_ADC_DIGI_RESULT_BYTES == 4 on S3).
     static constexpr uint8_t  kSampleBytes = SOC_ADC_DIGI_RESULT_BYTES;
     // Number of ADC1 hardware channels. SOC_ADC_CHANNEL_NUM is a function-like
@@ -64,11 +64,19 @@ public:
     uint8_t  numChannels()  const { return numChannels_; }
     uint32_t sampleRateHz() const { return perChannelHz_; }
     bool     isRunning()    const { return handle_ != nullptr; }
+    // TEMP DIAGNOSTIC (2026-07-25): last esp_err_t from begin(), and which call
+    // produced it, so a begin() failure is actually diagnosable over telnet instead
+    // of a bare bool. Set unconditionally at the start of begin(); check after any
+    // begin() == false.
+    esp_err_t   lastError()    const { return lastError_; }
+    const char* lastErrorStep() const { return lastErrorStep_; }
 
 private:
     adc_continuous_handle_t handle_       = nullptr;
     uint8_t                 numChannels_  = 0;
     uint32_t                perChannelHz_ = 0;
+    esp_err_t                lastError_     = ESP_OK;
+    const char*              lastErrorStep_ = "";
 
     // Reverse map: ADC1 hardware channel -> configured slot index (0xFF = unused).
     uint8_t  adcChanToSlot_[kAdcChanCount] = {};
