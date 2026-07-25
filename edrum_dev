@@ -1,0 +1,3 @@
+cd ~/Dev/eDrum
+
+./venv/bin/python3 app/main.py --dev
