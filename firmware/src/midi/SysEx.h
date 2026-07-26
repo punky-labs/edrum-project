@@ -86,6 +86,8 @@
 #define SYSEX_STAT_ACK       0x01
 #define SYSEX_STAT_INP_ERR   0x02
 #define SYSEX_STAT_HIT_DEBUG 0x03
+#define SYSEX_STAT_HIHAT_DEBUG 0x04   // mirrors SYSEX_STAT_HIT_DEBUG (05 03) but for
+                                       // continuous hi-hat position, not discrete hits
 
 // Generic ack status values (payload byte 2 of 05 01)
 #define SYSEX_ACK_OK      0x00

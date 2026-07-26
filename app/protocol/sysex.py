@@ -176,6 +176,7 @@ PRESET_NAME_MAX = 16
 STAT_ACK       = 0x01
 STAT_INP_ERR   = 0x02
 STAT_HIT_DEBUG = 0x03
+STAT_HIHAT_DEBUG = 0x04   # continuous hi-hat position (mirrors 05 03, but position not hit)
 
 # Ack status values
 ACK_OK      = 0x00
@@ -827,6 +828,21 @@ def parse_hit_event(payload: bytes) -> dict:
     }
 
 
+def parse_hihat_debug_event(payload: bytes) -> dict:
+    """
+    05 04 -> {input_id, raw_position, cc_value}
+
+    raw_position: continuous 14-bit raw ADC pedal position (0-4095 in practice)
+    cc_value:     quantized MIDI CC openness value (0-127)
+    """
+    _require_len(payload, 4, "hihat_debug_event")
+    return {
+        "input_id":     payload[0],
+        "raw_position": decode_14bit(payload[1], payload[2]),
+        "cc_value":     payload[3],
+    }
+
+
 # ---------------------------------------------------------------------------
 # __main__ — round-trip self-test
 # ---------------------------------------------------------------------------
@@ -1084,6 +1100,18 @@ if __name__ == "__main__":
     _check("rim: zone == RIM",        result["zone"]           == ZONE_RIM)
     _check("rim: raw_velocity == 50", result["raw_velocity"]   == 50)
     _check("rim: midi_vel == 64",     result["midi_velocity"]  == 64)
+
+    # ── Hi-hat position event parser (05 04) ──────────────────────────────────
+    print("\nHi-hat position event parser (05 04):")
+    hi, lo = encode_14bit(3400)
+    result = parse_hihat_debug_event(bytes([4, hi, lo, 100]))
+    _check("hihat: input_id == 4",        result["input_id"]     == 4)
+    _check("hihat: raw_position == 3400", result["raw_position"] == 3400)
+    _check("hihat: cc_value == 100",      result["cc_value"]     == 100)
+
+    result = parse_hihat_debug_event(bytes([4, 0, 0, 0]))
+    _check("hihat: raw_position == 0",    result["raw_position"] == 0)
+    _check("hihat: cc_value == 0",        result["cc_value"]     == 0)
 
     # ── Validation errors ─────────────────────────────────────────────────────
     print("\nValidation errors:")

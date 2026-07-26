@@ -9,20 +9,26 @@
 // POSITION sensor (FSR under the foot). Different processing model entirely,
 // so no shared interface — a small self-contained class instead.
 //
-// Signal path: raw ADC (stream channel 0 = GPIO1) -> EMA smooth -> linear map
-// to 0-127 -> 7-step quantize (HelloDrum FSRSensing table). A CC is emitted
-// only when the quantized value CHANGES; that quantization is what prevents
-// MIDI flooding, so no separate hysteresis/debounce timer is needed.
+// Signal path: raw ADC (stream channel 0 = GPIO1) -> EMA smooth -> applyCurve()
+// (shared with the pad velocity curves) map to 0-127 -> 7-step quantize
+// (HelloDrum FSRSensing table). A CC is emitted only when the quantized value
+// CHANGES; that quantization is what prevents MIDI flooding, so no separate
+// hysteresis/debounce timer is needed.
 //
 // Polarity: pressure INCREASES the ADC value, and CC 0 = fully open /
 // CC 127 = fully closed (DW/eDRUMin convention), so the mapping is direct —
 // no inversion anywhere.
 //
-// Calibration bounds are hardcoded constants for now (measured, not guessed);
-// persisted/SysEx/telnet-tunable calibration is future work.
+// The max bound (raw ADC ceiling) and curve shape are runtime-configurable from
+// the app, reusing g_inputs[4]'s existing headSensitivity/velocityCurve fields
+// (applied via main's applyConfig()). Min (pedal-up) stays hardcoded at 0.
 class HiHat {
 public:
     void processBlock(const uint16_t* samples, uint16_t n);
+
+    // Config, applied from main's applyConfig() (boot + every SysEx write).
+    void setMaxAdc(int maxAdc)         { maxAdc_    = maxAdc; }
+    void setCurveType(uint8_t curveType) { curveType_ = curveType; }
 
     bool    hasCcChange() const { return ccChanged_; }
     void    clearCcChange()     { ccChanged_ = false; }
@@ -33,13 +39,16 @@ public:
     int   getDebugRawLast() const  { return rawLast_; }
 
 private:
-    static constexpr int   kAdcUp    = 0;      // measured: pedal up / resting
-    static constexpr int   kAdcDown  = 3400;   // measured: pedal fully pressed
+    static constexpr int   kAdcUp    = 0;      // pedal up / resting — stays
+                                               // hardcoded (confirmed with Andrew).
     static constexpr float kEmaAlpha = 0.15f;  // heavier smoothing than the pad
                                                // EMA (default 0.5) is fine here:
                                                // slow position signal, not a fast
                                                // transient — no attack to blunt.
 
+    int     maxAdc_      = 3400;    // runtime-settable; 3400 = real measured default,
+                                    // matches Config.cpp's per-input default for jack 4.
+    uint8_t curveType_   = 0;       // 0 = Natural (linear) — matches v1 behaviour.
     float   smoothed_    = 0.0f;
     bool    initialized_ = false;   // first sample seeds smoothed_ directly, so
                                     // there's no artificial ramp-in at boot.
@@ -48,5 +57,5 @@ private:
     uint8_t pendingCc_   = 0;       // value to emit on the current change
     bool    ccChanged_   = false;
 
-    static uint8_t mapAndQuantize(float raw);
+    uint8_t mapAndQuantize(float raw) const;
 };

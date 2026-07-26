@@ -1,4 +1,5 @@
 #include "HiHat.h"
+#include "../curve.h"   // applyCurve() — shared with PDrumTrigger's velocity curves
 
 void HiHat::processBlock(const uint16_t* samples, uint16_t n) {
     if (n == 0) return;
@@ -24,15 +25,17 @@ void HiHat::processBlock(const uint16_t* samples, uint16_t n) {
     }
 }
 
-uint8_t HiHat::mapAndQuantize(float raw) {
-    // Linear map [kAdcUp, kAdcDown] -> [0, 127], clamped at both ends. A harder
-    // press than the measured 3400 just saturates at 127 rather than overshooting.
-    float span = (float)(kAdcDown - kAdcUp);
-    float cc   = (raw - (float)kAdcUp) * 127.0f / span;
-    if (cc <= 0.0f)   return 0;
-    if (cc >= 127.0f) cc = 127.0f;
-
-    int mapped = (int)cc;
+uint8_t HiHat::mapAndQuantize(float raw) const {
+    // Map [kAdcUp, maxAdc_] -> [1,127] through the shared curve (same one the pad
+    // velocities use), so the app's curve enum reshapes openness identically. A
+    // harder press than maxAdc_ saturates at 127 rather than overshooting.
+    //
+    // NOTE: applyCurve()'s floor clamps to a minimum of 1 (every pad curve does
+    // this — velocity 0 makes no sense for a hit). Pedal-fully-open therefore maps
+    // to 1 before quantization, not 0. Harmless: the first quantize bucket is
+    // <20 -> 0, so 1 still quantizes to CC 0 exactly as before. Not a bug — do not
+    // "fix" it (see task doc 1b).
+    uint8_t mapped = applyCurve((int)raw, kAdcUp, maxAdc_, curveType_);
 
     // 7-step quantize, exactly HelloDrum's FSRSensing() boundaries. This coarse
     // quantization (not a debounce timer) is what keeps the CC stream from

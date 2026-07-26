@@ -36,7 +36,7 @@ try:
     from .theme import (
         COLOR_BG_DARK, COLOR_BG_PANEL,
         COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_HIT_OTHER,
+        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_HIT_OTHER,
         COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
@@ -47,7 +47,7 @@ except ImportError:
     from ui.theme import (  # type: ignore[no-redef]
         COLOR_BG_DARK, COLOR_BG_PANEL,
         COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_HIT_OTHER,
+        COLOR_TEXT_DISABLED, COLOR_ACCENT, COLOR_RIM, COLOR_HIT_OTHER,
         COLOR_BORDER, COLOR_HIT_HEAD, COLOR_HIT_RIM,
         FONT_LABEL_SIZE, FONT_VALUE_SIZE,
         CARD_MIN_WIDTH, CARD_MIN_HEIGHT, HIT_LOG_BARS, SLIDER_HEIGHT,
@@ -93,6 +93,7 @@ try:
         parse_pad_config_response, parse_pad_config_ext_response,
         parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
+        STAT_HIHAT_DEBUG, parse_hihat_debug_event,
         INPUT_ACTIVE, INPUT_RESERVED,
     )
 except ImportError:
@@ -128,6 +129,7 @@ except ImportError:
         parse_pad_config_response, parse_pad_config_ext_response,
         parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
+        STAT_HIHAT_DEBUG, parse_hihat_debug_event,
         INPUT_ACTIVE, INPUT_RESERVED,
     )
 
@@ -256,6 +258,11 @@ _TRIGGER_BUILDERS: dict[str, tuple] = {
     "_alt_min_vel":  (build_set_alt_min_velocity,          CAT_PAD, PAD_SET_ALT_MIN_VEL,   "min_alt_note_velocity", 0, 1023, ""),
     "_choke_hold":   (build_set_choke_hold_ms,             CAT_PAD, PAD_SET_CHOKE_HOLD,    "choke_hold_ms",          0, 1000, " ms"),
     "_choke_grace":  (build_set_choke_release_grace_ms,    CAT_PAD, PAD_SET_CHOKE_GRACE,   "choke_release_grace_ms", 0,  200, " ms"),
+    # Hi-hat Max (calibration ceiling). Same builder/command/field as _sens — both
+    # write head_sensitivity via PAD_SET_SENS — but shown ONLY for hi-hat types
+    # (mutually exclusive with _sens via _update_zone_visibility). Range is the full
+    # 12-bit ADC so the ceiling can be set anywhere the real pedal peaks.
+    "_hihat_max":    (build_set_head_sensitivity,          CAT_PAD, PAD_SET_SENS,          "head_sensitivity",       0, 4095, ""),
 }
 
 
@@ -355,6 +362,43 @@ class InputCard(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Shared curve shape
+# ---------------------------------------------------------------------------
+
+def _curve_shape_output(curve_type: int, x: float) -> float:
+    """
+    Curve response for an input x in [0,127] -> output in [~1,127].
+    Shared by VelocityCurveWidget (pad velocity) and HiHatCurveWidget (pedal
+    openness) so the two on-screen curves can't drift apart — mirrors the
+    firmware's applyCurve() reshape (the same pow() formulae the LUTs were
+    generated from). Axis remapping (raw-ADC domain) is the caller's job.
+    """
+    if x <= 0:
+        return 0.0
+    if curve_type == 0 or curve_type == 5:      # Natural or Custom (linear)
+        return float(x)
+    elif curve_type == 1:                       # Expressive (exp 1.02)
+        b = 1.02
+        return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+    elif curve_type == 2:                       # Sensitive (exp 1.05)
+        b = 1.05
+        return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
+    elif curve_type == 3:                       # Punchy (log 0.98)
+        b = 0.98
+        denom = b**126 - 1
+        if abs(denom) < 1e-10:
+            return float(x)
+        return (126.0 / denom) * (b**(x - 1) - 1) + 1
+    elif curve_type == 4:                       # Aggressive (log 0.95)
+        b = 0.95
+        denom = b**126 - 1
+        if abs(denom) < 1e-10:
+            return float(x)
+        return (126.0 / denom) * (b**(x - 1) - 1) + 1
+    return float(x)
+
+
+# ---------------------------------------------------------------------------
 # VelocityCurveWidget
 # ---------------------------------------------------------------------------
 
@@ -396,31 +440,7 @@ class VelocityCurveWidget(QWidget):
         self.update()
 
     def _calc_output(self, x: int) -> float:
-        if x <= 0:
-            return 0.0
-        ct = self._curve_type
-
-        if ct == 0 or ct == 5:          # Natural or Custom (linear)
-            return float(x)
-        elif ct == 1:                   # Expressive (exp 1.02)
-            b = 1.02
-            return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
-        elif ct == 2:                   # Sensitive (exp 1.05)
-            b = 1.05
-            return (126.0 / (b**126 - 1)) * (b**(x - 1) - 1) + 1
-        elif ct == 3:                   # Punchy (log 0.98)
-            b = 0.98
-            denom = b**126 - 1
-            if abs(denom) < 1e-10:
-                return float(x)
-            return (126.0 / denom) * (b**(x - 1) - 1) + 1
-        elif ct == 4:                   # Aggressive (log 0.95)
-            b = 0.95
-            denom = b**126 - 1
-            if abs(denom) < 1e-10:
-                return float(x)
-            return (126.0 / denom) * (b**(x - 1) - 1) + 1
-        return float(x)
+        return _curve_shape_output(self._curve_type, float(x))
 
     def _build_curve_points(self) -> list[tuple[float, float]]:
         points = []
@@ -478,6 +498,162 @@ class VelocityCurveWidget(QWidget):
         if self._last_vel_in >= 0:
             x_norm = self._last_vel_in  / 127.0
             y_norm = self._last_vel_out / 127.0   # actual firmware output value
+            dot_x, dot_y = to_px(x_norm, y_norm)
+
+            glow_pen = QPen(QColor(COLOR_ACCENT))
+            glow_pen.setWidth(1)
+            painter.setPen(glow_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(dot_x - 7, dot_y - 7, 14, 14)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(COLOR_ACCENT))
+            painter.drawEllipse(dot_x - 4, dot_y - 4, 8, 8)
+
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# HiHatCurveWidget
+# ---------------------------------------------------------------------------
+
+class HiHatCurveWidget(QWidget):
+    """
+    Draws the hi-hat pedal openness response.
+
+    Axes differ from VelocityCurveWidget: X = raw ADC over the FIXED 12-bit
+    domain 0-4095 (the ADC's true range), Y = output CC 0-127. Draws four
+    layers: (a) the smooth curve line, (b) 7 horizontal bands at the CC
+    quantization step levels, (c) a vertical marker at the current Max
+    (calibration ceiling), and (d) a live position dot fed by real-time data.
+    """
+
+    _ADC_MAX = 4095
+    # CC output levels the firmware's 7-step quantize snaps to.
+    _STEP_LEVELS = (0, 20, 40, 60, 80, 100, 127)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._curve_type: int = 0
+        self._max_adc:    int = 3400
+        self._live_raw:   int = -1
+        self._live_cc:    int = -1
+
+        self.setMinimumHeight(120)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+
+    def set_curve(self, curve_type: int) -> None:
+        self._curve_type = curve_type
+        self.update()
+
+    def set_max(self, max_adc: int) -> None:
+        """Set the Max calibration ceiling (raw ADC); moves the vertical marker
+        and rescales the curve's raw-ADC -> CC mapping."""
+        self._max_adc = max(1, int(max_adc))
+        self.update()
+
+    def set_live_position(self, raw: int, cc: int) -> None:
+        """Place the live dot at (raw ADC, output CC)."""
+        self._live_raw = raw
+        self._live_cc  = cc
+        self.update()
+
+    def clear_live(self) -> None:
+        self._live_raw = -1
+        self._live_cc  = -1
+        self.update()
+
+    def _adc_to_cc(self, x_adc: float) -> float:
+        """Map a raw ADC value to output CC (0-127) through the active curve,
+        mirroring firmware applyCurve(): linear [0, max_adc] -> [1,127], then
+        reshape. The drawn LINE is smooth — quantization is a separate visual
+        layer (the step bands), not applied to the line itself."""
+        # Linear map into the curve's 0-127 input domain (Arduino map(x,0,max,1,127)).
+        x_in = 1.0 + x_adc * 126.0 / float(self._max_adc)
+        x_in = max(1.0, min(127.0, x_in))
+        y = _curve_shape_output(self._curve_type, x_in)
+        return max(0.0, min(127.0, y))
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        margin_l = 8
+        margin_r = 8
+        margin_t = 8
+        margin_b = 8
+        plot_w = w - margin_l - margin_r
+        plot_h = h - margin_t - margin_b
+
+        painter.fillRect(0, 0, w, h, QColor(COLOR_BG_PANEL))
+
+        def to_px(x_norm: float, y_norm: float) -> tuple[int, int]:
+            px = margin_l + int(x_norm * plot_w)
+            py = margin_t + int((1.0 - y_norm) * plot_h)
+            return px, py
+
+        # Border box
+        border_pen = QPen(QColor(COLOR_BORDER))
+        border_pen.setWidth(1)
+        painter.setPen(border_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(margin_l, margin_t, plot_w, plot_h)
+
+        # (b) 7 quantization step bands — thin dashed horizontal lines at each CC
+        # output level, visually distinct from the solid grid box above. Lightly
+        # labelled on the left where they don't collide with the plot edge.
+        band_pen = QPen(QColor(COLOR_TEXT_SECONDARY))
+        band_pen.setWidth(1)
+        band_pen.setStyle(Qt.PenStyle.DashLine)
+        band_font = QFont()
+        band_font.setPointSize(FONT_LABEL_SIZE - 1)
+        for level in self._STEP_LEVELS:
+            y_norm = level / 127.0
+            _, gy = to_px(0.0, y_norm)
+            painter.setPen(band_pen)
+            painter.drawLine(margin_l, gy, margin_l + plot_w, gy)
+            painter.setPen(QPen(QColor(COLOR_TEXT_SECONDARY)))
+            painter.setFont(band_font)
+            painter.drawText(margin_l + 2, gy - 1, str(level))
+
+        # (a) The curve line — sampled across the full ADC domain (smooth, not
+        # quantized). COLOR_ACCENT, same as the velocity curve's line.
+        curve_pen = QPen(QColor(COLOR_ACCENT))
+        curve_pen.setWidth(2)
+        curve_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        curve_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(curve_pen)
+
+        SAMPLES = 128
+        poly_points = []
+        for i in range(SAMPLES + 1):
+            x_adc  = (i / SAMPLES) * self._ADC_MAX
+            y_cc   = self._adc_to_cc(x_adc)
+            x_norm = x_adc / self._ADC_MAX
+            y_norm = y_cc / 127.0
+            poly_points.append(QPoint(*to_px(x_norm, y_norm)))
+        painter.drawPolyline(QPolygon(poly_points))
+
+        # (c) Vertical marker at the current Max (calibration ceiling), in a
+        # distinct colour from the curve line (rim orange, not accent teal).
+        max_norm = min(1.0, self._max_adc / self._ADC_MAX)
+        mx, _ = to_px(max_norm, 0.0)
+        marker_pen = QPen(QColor(COLOR_RIM))
+        marker_pen.setWidth(2)
+        painter.setPen(marker_pen)
+        painter.drawLine(mx, margin_t, mx, margin_t + plot_h)
+
+        # (d) Live position dot — same glow + filled-circle treatment as the
+        # velocity widget's hit dot.
+        if self._live_raw >= 0 and self._live_cc >= 0:
+            x_norm = max(0.0, min(1.0, self._live_raw / self._ADC_MAX))
+            y_norm = max(0.0, min(1.0, self._live_cc  / 127.0))
             dot_x, dot_y = to_px(x_norm, y_norm)
 
             glow_pen = QPen(QColor(COLOR_ACCENT))
@@ -698,6 +874,7 @@ class _RefreshWorker(QThread):
 class PadConfigTab(QWidget):
     _configs_ready = pyqtSignal(dict)
     _hit_received  = pyqtSignal(int, int, int, int)  # input_id, zone, raw_vel, midi_vel
+    _hihat_position_received = pyqtSignal(int, int)  # raw_position, cc_value
     status_message = pyqtSignal(str, int)        # msg, timeout_ms
 
     def __init__(
@@ -718,6 +895,7 @@ class PadConfigTab(QWidget):
 
         self._configs_ready.connect(self._on_configs_ready)
         self._hit_received.connect(self._on_hit)
+        self._hihat_position_received.connect(self._on_hihat_position)
 
         self._preset_data: dict = load_presets()
         self._build_ui()
@@ -813,7 +991,9 @@ class PadConfigTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Stacked: placeholder (0) / pad detail (1) / hi-hat detail (2)
+        # Stacked: placeholder (0) / shared detail (1). Input 4 (hi-hat) now flows
+        # through the SAME shared detail panel (index 1) as inputs 0-3 — the old
+        # index-2 "coming soon" placeholder is gone.
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
 
@@ -824,11 +1004,6 @@ class PadConfigTab(QWidget):
 
         detail = self._build_detail()
         self._stack.addWidget(detail)                # index 1
-
-        hihat_placeholder = QLabel("Hi-Hat Controller — coming soon")
-        hihat_placeholder.setObjectName("placeholder_label")
-        hihat_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._stack.addWidget(hihat_placeholder)     # index 2
 
         self._stack.setCurrentIndex(0)
         return w
@@ -894,7 +1069,9 @@ class PadConfigTab(QWidget):
         return w
 
     def _build_curve_panel(self) -> QGroupBox:
+        # Title is swapped per pad type in _populate_detail (velocity vs openness).
         box = QGroupBox("VELOCITY CURVE")
+        self._curve_box = box
         vl = QVBoxLayout(box)
 
         self._curve_combo = QComboBox()
@@ -908,14 +1085,24 @@ class PadConfigTab(QWidget):
         self._curve_desc.setWordWrap(True)
         vl.addWidget(self._curve_desc)
 
-        self._curve_widget = VelocityCurveWidget()
+        # Curve area: a QStackedWidget swaps the velocity curve (index 0) for the
+        # hi-hat openness curve (index 1) in the same layout slot, chosen by pad
+        # type in _populate_detail (matches the _stack pattern in _build_right_panel).
+        self._curve_widget       = VelocityCurveWidget()
+        self._hihat_curve_widget = HiHatCurveWidget()
+        self._curve_stack = QStackedWidget()
+        self._curve_stack.addWidget(self._curve_widget)        # index 0 — pads
+        self._curve_stack.addWidget(self._hihat_curve_widget)  # index 1 — hi-hat
 
         curve_row = QHBoxLayout()
         curve_row.setSpacing(4)
         curve_row.setContentsMargins(0, 0, 0, 0)
-        curve_row.addWidget(self._curve_widget, stretch=1)
+        curve_row.addWidget(self._curve_stack, stretch=1)
 
-        # Velocity bar — right-aligned inside the group box
+        # Level bar: a parallel QStackedWidget swaps the velocity bar (0-127,
+        # index 0) for the hi-hat raw-ADC position bar (0-4095, index 1). The
+        # hi-hat bar shows LIVE PEDAL POSITION — a calibration aid ("press fully,
+        # watch it climb, set Max to the peak"), not a performance meter.
         vel_col = QWidget()
         vel_col.setObjectName("vel_col")
         vel_col.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -937,7 +1124,33 @@ class PadConfigTab(QWidget):
         self._vel_lbl.setFixedWidth(28)
         vcl.addWidget(self._vel_lbl)
 
-        curve_row.addWidget(vel_col)
+        hihat_col = QWidget()
+        hihat_col.setObjectName("vel_col")
+        hihat_col.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        hcl = QVBoxLayout(hihat_col)
+        hcl.setContentsMargins(0, 0, 0, 0)
+        hcl.setSpacing(2)
+
+        self._hihat_level_bar = QProgressBar()
+        self._hihat_level_bar.setObjectName("vel_bar")
+        self._hihat_level_bar.setRange(0, HiHatCurveWidget._ADC_MAX)
+        self._hihat_level_bar.setValue(0)
+        self._hihat_level_bar.setTextVisible(False)
+        self._hihat_level_bar.setOrientation(Qt.Orientation.Vertical)
+        self._hihat_level_bar.setFixedWidth(18)
+        hcl.addWidget(self._hihat_level_bar, stretch=1)
+
+        self._hihat_level_lbl = QLabel("—")
+        self._hihat_level_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hihat_level_lbl.setFixedWidth(28)
+        hcl.addWidget(self._hihat_level_lbl)
+
+        self._bar_stack = QStackedWidget()
+        self._bar_stack.addWidget(vel_col)     # index 0 — pads (velocity)
+        self._bar_stack.addWidget(hihat_col)   # index 1 — hi-hat (raw position)
+        self._bar_stack.setFixedWidth(52)
+
+        curve_row.addWidget(self._bar_stack)
         vl.addLayout(curve_row)
 
         return box
@@ -986,6 +1199,7 @@ class PadConfigTab(QWidget):
             ("Choke\nHold",     "_choke_hold"),
             ("Choke\nGrace",    "_choke_grace"),
             ("Alt Min\nVel",    "_alt_min_vel"),
+            ("Max",             "_hihat_max"),
         ]
 
         self._param_widgets: dict[str, tuple[QWidget, QWidget]] = {}
@@ -1337,6 +1551,14 @@ class PadConfigTab(QWidget):
                 )
             except Exception:
                 pass
+        elif hi == CAT_STATUS and lo == STAT_HIHAT_DEBUG and len(pay) >= 4:
+            try:
+                r = parse_hihat_debug_event(pay)
+                self._hihat_position_received.emit(
+                    r["raw_position"], r["cc_value"]
+                )
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Refresh
@@ -1379,7 +1601,9 @@ class PadConfigTab(QWidget):
         self._select_input(input_id)
 
     def _select_input(self, input_id: int) -> None:
-        if self._selected_id is not None:
+        # Deselect the previously selected pad card. Input 4 (hi-hat) has no card,
+        # so guard the index — its selection is shown by the hi-hat button instead.
+        if self._selected_id is not None and self._selected_id < len(self._cards):
             self._cards[self._selected_id].set_selected(False)
         self._selected_id = input_id
         self._cards[input_id].set_selected(True)
@@ -1389,12 +1613,17 @@ class PadConfigTab(QWidget):
         self._populate_detail(input_id)
 
     def _on_hihat_btn_clicked(self) -> None:
-        if self._selected_id is not None:
+        # Route input 4 through the SAME shared detail panel (stack index 1) as
+        # inputs 0-3 — _populate_detail already force-locks it to hi-hat type. The
+        # hi-hat has no card, so we can't reuse _select_input wholesale (it indexes
+        # _cards); this is the card-less variant of that same selection path.
+        if self._selected_id is not None and self._selected_id < len(self._cards):
             self._cards[self._selected_id].set_selected(False)
-            self._selected_id = None
+        self._selected_id = _HIHAT_INPUT_ID
         self._hihat_btn.setChecked(True)
-        self._stack.setCurrentIndex(2)
         self._refresh_hihat_btn()
+        self._stack.setCurrentIndex(1)
+        self._populate_detail(_HIHAT_INPUT_ID)
 
     def _refresh_hihat_btn(self) -> None:
         color = COLOR_ACCENT if self._hihat_btn.isChecked() else COLOR_TEXT_SECONDARY
@@ -1484,6 +1713,9 @@ class PadConfigTab(QWidget):
             self._set_slider("_choke_hold",    cfg.get("choke_hold_ms", 500))
             self._set_slider("_choke_grace",   cfg.get("choke_release_grace_ms", 30))
 
+            # Hi-hat Max reuses head_sensitivity (default 3400 = real measured max).
+            self._set_slider("_hihat_max",     cfg.get("head_sensitivity", 3400))
+
             choke_en = cfg.get("choke_enabled", True)
             self._choke_enabled_cb.blockSignals(True)
             self._choke_enabled_cb.setChecked(choke_en)
@@ -1515,9 +1747,26 @@ class PadConfigTab(QWidget):
             for widget in self._all_editable_widgets():
                 widget.blockSignals(False)
 
-        # Update curve widget directly (signals were blocked during populate)
-        self._curve_widget.set_curve(cfg.get("velocity_curve", 0))
-        self._curve_widget.clear_hit()
+        # Update curve widgets directly (signals were blocked during populate).
+        curve = cfg.get("velocity_curve", 0)
+        is_hihat = pad_type in _HIHAT_TYPES
+        if is_hihat:
+            # Hi-hat: openness curve + raw-ADC position bar. Title reflects the
+            # different meaning (position response, not velocity).
+            self._curve_box.setTitle("HI-HAT RESPONSE")
+            self._hihat_curve_widget.set_curve(curve)
+            self._hihat_curve_widget.set_max(cfg.get("head_sensitivity", 3400))
+            self._hihat_curve_widget.clear_live()
+            self._hihat_level_bar.setValue(0)
+            self._hihat_level_lbl.setText("—")
+            self._curve_stack.setCurrentIndex(1)
+            self._bar_stack.setCurrentIndex(1)
+        else:
+            self._curve_box.setTitle("VELOCITY CURVE")
+            self._curve_widget.set_curve(curve)
+            self._curve_widget.clear_hit()
+            self._curve_stack.setCurrentIndex(0)
+            self._bar_stack.setCurrentIndex(0)
 
         # Visibility
         self._update_zone_visibility(pad_type)
@@ -1532,6 +1781,7 @@ class PadConfigTab(QWidget):
             self._slider_rim_ratio, self._slider_choke_thresh, self._choke_enabled_cb,
             self._slider_rim_thresh, self._slider_rim_sens, self._slider_xstick_cutoff,
             self._slider_alt_min_vel, self._slider_choke_hold, self._slider_choke_grace,
+            self._slider_hihat_max,
             self._combo_midi_head_note, self._spin_midi_head_ch,
             self._combo_midi_rim_note,  self._spin_midi_rim_ch,
             self._combo_midi_xstick_note, self._combo_midi_alt_note,
@@ -1542,6 +1792,16 @@ class PadConfigTab(QWidget):
         is_dual  = pad_type in _DUAL_ZONE_TYPES
         is_choke = pad_type in _CHOKE_TYPES
         is_hihat = pad_type in _HIHAT_TYPES
+
+        # Hi-hat has a fundamentally different processing model (continuous
+        # position, no threshold/scan/mask/retrigger), so hide ALL the pad-core
+        # sliders for it and show only its Max ceiling. Conversely, _hihat_max is
+        # hidden for every pad type. (musician-first: don't show inapplicable fields.)
+        for key in ("_thresh", "_sens", "_scan", "_mask", "_retrig"):
+            col, _ = self._param_widgets[key]
+            col.setVisible(not is_hihat)
+        col, _ = self._param_widgets["_hihat_max"]
+        col.setVisible(is_hihat)
 
         # Rim ratio slider: DUAL_PIEZO only
         col, _ = self._param_widgets["_rim_ratio"]
@@ -1598,6 +1858,9 @@ class PadConfigTab(QWidget):
         # Update local cache so switching inputs doesn't revert display
         cfg = self._configs.setdefault(self._selected_id, {})
         cfg[param] = value
+        # Hi-hat Max slider: live-update the curve widget's marker + rescale.
+        if key == "_hihat_max":
+            self._hihat_curve_widget.set_max(value)
         msg = fn(self._selected_id, value)
         self._enqueue_write(self._selected_id, param, msg, ack_hi, ack_lo)
 
@@ -1632,7 +1895,11 @@ class PadConfigTab(QWidget):
             return
         c_name = CURVE_NAMES.get(curve, "")
         self._curve_desc.setText(_CURVE_DESCRIPTIONS.get(c_name, ""))
-        self._curve_widget.set_curve(curve)
+        # Drive whichever curve widget is active for the selected input.
+        if self._selected_id == _HIHAT_INPUT_ID:
+            self._hihat_curve_widget.set_curve(curve)
+        else:
+            self._curve_widget.set_curve(curve)
         self._configs.setdefault(self._selected_id, {})["velocity_curve"] = curve
         msg = build_set_velocity_curve(self._selected_id, curve)
         self._enqueue_write(self._selected_id, "velocity_curve", msg, CAT_PAD, PAD_SET_CURVE)
@@ -1772,6 +2039,16 @@ class PadConfigTab(QWidget):
         if not is_selected and self._autotrack_btn.isChecked():
             if input_id < len(self._cards):
                 self._select_input(input_id)
+
+    def _on_hihat_position(self, raw_position: int, cc_value: int) -> None:
+        # Live pedal position — only meaningful while the hi-hat is the selected
+        # input (mirrors _on_hit's is_selected gating). Drives the openness curve's
+        # live dot and the raw-ADC calibration bar.
+        if self._selected_id != _HIHAT_INPUT_ID:
+            return
+        self._hihat_curve_widget.set_live_position(raw_position, cc_value)
+        self._hihat_level_bar.setValue(raw_position)
+        self._hihat_level_lbl.setText(str(raw_position))
 
     def _clear_hitlog(self) -> None:
         self._hitlog.clear()

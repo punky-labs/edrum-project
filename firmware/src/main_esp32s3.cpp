@@ -148,6 +148,14 @@ static void applyConfig() {
         triggers[i]->setDecayEstFactDb(g_inputs[i].decayEstFactDb);
         triggers[i]->setClipCompAmpmapStep(g_inputs[i].clipCompAmpmapStep);
     }
+
+    // Hi-hat (input 4) has no TriggerEngine, so it's skipped by the loop above
+    // (triggers[4] == nullptr), but still needs config applied on every (re)apply —
+    // boot AND any SysEx write via the shared PAD_SET_SENS/PAD_SET_CURVE commands
+    // (genuinely no new commands needed — they already write g_inputs[4]). Runs
+    // unconditionally here so a live app slider change takes effect immediately.
+    hihat.setMaxAdc((int)g_inputs[4].headSensitivity);
+    hihat.setCurveType(g_inputs[4].velocityCurve);
 }
 
 // Exposed for SysEx.cpp's preset handlers: presetLoad/Save/Delete do synchronous
@@ -848,6 +856,21 @@ void loop() {
                 hihat.clearCcChange();
                 uint8_t ccVal = hihat.getCcValue();
                 MIDI.sendControlChange(g_inputs[4].ccNumber, ccVal, g_inputs[4].ccChannel);
+                // 05 04 — 4 bytes: input_id(=4), raw_hi, raw_lo, cc_value. Mirrors the
+                // 05 03 hit-debug event's shape/byte-width but for continuous position,
+                // not a discrete hit. Sent UNCONDITIONALLY alongside the CC (like 05 03
+                // is sent unconditionally alongside note-on) — the app's calibration UI
+                // depends on this, not just the debug-gated telnet print below. raw is
+                // 14-bit split exactly like encode14() in SysEx.cpp (file-static there).
+                {
+                    int rawVal = hihat.getDebugRawLast();
+                    uint8_t dbg[4] = { 4,
+                                       (uint8_t)((rawVal >> 7) & 0x7F),
+                                       (uint8_t)(rawVal & 0x7F),
+                                       ccVal };
+                    sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                                      SYSEX_STAT_HIHAT_DEBUG, dbg, 4);
+                }
                 if (g_hitDebug && !g_adcDump) {
                     DevLog.printf("[HIHAT] t=%lu raw=%d smoothed=%.1f cc=%d ccnum=%d ch=%d\n",
                                   (unsigned long)millis(), hihat.getDebugRawLast(),
