@@ -181,9 +181,9 @@ GM_PERCUSSION: dict[int, str] = {
     35: "Bass drum",
     36: "Kick drum",
     37: "Snare cross stick",
-    38: "Snare drum",
+    38: "Snare head",
     39: "Hand clap",
-    40: "Electric snare drum",
+    40: "Snare rim",
     41: "Floor tom 2",
     42: "Hi-hat closed",
     43: "Floor tom 1",
@@ -202,6 +202,7 @@ GM_PERCUSSION: dict[int, str] = {
     56: "Cowbell",
     57: "Crash cymbal 2",
     58: "Vibraslap",
+    59: "Ride cymbal 2",
     60: "High bongo",
     61: "Low bongo",
     62: "Conga dead stroke",
@@ -245,7 +246,7 @@ def gm_note_display(note: int) -> str:
 # (builder_fn, ack_hi, ack_lo, param_name, vmin, vmax, suffix)
 _TRIGGER_BUILDERS: dict[str, tuple] = {
     "_thresh":       (build_set_threshold,           CAT_PAD, PAD_SET_THRESH,     "threshold",           0,  500,  ""),
-    "_sens":         (build_set_head_sensitivity,    CAT_PAD, PAD_SET_SENS,       "head_sensitivity",    0, 1023,  ""),
+    "_sens":         (build_set_head_sensitivity,    CAT_PAD, PAD_SET_SENS,       "head_sensitivity",    0, 4095,  ""),
     "_scan":         (build_set_scan_time,           CAT_PAD, PAD_SET_SCAN,       "scan_time",           1,   10,  " ms"),
     "_mask":         (build_set_mask_time,           CAT_PAD, PAD_SET_MASK,       "mask_time",          10,  150,  " ms"),
     "_retrig":       (build_set_retrigger_time,      CAT_PAD, PAD_SET_RETRIG,     "retrigger_time",      0,  200,  " ms"),
