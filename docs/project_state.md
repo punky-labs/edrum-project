@@ -1859,10 +1859,50 @@ working on hardware):**
 
 **Satellite hardware (next PCB order):**
 - ESP32-S3 satellite PCB (THT prototype designed, ready to order from PCBWay)
+- J8/J12 cross-board interconnect footprint mismatch (was `Conn_01x07` schematic
+  symbol vs 4-position JST footprint, 3 signals unrouted) — CONFIRMED RESOLVED
+  (2026-08-06, corrected by Andrew in KiCad). No longer a fab blocker.
 - 2× Neutrik NMJ6HFD2 jacks, 220k/220k battery voltage divider + 100nF cap,
   RGB LED, I2C breakout pads, 400mAh LiPo
 - Wake-capable GPIO routing (EXT0/EXT1 or ULP) is a PCB design constraint
 - SMD version to follow once THT prototype validated
+
+**Satellite hardware — next revision scope (added 2026-08-06, driven by the
+in-shell wireless trigger direction — see "Custom drum triggers" future
+direction above):**
+- **All onboard jacks removed entirely, replaced with 3-pin JST per channel**
+  (revised 2026-08-06 — supersedes the earlier same-day "nest JST inside the
+  jack footprint" idea, which kept the jack footprint on-board for every
+  channel; this is strictly better). 3-pin JST is a 1:1 match for the
+  existing tip/ring/sleeve (head/rim/ground) wiring per dual-zone channel —
+  not an approximation. Every board channel becomes a small JST pad only;
+  boards get much more compact. 1/4" jacks become an external accessory:
+  panel-mount jack + short pigtail terminating in a JST plug, used only where
+  external jacks are actually wanted.
+- **Panel-mount jack part TBD** — current BOM's Neutrik NMJ6HFD2 is a
+  PCB-mount part; going fully off-board needs the panel-mount TRS jack from
+  the same Neutrik family instead. Confirm exact part before next order.
+- **Jack breakout pigtail — worth standardising as one reusable accessory**
+  (panel jack + JST pigtail) shared across BT-1, BT-1 Expand, and satellites,
+  rather than one-off wiring per unit — consistent with the shared
+  boal_base.qss-style "design once, reuse across the product family"
+  approach already used elsewhere. Not yet designed.
+- **Hi-hat input uses the SAME 3-pin JST footprint for connector-family
+  uniformity** (decided 2026-08-06), even though the hi-hat signal itself is
+  mono (signal + ground, 2 conductors) — third pin simply left unconnected.
+  Keeps one connector type across every channel/board rather than a special
+  case for hi-hat.
+- **USB-C charging access for in-shell units** — satellite board already has
+  LiPo charge management circuitry; the XIAO's own USB-C port will be buried
+  once mounted inside a shell. Needs a panel-mount USB-C jack wired via a
+  captive pigtail routed out through the shell's air vent (same mechanical
+  pattern as the jack-cable-through-airvent approach used for internally
+  mounted trigger cabling), rather than relying on direct access to the
+  board-mounted port. Panel-mount connector chosen over direct access for
+  durability — repeated cable insertion stress lands on the panel mount, not
+  the board-mounted port.
+- Fold all of the above into the same PCB revision rather than doing
+  separate spins.
 
 **App (priority order):**
 1. curves.py — shared curve math (VelocityCurveWidget + emulator)
@@ -1909,6 +1949,82 @@ working on hardware):**
 - BOAL colour palette and identity exploration
 - Fusion 360 case design for BT-1 family
 - ClickBox hardware planning (nRF52840, eInk + frontlight, NeoPixel)
+
+**Hi-hat as a generic pad-type input (captured 2026-08-06, future direction —
+not yet implemented, needs electrical validation first):**
+- Goal: remove the dedicated GPIO1/jack-4 hi-hat input entirely. Hi-hat
+  becomes a 4th selectable `padType` (alongside `DUAL_PIEZO`/
+  `PIEZO_SWITCH_CHOKE`/`SINGLE_PIEZO`), usable on ANY standard jack input —
+  not a special-case connector or channel.
+- **Open question, must be resolved before implementation: electrical
+  compatibility of the standard piezo front-end (1kΩ series + BAT85 clamp +
+  1MΩ pull-down + 22nF filter) with a continuous hi-hat position signal.**
+  Reasoned through in chat but NOT verified against the actual KiCad
+  schematic:
+  - No series/blocking capacitor identified in the front-end as documented
+    — if that holds, a continuous/DC-ish signal should pass through
+    unattenuated (22nF filter cap's ~7.2kHz RC corner is far faster than any
+    foot movement). Needs confirming directly in KiCad, not assumed.
+  - **FSR-type sensors need a bias/voltage-divider network to produce a
+    readable voltage at all** — the current GPIO1 hi-hat input almost
+    certainly has this; the standard piezo channels likely do not. If the
+    replacement hi-hat controller is FSR-based (vs. an already-conditioned
+    voltage output like Roland VH-11/FD-8 style controllers), a bias
+    resistor stuffing option would need adding to the standard front end.
+  - **Firmware-side conflict identified, independent of the analog
+    hardware question:** the existing per-channel DSP chain (DC-offset
+    removal → spike-rejection → EMA) is built for transient piezo signals
+    — DC-offset removal specifically would treat slow hi-hat pedal movement
+    as baseline drift and filter it out. Whichever input is set to the new
+    hi-hat pad type must bypass that pipeline and route to the existing
+    (already-built) hi-hat consumer — EMA + linear-map + 7-step-quantize —
+    instead. The layered architecture (`AdcSampler` → `SampleStream` →
+    per-channel consumer) should make this a routing change, not a rewrite,
+    since the hi-hat consumer is already architecturally a peer to
+    `TriggerEngine`, not built on top of it.
+- **Ripple effects if implemented, noted so scope is understood upfront:**
+  - `NUM_INPUTS` 5→4, `INPUT_ID` range 00–04→00–03 — a BREAKING SysEx
+    protocol change (unlike every extension so far this project, which has
+    been additive/append-only), needs its own deliberate version bump, not
+    folded silently into another change.
+  - LittleFS config blob size changes → `uploadfs`/config reset required,
+    same as every other struct change this project has done.
+  - App UI: hi-hat currently lives outside the 2×2 grid as its own dedicated
+    button + separator + right-panel placeholder stack page. Needs to become
+    reachable via the normal pad-selection → Config tab → Type=Hi-Hat path
+    instead — a real UX redesign (the dedicated button/separator likely goes
+    away), not a small tweak.
+  - Nice side effect: once hi-hat is "just a pad type," it's automatically
+    available on BT-1 Expand's inputs 4–7 with zero extra design work.
+  - The spare second channel on a hi-hat-configured jack (tip, if ring
+    carries continuous position) could plausibly carry a pedal open/close
+    switch, structurally similar to the existing choke sustained-signal
+    detection logic — noted as a possible future extension, not required
+    for a first implementation.
+- **Not scheduled into the current in-flight satellite PCB revision** —
+  deliberately kept separate from the all-JST/USB-C changes above. Electrical
+  validation (checking the actual KiCad schematic for a blocking cap, and
+  confirming what signal type a real replacement hi-hat controller outputs)
+  is the prerequisite next step before any implementation work starts.
+
+**Custom drum triggers (captured 2026-08-06, future direction — research/design
+while waiting on satellite fab):**
+- Cross-stick/rim-click discrimination is genuinely hard even in commercial
+  products, not just a BT-1 firmware tuning gap — reviews of Jobeky's own
+  dual-zone side trigger flag cross-stick as a weak point, attributed to the
+  piezo being edge/case-mounted rather than in direct head contact.
+- Near-term, low-risk build: standalone side/bar trigger (rigid bar or
+  bracket at the rim position, own piezo, own wire) as a `SINGLE_PIEZO`
+  input on an existing satellite — no new pad-type logic needed. Modelled on
+  Jobeky's bar trigger / drum-tec Groovebar.
+- Longer-term, bigger scope: full custom drum triggers mounted in existing
+  acoustic shells under mesh heads (Jobeky/drum-tec internal side-trigger
+  style) — full A2E-style conversion hardware. Electronics side is a natural
+  extension of existing dual-piezo sensing work; mechanical/mounting design
+  (foam or spoke systems, bearing-edge height, jack routing through the
+  shell's air vent) is a new skillset, not yet scoped.
+- Advantage if built: tighter control over dialing in module ↔ sensor match
+  than off-the-shelf triggers allow.
 
 ---
 
