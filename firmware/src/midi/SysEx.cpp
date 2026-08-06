@@ -180,13 +180,20 @@ static void handlePad(uint8_t deviceId, uint8_t cmd,
         case SYSEX_PAD_GET_STATUS: {
             if (pLen < 1 || p[0] >= NUM_INPUTS) { sendAck(deviceId, SYSEX_CAT_PAD, cmd, SYSEX_ACK_ERROR); return; }
             uint8_t id     = p[0];
-            uint8_t linked = g_inputs[id].linkedInput;
             uint8_t status;
-            // Reserved: this input is the secondary of a hardware dual-zone pair
-            // (the primary holds padType 01 or 05)
-            if (linked < NUM_INPUTS &&
-                (g_inputs[linked].padType == 1 || g_inputs[linked].padType == 5)) {
-                status = SYSEX_INPUT_RESERVED;
+            // Repurposed 2026-08-06 for the deferred ride-bell cross-jack coupling idea
+            // (see project_state.md "Ride bell" note). The old check here
+            // (padType == 1 || padType == 5, meaning "secondary of a hardware dual-zone
+            // pair" under the RETIRED 7-value padType enum) was stale: today's InputConfig
+            // is one struct per jack with z2note/z2channel already baked in, so there is
+            // no channel left to reserve, and padType only ranges 0-2 (DUAL_PIEZO/
+            // PIEZO_SWITCH_CHOKE/SINGLE_PIEZO) — the old comparison no longer meant what
+            // it was written to mean. LINKED now simply reflects whether linkedInput is
+            // set, with no padType inspection at all; the actual cross-jack coupling
+            // BEHAVIOUR (bell switch borrowing the ride body's live velocity) is separate,
+            // not-yet-designed firmware work — this only fixes the status/addressing layer.
+            if (g_inputs[id].linkedInput != 0xFF) {
+                status = SYSEX_INPUT_LINKED;
             } else if (g_inputs[id].padType != 0) {
                 status = SYSEX_INPUT_ACTIVE;
             } else {

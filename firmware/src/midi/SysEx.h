@@ -95,9 +95,16 @@
 #define SYSEX_ACK_UNKNOWN 0x02
 
 // Input status values returned by 02 0A
+// SYSEX_INPUT_LINKED (0x02) — renamed 2026-08-06 from SYSEX_INPUT_RESERVED. The old
+// "reserved" concept (second channel of a hardware dual-zone pair, unavailable for
+// independent assignment) no longer applies: today's InputConfig is one struct per
+// jack with z2note/z2channel already baked in, so there's no channel left to reserve.
+// LINK/UNLINK/GET_STATUS are repurposed instead for the deferred ride-bell cross-jack
+// coupling idea (see project_state.md) — "linked" means paired for that purpose, not
+// unavailable; a linked input is still its own fully configurable input.
 #define SYSEX_INPUT_AVAIL    0x00
 #define SYSEX_INPUT_ACTIVE   0x01
-#define SYSEX_INPUT_RESERVED 0x02
+#define SYSEX_INPUT_LINKED   0x02
 
 // SysEx-safe sentinel for linkedInput == 0xFF (no link)
 #define SYSEX_LINKED_NONE 0x7F

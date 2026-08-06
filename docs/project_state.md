@@ -2160,6 +2160,134 @@ while waiting on satellite fab):**
 
 ---
 
+**Dual Independent Piezo — new pad type (captured 2026-08-06, future
+direction, fully specified, not yet implemented):**
+- Goal: split a dual-zone jack into two fully independent single-piezo
+  instruments (e.g. two toms, or a tom + kick), rather than treating the
+  second channel as a rim/zone-2 of one instrument.
+- **Reuses DUAL_PIEZO's existing field set as-is — NO new SysEx commands,
+  fields, or addressing changes needed.** Same `INPUT_ID`, same 19-byte
+  `02 07` config response, just a new `padType` enum value. DUAL_PIEZO
+  already gives its rim zone independent threshold/sensitivity/curve/note/
+  channel via `z2note`/`z2channel` etc. — exactly the field set an
+  independent second instrument needs.
+- **Firmware: LESS logic than DUAL_PIEZO, not more** — skips ratio
+  classification, cross-stick stage 2, and layering suppression entirely.
+  Both channels already run independent Scan/Mask windows (existing
+  "either channel starts scan" architecture from the snare-rim work); this
+  type just always sends both notes rather than routing through the
+  classify decision tree.
+- More correct model for this use case, not just simpler: ratio-based
+  discrimination exists specifically for bleed between zones of ONE
+  mechanically-coupled pad (e.g. CY-5's head/rim coupling); two unrelated
+  single-piezo pads sharing a jack have no such coupling.
+- **UI: no layout change** — same card, same Config/MIDI tabs. New icon:
+  a simple generic "two drum" icon (not per-instrument).
+- Physical: needs a TRS-to-2×-mono breakout cable/accessory — fold into
+  the "standardise a family of connector accessories" idea alongside the
+  panel-mount jack breakout and USB-C pigtail already planned.
+- Cons/considerations: mutually exclusive with dual-zone use on that jack
+  (inherent trade-off, not a bug); channel cross-talk should be verified
+  on real hardware given prior history of an ADC-channel-collision bug
+  (already fixed elsewhere, but independence assumption worth re-confirming
+  empirically for genuinely unrelated pads sharing a jack); shared ground
+  reference across the two breakout cable legs likely fine but unverified.
+
+**Secondary/rim label field — generalised across pad types (captured
+2026-08-06):**
+- Idea: a free-text secondary label field (e.g. "Rimshot", "Cowbell",
+  "Bell", "Kick 2"), applicable to ANY pad type with a second output —
+  DUAL_PIEZO (rim), PIEZO_SWITCH_CHOKE (`alternateNote`), the new Dual
+  Independent Piezo type above, and any future type with a second zone.
+  Shown/hidden by `padType` using the same pattern already used throughout
+  the Config tab.
+- Icon vs label kept as separate concerns: icon still driven by `padType`;
+  label is independent text, not type-driven.
+- **OPEN QUESTION, must check before designing:** no SysEx command found
+  anywhere in `sysex_spec.md` for setting/getting a pad's PRIMARY Name
+  field either — Category 02 covers type/threshold/curve/retrigger/
+  sensitivity/scan/mask/rim/choke fields, but nothing resembling "set pad
+  name." Need to check `SysEx.cpp`/`pad_config_tab.py` directly to
+  determine whether Name is local/app-only (e.g. lives in "My Presets"
+  JSON) or synced to the device via an undocumented command, before
+  designing how the secondary label syncs — don't want to duplicate or
+  conflict with however primary Name currently works. (This question
+  surfaced directly out of the 2026-08-06 doc-vs-code audit discussion —
+  see "Documentation audit" note below.)
+- If/when wire encoding is needed: reuse the existing preset-name
+  convention (`[NAME_LEN] [NAME_BYTES...]`, ASCII, 16-char cap) rather than
+  inventing a new string encoding.
+- Open UI question, not blocking: how "Tom 2/Cowbell" actually renders on
+  the compact pad card given limited space — likely primary name on card,
+  full "Name/Secondary" combo only in the Config tab detail view — decide
+  when actually building.
+
+**Documentation audit — flagged as worth doing (2026-08-06):** this single
+session surfaced multiple doc-vs-code drift instances (`02 08`/`02 09`/
+`02 0A` link/unlink/status commands missing from `sysex_spec.md`'s table
+despite being implemented and in active use; the J8/J12 satellite PCB note
+turning out to be already resolved; the earlier 2026-07-14 "link/unlink
+removed" false claim already corrected once). Also found: the project
+knowledge upload of `sysex_spec.md` is a full version behind the live repo
+file (v0.1 vs v0.3) — worth re-uploading the current file so future
+sessions referencing project knowledge don't work from stale protocol
+info. Full audit against `SysEx.cpp`/`sysex.py` completed 2026-08-06 —
+see below for findings and fixes.
+
+**SysEx protocol audit findings + fixes (2026-08-06):**
+- **Pad type enum table was completely wrong in `sysex_spec.md`** —
+  documented a stale 7-value enum (00=piezo, 01=piezo+rim switch, ...,
+  06=dual piezo) left over from before the pad-type architecture was
+  redesigned. Real firmware enum (confirmed in `PDrumTrigger.h`) is only 3
+  values: 0=DUAL_PIEZO, 1=PIEZO_SWITCH_CHOKE, 2=SINGLE_PIEZO. FIXED in doc.
+- **`GET_STATUS`'s reserved-check bug, found as a consequence of the above:**
+  `SysEx.cpp`'s `SYSEX_PAD_GET_STATUS` handler checked `padType == 1 ||
+  padType == 5` using the OLD enum's meaning — meaningless under the current
+  3-value enum. **Decision: repurpose `LINK`/`UNLINK`/`GET_STATUS` for the
+  deferred ride-bell cross-jack coupling idea** (see "Ride bell" note above)
+  rather than retire them — `linkedInput` was already exactly the right
+  addressing primitive, just serving a stale purpose. FIXED: renamed
+  `SYSEX_INPUT_RESERVED`→`SYSEX_INPUT_LINKED` (firmware `SysEx.h`, Python
+  `sysex.py`, and `pad_config_tab.py`'s `INPUT_RESERVED` usages), and
+  `GET_STATUS` now reports LINKED simply when `linkedInput != 0xFF`, no
+  padType inspection at all. **Not yet built:** the actual coupling
+  BEHAVIOUR (bell switch borrowing the ride body's live velocity) — this
+  fix only corrects the status/addressing layer, matching how the addressing
+  was already correct even though the status logic built on top of it wasn't.
+- **`02 08`/`02 09`/`02 0A` (Link/Unlink/Get status) were missing from
+  `sysex_spec.md`'s table entirely**, despite being implemented and in
+  active use (`pad_config_tab.py`'s refresh worker calls `02 0A` on every
+  input load). FIXED — added, with LINKED semantics reflecting the fix above.
+- **`05 04` doc was backwards — doc lagging code, not code lagging doc.**
+  Documented as "Raw ADC stream — reserved, not yet implemented" with a
+  3-byte payload. Actually fully implemented (Hi-Hat Pedal CC v1, see that
+  section above) and sent unconditionally on every hi-hat CC change, with a
+  **4-byte** payload (`[INPUT_ID] [RAW_HI] [RAW_LO] [CC_VALUE]`) that the
+  app's hi-hat calibration UI depends on. FIXED in doc.
+- **`crosstalkGroup` (`02 05`) is fully wired (SysEx set/get, presets) but
+  never read anywhere in `PDrumTrigger`** — a functionally inert field.
+  **Decision: leave wired, flag as inert in the doc, decide later** (not
+  retired, not implemented now).
+- **`05 02` Input error is fully defined (firmware constant, Python parser
+  `parse_input_error`) but never sent** — no firmware code path calls
+  `sysexSendResponse` with it, and no error-code vocabulary is defined for
+  the `ERROR_CODE` byte. Also has no self-test in `sysex.py`, unlike the
+  other Category 05 parsers. **Decision: this is a real near-term direction,
+  not just "leave inert"** — concrete motivating use cases already in hand:
+  the ADC sampler `ESP_ERR_NO_MEM`/heap-fragmentation bug (Hi-Hat Pedal CC
+  v1 section above) is exactly the kind of hardware fault this exists to
+  surface to the app, currently only visible via Serial/telnet. Also flagged
+  as directly relevant to LittleFS errors (`configLoad`/`configSave`/preset
+  I/O currently fail silently to the app) and to the upcoming wireless
+  satellite work (pairing failures, link loss, battery-critical — all
+  conditions the app has no way to learn about today). **Not yet designed:**
+  an actual `ERROR_CODE` enum, and which firmware fault conditions should
+  trigger it. Worth designing as its own task alongside — not blocking —
+  the ESP-NOW satellite work, since satellite link-health reporting is one
+  of its natural first real use cases.
+
+---
+
 ## Repo
 
 github.com/punky-labs/edrum-project

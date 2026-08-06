@@ -1,6 +1,12 @@
 # eDrum Project — MIDI SysEx Protocol Specification
-**Version:** 0.3  
-**Last updated:** 2026-07-14
+**Version:** 0.3.1
+**Last updated:** 2026-08-06 — doc-vs-code audit: fixed the pad type enum
+(was a stale 7-value table, now the real 0/1/2), added missing `02 08`/
+`02 09`/`02 0A` rows, corrected `05 04`'s payload/status, flagged
+`crosstalkGroup` (inert) and `05 02` (defined, never sent) explicitly.
+No wire-format changes — corrections to documentation only, except for
+the `LINK`/`UNLINK`/`GET_STATUS` status-value rename (`RESERVED`→`LINKED`,
+value unchanged at `0x02`) which mirrors an actual firmware/app rename.
 
 ---
 
@@ -51,9 +57,12 @@ Example: value 1000 (0x03E8) → `07 68`
 | `02 02` | `[INPUT_ID] [THRESH_HI] [THRESH_LO]` | Set threshold | 14-bit value, 7-bit split |
 | `02 03` | `[INPUT_ID] [CURVE_TYPE]` | Set velocity curve | See curve type table below |
 | `02 04` | `[INPUT_ID] [RETRIG_HI] [RETRIG_LO]` | Set retrigger time | Time in ms, 14-bit split |
-| `02 05` | `[INPUT_ID] [XTALK_GROUP]` | Set crosstalk group | Inputs in same group suppress each other |
+| `02 05` | `[INPUT_ID] [XTALK_GROUP]` | Set crosstalk group | **Wired but functionally inert (flagged 2026-08-06):** the value round-trips correctly (set/get/preset export) but is never read anywhere in the sensing engine (`PDrumTrigger`) — no crosstalk suppression logic exists. Left wired deliberately; decide whether to implement or retire later. |
 | `02 06` | `[INPUT_ID]` | Get pad config | Request current config for one input |
 | `02 07` | `[INPUT_ID] [PAD_TYPE] [THRESH_HI] [THRESH_LO] [CURVE_TYPE] [RETRIG_HI] [RETRIG_LO] [XTALK_GROUP] [SENS_HI] [SENS_LO] [SCAN_HI] [SCAN_LO] [MASK_HI] [MASK_LO] [RRATIO_HI] [RRATIO_LO] [CHOKETHRESH_HI] [CHOKETHRESH_LO] [CHOKE_EN]` | Pad config response | Full config dump for one input (19 bytes). `RRATIO` = DUAL_PIEZO rim ratio threshold (ratio×100). `CHOKETHRESH` = PIEZO_SWITCH_CHOKE switch threshold (ADC units). `CHOKE_EN` = choke enabled (0/1). |
+| `02 08` | `[INPUT_A] [INPUT_B]` | Link inputs | Pairs two inputs bidirectionally (`linkedInput` set on both). Repurposed 2026-08-06 for the deferred ride-bell cross-jack coupling idea — addressing/status only; the actual coupling behaviour (bell switch borrowing the ride body's live velocity) is not yet built. |
+| `02 09` | `[INPUT_ID]` | Unlink input | Clears the link on this input and its partner |
+| `02 0A` | `[INPUT_ID]` | Get input status | Query whether input is available, active, or linked — see status values below |
 | `02 0B` | `[INPUT_ID] [SENS_HI] [SENS_LO]` | Set head sensitivity | Upper ADC bound for velocity scaling, 14-bit split |
 | `02 0C` | `[INPUT_ID] [SCAN_HI] [SCAN_LO]` | Set scan time | Peak scan window in ms, 14-bit split (v3: repurposed as Scan's hard-cap ms — see below) |
 | `02 0D` | `[INPUT_ID] [MASK_HI] [MASK_LO]` | Set mask time | Post-hit ignore window in ms, 14-bit split |
@@ -88,20 +97,45 @@ appended (same order, 19 bytes) to the end of each per-input record in the
 | `02 1D` | `[INPUT_ID]` | Get extended pad config | Request the 12 fields above for one input, bundled (mirrors `02 06`). |
 | `02 1E` | `[INPUT_ID] [MARGIN_HI] [MARGIN_LO] [WAIT_HI] [WAIT_LO] [ALPHA] [RTHRESH_HI] [RTHRESH_LO] [RSENS_HI] [RSENS_LO] [RCURVE] [XSTICK_NOTE] [XSTICK_CUTOFF] [ALT_NOTE] [MINVEL_HI] [MINVEL_LO] [HOLD_HI] [HOLD_LO] [GRACE_HI] [GRACE_LO]` | Extended pad config response | Response to `02 1D` (20 bytes). Field order matches the SET commands above. |
 
+### Input status response values (02 0A)
+00 = available
+01 = active (configured)
+02 = linked (paired via `02 08` for cross-jack coupling — renamed from
+     "reserved" 2026-08-06; the old per-channel-reservation meaning no
+     longer applies under the current one-`InputConfig`-per-jack model)
+
 ### Pad type values
-00 = piezo (single zone)
-01 = piezo + rim switch (dual zone) — consumes 2 input channels
-02 = rim switch only
-03 = hihat control (continuous)
-04 = hihat control (open/closed switch)
-05 = bass drum (single zone)
-06 = dual piezo (head + rim piezo, e.g. newer Roland mesh pads) — consumes 2 input channels
+
+**Corrected 2026-08-06 — the table previously here (00=piezo, 01=piezo+rim
+switch, 02=rim switch only, 03/04=hihat variants, 05=bass drum, 06=dual
+piezo) was stale, left over from before the pad-type architecture was
+redesigned, and did not match the firmware. Confirmed directly against
+`PDrumTrigger.h`'s own comment ("padType encoding matches the firmware-wide
+'settled design'... 0=DUAL_PIEZO, 1=PIEZO_SWITCH_CHOKE, 2=SINGLE_PIEZO").**
+
+00 = DUAL_PIEZO — head piezo + rim piezo (e.g. Roland PDX-8, PDX-12).
+     Independent head/rim detection with layering + cross-stick — see
+     project_state.md "Secondary Trigger Behaviours v1" for full spec.
+01 = PIEZO_SWITCH_CHOKE — head piezo + rim mechanical switch (e.g. Roland
+     CY-5, PD-7, cymbals). Switch channel does choke detection (sustained
+     signal) + optional alternate-note (transient coincidence), not a
+     second MIDI zone.
+02 = SINGLE_PIEZO — head piezo only, no rim sensor (e.g. Roland KD-80)
+
+Input 4 (hi-hat controller) does not use `padType` at all — it has no
+`TriggerEngine` and is handled by a separate continuous-position code path
+(see "Hi-Hat Pedal CC v1"). The app-side Python constants `PAD_TYPE_HIHAT_CC`
+(0x03) / `PAD_TYPE_HIHAT_SW` (0x04) exist only as internal UI sentinels for
+driving input 4's widget visibility — they are never sent over SysEx as a
+real `padType` value (`pad_config_tab.py` explicitly skips sending
+`PAD_SET_TYPE` for input 4). Not a wire-protocol concern, but worth knowing
+if reading the app code causes confusion about the enum's real range.
 
 **DSP distinction:**
-- Type `01` (piezo + rim switch): uses analog amplitude for velocity,
-  digital threshold for zone detection
-- Type `06` (dual piezo): uses analog amplitude comparison between two
-  piezo signals to determine hit zone and velocity
+- Type `01` (PIEZO_SWITCH_CHOKE): uses analog amplitude for head velocity,
+  sustained-signal monitoring (not peak scan) for choke on the switch channel
+- Type `00` (DUAL_PIEZO): independent analog amplitude scaling on both head
+  and rim channels, each with its own threshold/sensitivity/curve
 
 ### Velocity curve type values
 00 = Natural    — linear response, what you play is what you get
@@ -148,9 +182,9 @@ These messages are always device → app direction.
 | Command | Data bytes | Name | Description |
 |---|---|---|---|
 | `05 01` | `[CMD_HIGH] [CMD_LOW] [STATUS]` | Command ack | Confirms receipt of any set command — `00`=ok, `01`=error |
-| `05 02` | `[INPUT_ID] [ERROR_CODE]` | Input error | Reports a hardware-level problem on an input |
+| `05 02` | `[INPUT_ID] [ERROR_CODE]` | Input error | **Defined but never sent (flagged 2026-08-06).** Constant and Python parser exist; no firmware code path currently detects a fault and calls this. No `ERROR_CODE` vocabulary defined yet either. Real near-term direction, not abandoned — concrete motivating cases: the ADC sampler heap-fragmentation bug (see "Hi-Hat Pedal CC v1"), LittleFS read/write failures (`configLoad`/`configSave`/presets currently fail silently to the app), and upcoming satellite link-health reporting (pairing failure, link loss, battery-critical) once ESP-NOW satellites exist. |
 | `05 03` | `[INPUT_ID] [ZONE] [RAW_VEL] [MIDI_VEL]` | Hit event (debug) | Live hit data. ZONE: 00=head, 01=rim. RAW_VEL: pre-curve sensor velocity (0-127, mapped from ADC). MIDI_VEL: post-curve MIDI output velocity (0-127). |
-| `05 04` | `[INPUT_ID] [VALUE_HI] [VALUE_LO]` | Raw ADC stream | Reserved — future raw ADC streaming for hardware calibration (not yet implemented) |
+| `05 04` | `[INPUT_ID] [RAW_HI] [RAW_LO] [CC_VALUE]` | Hi-hat position event | **Corrected 2026-08-06 — doc previously said "Raw ADC stream, reserved, not yet implemented" with a 3-byte payload; both were wrong.** Fully implemented as of Hi-Hat Pedal CC v1 (2026-07-25) — sent unconditionally on every hi-hat CC change (mirrors `05 03`'s always-on pattern). 4-byte payload: `INPUT_ID` is always `04`; `RAW_HI`/`RAW_LO` = 14-bit raw ADC pedal position (0–4095 in practice); `CC_VALUE` = the quantized 0–127 CC value just sent. The app's hi-hat calibration UI depends on this. |
 
 ### Zone values (05 03)
 00 = head (primary zone)
@@ -176,7 +210,6 @@ app-level changes are required for Stage 2 compatibility.
   stream. It allows the Python app to display a live velocity meter per
   pad during threshold calibration without interfering with DAW operation.
 - All multi-byte values use big-endian 7-bit encoding throughout.
-- `05 04` (Raw ADC stream) is reserved for future hardware
-  calibration tooling. It will be enabled/disabled on demand by
-  the app and is intended for dev use only — not required for
-  normal operation.
+- `05 04` (Hi-hat position event) is sent unconditionally alongside every
+  hi-hat CC output, mirroring `05 03`'s always-on pattern — the app's
+  calibration UI depends on it, not just a debug-gated print.

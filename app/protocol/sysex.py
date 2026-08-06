@@ -127,14 +127,19 @@ CURVE_NAMES: dict[int, str] = {
 }
 
 # Input status values (02 0A response)
+# INPUT_LINKED (0x02) — renamed 2026-08-06 from INPUT_RESERVED to match the
+# firmware rename (SysEx.h). See SysEx.cpp's SYSEX_PAD_GET_STATUS comment: the
+# old "reserved" meaning (secondary channel of a hardware dual-zone pair) no
+# longer applies under the current per-jack InputConfig model. LINK/UNLINK/
+# GET_STATUS are repurposed for the deferred ride-bell cross-jack coupling idea.
 INPUT_AVAIL    = 0x00
 INPUT_ACTIVE   = 0x01
-INPUT_RESERVED = 0x02
+INPUT_LINKED   = 0x02
 
 INPUT_STATUS_NAMES: dict[int, str] = {
     INPUT_AVAIL:    "available",
     INPUT_ACTIVE:   "active",
-    INPUT_RESERVED: "reserved",
+    INPUT_LINKED:   "linked",
 }
 
 # Zone values (05 03 hit event)

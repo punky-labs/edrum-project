@@ -94,7 +94,7 @@ try:
         parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         STAT_HIHAT_DEBUG, parse_hihat_debug_event,
-        INPUT_ACTIVE, INPUT_RESERVED,
+        INPUT_ACTIVE, INPUT_LINKED,
     )
 except ImportError:
     from protocol.sysex import (  # type: ignore[no-redef]
@@ -130,7 +130,7 @@ except ImportError:
         parse_midi_mapping_response,
         parse_input_status_response, parse_hit_event,
         STAT_HIHAT_DEBUG, parse_hihat_debug_event,
-        INPUT_ACTIVE, INPUT_RESERVED,
+        INPUT_ACTIVE, INPUT_LINKED,
     )
 
 try:
@@ -334,7 +334,7 @@ class InputCard(QWidget):
     def set_status(self, pad_cfg: Optional[dict], type_name: str = "") -> None:
         if pad_cfg is not None:
             status = pad_cfg.get("_status", 0)
-            self._reserved = (status == INPUT_RESERVED)
+            self._reserved = (status == INPUT_LINKED)
         self._type_name = type_name
         self._refresh_style()
 
@@ -1586,7 +1586,7 @@ class PadConfigTab(QWidget):
             pad_type  = cfg.get("pad_type", 0)
             type_name = PAD_TYPE_NAMES.get(pad_type, "")
             self._cards[i].set_status(cfg, type_name)
-            self._cards[i].set_reserved(cfg.get("_status", 0) == INPUT_RESERVED)
+            self._cards[i].set_reserved(cfg.get("_status", 0) == INPUT_LINKED)
 
         if self._selected_id is not None:
             self._populate_detail(self._selected_id)
