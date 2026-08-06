@@ -22,8 +22,10 @@
 // Phase-1 revert: the simple HelloDrum-derived PDrumTrigger is the active engine.
 // PDrum2Trigger (Edrumulus, Stage 2a) stays in the tree, unused, for a future return.
 #include "sensing/pdrum/PDrumTrigger.h"
+#include "sensing/hihat/HiHat.h"
 #include "sensing/sampling/AdcSampler.h"
 #include "sensing/sampling/SampleStream.h"
+#include "esp_heap_caps.h"  // TEMP DIAGNOSTIC: heap_caps_get_free_size() for the ESP_ERR_NO_MEM investigation
 
 // Dev tooling (dev-build only — no-ops when DEV_BUILD is undefined). Replaces the
 // dead USB-serial-RX debug path with a WiFi telnet console; reads dev.txt flags.
@@ -57,9 +59,12 @@ volatile bool g_apply_requested = false;
 
 #define ADC_PRINT_FLOOR 10
 
-// All 8 ADC1 channels (head unit), in frame order. SampleStream channel index
+// All 9 ADC1 channels (head unit), in frame order. SampleStream channel index
 // == position in this array; GPIO -> stream-channel index is (gpio - kChannelGpios[0]).
-static const uint8_t kChannelGpios[8] = { 2, 3, 4, 5, 6, 7, 8, 9 };
+// GPIO1 (hi-hat FSR) prepended 2026-07-20 for real ADC-range data gathering;
+// stream index shifts for every existing pad channel too, but that's transparent
+// everywhere else since all lookups go through streamCh(), never a raw index.
+static const uint8_t kChannelGpios[9] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 
 static AdcSampler   sampler;
 static SampleStream stream;
@@ -67,6 +72,11 @@ static SampleStream stream;
 // Per-input read cursors into the stream (one consumer = one cursor pair).
 static SampleStream::Cursor headCursor[NUM_INPUTS];
 static SampleStream::Cursor rimCursor[NUM_INPUTS];
+
+// Hi-hat pedal (input 4 / GPIO1 / stream ch 0): its own consumer cursor and a
+// standalone processor. NOT a TriggerEngine — separate continuous-position path.
+static SampleStream::Cursor hiHatCursor;
+static HiHat hihat;
 
 // Samples pulled per channel per loop iteration. Loop runs far faster than the
 // 8 kHz sample rate, so n is normally tiny; this is just the per-call ceiling.
@@ -138,6 +148,14 @@ static void applyConfig() {
         triggers[i]->setDecayEstFactDb(g_inputs[i].decayEstFactDb);
         triggers[i]->setClipCompAmpmapStep(g_inputs[i].clipCompAmpmapStep);
     }
+
+    // Hi-hat (input 4) has no TriggerEngine, so it's skipped by the loop above
+    // (triggers[4] == nullptr), but still needs config applied on every (re)apply —
+    // boot AND any SysEx write via the shared PAD_SET_SENS/PAD_SET_CURVE commands
+    // (genuinely no new commands needed — they already write g_inputs[4]). Runs
+    // unconditionally here so a live app slider change takes effect immediately.
+    hihat.setMaxAdc((int)g_inputs[4].headSensitivity);
+    hihat.setCurveType(g_inputs[4].velocityCurve);
 }
 
 // Exposed for SysEx.cpp's preset handlers: presetLoad/Save/Delete do synchronous
@@ -472,12 +490,33 @@ void setup() {
     devcfg.begin();                                             // read /dev.txt
     DevLog.begin(devcfg.getBool("log_mirror_serial", true));    // seam config
     g_diagMode = devcfg.getBool("diag_mode", false);            // was hardcoded false
-    devwifi.begin(devcfg);   // connect + start telnet (silent skip on fail/absent)
+
+    // TEMP DIAGNOSTIC (2026-07-25): heap headroom right before the ADC continuous
+    // driver tries to allocate its DMA-capable buffers.
+    Serial.printf("[HEAP] free=%u  internal=%u  dma=%u  largest_dma_block=%u\n",
+                  (unsigned)esp_get_free_heap_size(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
 
     // Layer 1 + 2: continuous DMA sampling -> ring/demux.
-    if (!sampler.begin(kChannelGpios, 8, 8000)) {
-        Serial.println("[ADC] ERROR: AdcSampler.begin() failed");
+    // ORDERING FIX (2026-07-25): moved BEFORE devwifi.begin(). Root-caused via the
+    // [HEAP] diagnostic: largest_dma_block was 32756 bytes against a required
+    // kStoreBufBytes of 32768 — 12 bytes short, pure fragmentation, not a real
+    // shortage (87KB+ free in aggregate). WiFi/TCP-IP stack bring-up fragments the
+    // heap with its own internal allocations; grabbing the ADC driver's one large
+    // contiguous block FIRST, while the heap is still pristine, avoids the race
+    // entirely rather than just shaving the buffer size for temporary headroom.
+    // DevWiFi.h documents WiFi/telnet as fully independent of everything else, so
+    // this reorder is safe — no functional dependency on WiFi being up first.
+    if (!sampler.begin(kChannelGpios, 9, 8000)) {
+        Serial.printf("[ADC] ERROR: AdcSampler.begin() failed at '%s': %s\n",
+                      sampler.lastErrorStep(), esp_err_to_name(sampler.lastError()));
+        DevLog.printf("[ADC] ERROR: AdcSampler.begin() failed at '%s': %s\n",
+                      sampler.lastErrorStep(), esp_err_to_name(sampler.lastError()));
     }
+
+    devwifi.begin(devcfg);   // connect + start telnet (silent skip on fail/absent)
     // Hold DMA sampling off while triggers are created/initialized and boot config
     // is applied below — same protection as the runtime g_apply_requested path
     // (buildDerived()'s ps_malloc/free churn across 4 engines could otherwise stall
@@ -486,6 +525,14 @@ void setup() {
     sampler.pause();
     stream.begin(&sampler);
     Serial.printf("[ADC] configured %lu Hz/ch  (%lu Hz aggregate, %d ch)\n",
+                  (unsigned long)sampler.sampleRateHz(),
+                  (unsigned long)sampler.sampleRateHz() * sampler.numChannels(),
+                  (int)sampler.numChannels());
+    // Mirrored to telnet too (not just Serial) so boot-time sampler status is visible
+    // even when serial RX is dead under USB MIDI — added alongside the GPIO1/hi-hat
+    // channel-count fix so a future begin() failure/mismatch is actually diagnosable
+    // from telnet, not just a silent stuck ADC dump.
+    DevLog.printf("[ADC] configured %lu Hz/ch  (%lu Hz aggregate, %d ch)\n",
                   (unsigned long)sampler.sampleRateHz(),
                   (unsigned long)sampler.sampleRateHz() * sampler.numChannels(),
                   (int)sampler.numChannels());
@@ -598,15 +645,16 @@ void loop() {
     if (g_adcDump && millis() - lastAdcPrint >= 100 && stream.writeHead() > 0) {
         lastAdcPrint = millis();
         uint32_t latest = stream.writeHead() - 1;
-        uint16_t v[8] = {};
-        for (int ch = 0; ch < 8; ch++) {
+        uint16_t v[9] = {};
+        for (int ch = 0; ch < 9; ch++) {
             stream.readWindow((uint8_t)ch, latest, &v[ch], 1);
         }
         // DIAGNOSTIC: print every interval unconditionally (no floor filter) so the
-        // resting baseline is visible even when low. Columns are stream channels 0-7;
-        // KD-80 head = jack 2 = GPIO6 = stream ch 4 (the 5th column).
-        DevLog.printf("[ADC] %4d %4d %4d %4d %4d %4d %4d %4d\n",
-            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+        // resting baseline is visible even when low. Columns are stream channels 0-8;
+        // ch0 = GPIO1 = hi-hat FSR (added 2026-07-20). Pad channels all shifted +1
+        // vs. the old numbering: KD-80 head = jack 2 = GPIO6 = stream ch 5 (6th column).
+        DevLog.printf("[ADC] hh=%4d  %4d %4d %4d %4d %4d %4d %4d %4d\n",
+            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
     }
 
     // Fire pending scope dump once 100 post-hit samples have accumulated.
@@ -790,6 +838,46 @@ void loop() {
                           triggers[i]->getLastRetrigExitDurMs(),
                           (int)g_inputs[i].retriggerTime);
             triggers[i]->clearRetrigEvent();
+        }
+    }
+
+    // Hi-hat pedal openness -> MIDI CC (input 4). Separate code path from the pad
+    // loop above: input 4 has no triggers[4] (kHeadCh[4]/kRimCh[4] == -1), it's a
+    // continuous position sensor, not a transient detector. Uses g_inputs[4]'s
+    // existing ccNumber/ccChannel defaults (Foot Controller CC 4, ch 10). Only a
+    // CC *change* is sent — HiHat's 7-step quantize gates the flood.
+    if (g_inputs[4].enabled) {
+        int hhc = streamCh(1);   // GPIO1 -> stream channel 0
+        uint16_t hihatBuf[kBlock];
+        uint16_t n = stream.read((uint8_t)hhc, hiHatCursor, hihatBuf, kBlock);
+        if (n > 0) {
+            hihat.processBlock(hihatBuf, n);
+            if (hihat.hasCcChange()) {
+                hihat.clearCcChange();
+                uint8_t ccVal = hihat.getCcValue();
+                MIDI.sendControlChange(g_inputs[4].ccNumber, ccVal, g_inputs[4].ccChannel);
+                // 05 04 — 4 bytes: input_id(=4), raw_hi, raw_lo, cc_value. Mirrors the
+                // 05 03 hit-debug event's shape/byte-width but for continuous position,
+                // not a discrete hit. Sent UNCONDITIONALLY alongside the CC (like 05 03
+                // is sent unconditionally alongside note-on) — the app's calibration UI
+                // depends on this, not just the debug-gated telnet print below. raw is
+                // 14-bit split exactly like encode14() in SysEx.cpp (file-static there).
+                {
+                    int rawVal = hihat.getDebugRawLast();
+                    uint8_t dbg[4] = { 4,
+                                       (uint8_t)((rawVal >> 7) & 0x7F),
+                                       (uint8_t)(rawVal & 0x7F),
+                                       ccVal };
+                    sysexSendResponse(SYSEX_DEV_HEAD, SYSEX_CAT_STATUS,
+                                      SYSEX_STAT_HIHAT_DEBUG, dbg, 4);
+                }
+                if (g_hitDebug && !g_adcDump) {
+                    DevLog.printf("[HIHAT] t=%lu raw=%d smoothed=%.1f cc=%d ccnum=%d ch=%d\n",
+                                  (unsigned long)millis(), hihat.getDebugRawLast(),
+                                  hihat.getDebugSmoothed(), ccVal,
+                                  g_inputs[4].ccNumber, g_inputs[4].ccChannel);
+                }
+            }
         }
     }
 }

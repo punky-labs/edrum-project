@@ -1,12 +1,15 @@
 # eDrum Project State
-Last updated: 2026-07-14 — App UI wiring for the Secondary Trigger
-Behaviours v1 + Scan v3 fields is IMPLEMENTED and self-verified via a
-headless PyQt6 instantiation test (see "App UI Wiring" section below) —
-NOT YET validated on real hardware/emulator, that's the next step. SysEx
-wiring (firmware + Python protocol layer) was completed and self-tested
-earlier this same session — see "SysEx Extension" section. Underlying
-milestone still stands: all basic firmware trigger functions implemented,
-project in REAL-WORLD PLAYING TESTING mode.
+Last updated: 2026-07-25 — Hi-Hat Pedal CC v1 IMPLEMENTED AND
+HARDWARE-VALIDATED: real pedal confirmed working end-to-end against
+Addictive Drums 2 (openness CC responding correctly; needs further tuning,
+not a bug). See "Hi-Hat Pedal CC v1" section below for full detail,
+including a genuine ADC-sampler heap-fragmentation bug found and fixed
+along the way. Next task: app UI wiring for the hi-hat controller panel.
+Prior milestone still stands and is unchanged by this session: App UI
+wiring for the Secondary Trigger Behaviours v1 + Scan v3 fields is
+IMPLEMENTED and self-verified via a headless PyQt6 instantiation test (see
+"App UI Wiring" section below) — still NOT validated on real hardware/
+emulator, that remains open. Project is in REAL-WORLD PLAYING TESTING mode.
 
 ---
 
@@ -245,13 +248,17 @@ better. BOAL's vision is trigger interface + user's existing software.
 - MCP3008 SPI ADC removed — direct connections to ESP32-S3 internal ADC
   via jumper wires on PTH breakout pads (interim prototype only)
 - GPIO2–9 → 4 dual-zone inputs (head + rim per jack)
-- GPIO1 reserved for hi-hat controller (A0, not yet implemented)
+- GPIO1 → hi-hat controller (A0) — pedal FSR, sampled as the 9th ADC1
+  channel alongside the 4 pad jacks; openness → MIDI CC IMPLEMENTED AND
+  HARDWARE-VALIDATED 2026-07-25 (see "Hi-Hat Pedal CC v1" section below)
 - ADC front-end: 1kΩ series resistors + BAT85 clamp diodes + 1MΩ pull-down
   (22nF caps not yet fitted on interim board — target for next PCB spin)
 - 4 stereo TRS jacks → 8 ADC channels (4 jacks, dual-zone capable)
   - **Tip = rim/switch channel; Ring = head/piezo channel** (corrected 2026-07-06 —
     see "Hard-won" note below; was previously documented backwards)
-- 1 mono jack → GPIO1 directly (hi-hat controller, jack 4, stubbed)
+- 1 mono jack → GPIO1 directly (hi-hat controller, jack 4 — CC output
+  IMPLEMENTED AND HARDWARE-VALIDATED 2026-07-25; no chick/pedal-close note
+  yet, deliberately deferred)
 - Stage 2: XIAO ESP32-S3 wireless satellite modules (architecture decided,
   PCB designed, not yet manufactured)
 
@@ -507,7 +514,9 @@ Opened from Dev menu → ADC Scope…
 - Jack 1: note=38 (snare head), z2=40 (snare rim)
 - Jack 2: note=42 (hi-hat closed), z2=46 (hi-hat open)
 - Jack 3: note=51 (ride), z2=53 (ride bell)
-- Jack 4: note=44 (hi-hat pedal CC), stubbed
+- Jack 4: note=44 (hi-hat pedal CC — CC output IMPLEMENTED
+  2026-07-25 via ccNumber=4/ccChannel=10, not the note field; see
+  "Hi-Hat Pedal CC v1" section)
 
 ---
 
@@ -1662,6 +1671,125 @@ was done in layers, each one designed to catch a different class of bug:
 
 ---
 
+## Hi-Hat Pedal CC v1 (2026-07-25)
+
+**Status: IMPLEMENTED AND HARDWARE-VALIDATED. Real pedal + real hi-hats
+confirmed working end-to-end against Addictive Drums 2 — openness CC
+responding correctly. Andrew: "needs tweaking, but that's fine" (expected
+tuning work, not a bug) — the core CC-output pipeline is proven.**
+
+### What was built
+
+**9th ADC channel (GPIO1, hi-hat FSR) added to the existing sampling
+pipeline:**
+- `AdcSampler::kMaxChannels` 8 → 9; `kChannelGpios` in `main_esp32s3.cpp`
+  grew to `{1,2,3,4,5,6,7,8,9}` (GPIO1 prepended) — every existing pad's
+  `streamCh()` lookup stayed transparently correct since none of them ever
+  hardcoded a raw stream index, only GPIO numbers translated via the helper.
+- New `firmware/src/sensing/hihat/HiHat.h/.cpp` — a small standalone class,
+  deliberately NOT a `TriggerEngine`: the hi-hat is a continuous position
+  sensor (FSR), not a transient/hit detector, so it doesn't share the pad
+  engines' threshold/scan/mask model.
+- Signal path: raw ADC → EMA smooth (α=0.15, heavier than the pad EMA
+  default of 0.5 since this is a slow signal with no fast attack to
+  preserve) → linear map `[0, 3400] → [0, 127]` (both bounds hardcoded from
+  REAL measured data — see below, not guessed) → 7-step quantize,
+  replicating HelloDrum's (`RyoKosaka/HelloDrum-arduino-Library`)
+  `FSRSensing()` table exactly: steps at 0/20/40/60/80/100/127. A CC is sent
+  only when the quantized step changes — this quantization ALONE is what
+  prevents MIDI flooding; no separate hysteresis/debounce timer needed on
+  top of it.
+- Wired into `main_esp32s3.cpp`'s `loop()` as an independent code path
+  AFTER the pad `for` loop (input 4 has no `TriggerEngine` —
+  `kHeadCh[4]`/`kRimCh[4]` stay `-1`, deliberately untouched), gated by
+  `g_inputs[4].enabled` and the existing `g_diagMode` early-return (same
+  convention as the pad loop).
+- MIDI output reuses `g_inputs[4]`'s EXISTING `ccNumber`/`ccChannel` fields
+  — `Config.cpp` already defaulted these to CC4 (Foot Controller) / channel
+  10 for every input, unused until this task. No new `InputConfig` fields,
+  no SysEx/LittleFS changes needed.
+- `platformio.ini`'s `[env:xiao_esp32s3_head]` uses an explicit source
+  allowlist (`build_src_filter`), not globbing — `+<sensing/hihat/HiHat.cpp>`
+  had to be added there or the new file wouldn't link. Worth remembering for
+  any future new `.cpp` file in this env.
+
+### Real calibration data (measured via the telnet `a` ADC dump, not guessed)
+
+- Pedal up / resting: raw ADC ≈ 0
+- Pedal fully pressed (hard): raw ADC ≈ 3400 (peaked 3439 in the capture)
+- Polarity: pressure INCREASES the raw ADC value, which already matches the
+  CC convention directly (CC 0 = open, CC 127 = closed, confirmed via DW
+  eDrum / eDRUMin manual research) — no inversion needed anywhere in the
+  pipeline.
+- Press ramp took ~1.3s in testing — confirms this is a slow position
+  signal, not a transient; no Scan-style fast-attack machinery is relevant
+  here.
+
+### A genuine bug found and fixed along the way: ADC sampler ESP_ERR_NO_MEM
+(heap fragmentation)
+
+Adding the 9th channel initially broke ADC sampling ENTIRELY (not just the
+hi-hat — no pad hits registered either) — `AdcSampler::begin()` failed with
+`ESP_ERR_NO_MEM` at the `adc_continuous_new_handle()` step. Root-caused via
+new heap diagnostics (`heap_caps_get_largest_free_block(MALLOC_CAP_DMA)`):
+`largest_dma_block` was 32756 bytes against a required 32768
+(`kStoreBufBytes`) — 12 bytes short, PURE FRAGMENTATION (87KB+ free in
+aggregate DMA-capable RAM, just no single contiguous block big enough), not
+a real shortage. WiFi/TCP-IP stack bring-up fragments the heap with its own
+internal allocations; the extra 9th-channel ring buffer growth (~16KB more
+static internal RAM) was enough to tip the largest contiguous block below
+the threshold.
+
+**Fix: reordered `setup()` so `sampler.begin()` runs BEFORE
+`devwifi.begin()`**, letting the ADC driver claim its one large contiguous
+block while the heap is still pristine, rather than after WiFi's allocator
+churn. `DevWiFi.h` explicitly documents WiFi/telnet as fully independent of
+everything else, so this reorder carries no functional risk. Confirmed
+fixed via the same heap diagnostic post-fix: `largest_dma_block` rose to
+77812 bytes.
+
+**Secondary fixes made during this investigation, worth keeping in mind for
+future debugging:**
+- `AdcSampler::begin()` now tracks and exposes the real `esp_err_t` + which
+  of the three ESP-IDF calls (`new_handle`/`config`/`start`) failed
+  (`lastError()`/`lastErrorStep()`), surfaced over both Serial and telnet —
+  previously a `begin()` failure was a bare `false` with no diagnosable
+  reason visible over telnet at all (serial RX is dead under USB MIDI, so
+  this was a genuine blind spot, not just an inconvenience).
+- `numChannels_`/`perChannelHz_` are now only set on FULL success (moved to
+  just before `return true`), not speculatively at the top of `begin()` —
+  previously a failed `begin()` still left `numChannels()` reporting the
+  REQUESTED (not actual) channel count, which is what produced a misleading
+  "configured...9 ch" boot line during a total sampler failure.
+- The `sampler.begin(kChannelGpios, 8, 8000)` call had a real, separate bug
+  at the moment GPIO1 was first added: the `numChannels` argument stayed
+  hardcoded at `8` even after `kChannelGpios` grew to 9 entries, silently
+  dropping GPIO9 (jack 3's head channel) from sampling. Fixed to `9` before
+  the fragmentation issue was even found — two independent bugs stacked in
+  the same short investigation, not one.
+
+### Open items / next steps
+
+- **App UI wiring for the hi-hat controller is the next task.** The right
+  panel's Hi-Hat Controller page (see "App UI Architecture" section above)
+  is currently still a placeholder. No SysEx/protocol work needed for the
+  CC number/channel themselves (existing PAD_GET/SET already covers
+  `ccNumber`/`ccChannel` generically for every input), but real UI design
+  work is needed for what the panel actually shows/controls.
+- Calibration bounds (`kAdcUp`/`kAdcDown` = 0/3400) and EMA alpha (0.15) are
+  hardcoded constants in `HiHat.h`, NOT persisted/SysEx-exposed/
+  telnet-tunable — deliberately deferred, same "placeholder now, calibrate
+  properly later" treatment as other constants in this project. A proper
+  calibration flow/UI is future work.
+- Confirmed playable in real use against Addictive Drums 2; specific tuning
+  targets (7-step granularity feel, EMA responsiveness, exact up/down
+  bounds) not yet itemized — "needs tweaking" per Andrew, not yet broken
+  down into concrete next actions.
+- Chick/pedal-close note-on and splash detection remain explicitly OUT OF
+  SCOPE (deferred from the original v1 scoping decision) — not started.
+
+---
+
 ## pdrum Library — Rewrite Plan
 
 Current difference-based algorithm is unreliable across all tested pads.
@@ -1852,7 +1980,9 @@ working on hardware):**
 
 **Firmware / hardware (priority order):**
 1. Retune all DSP params for ESP32-S3 ADC noise floor (all pads)
-2. Hi-hat firmware — GPIO1 analog read, CC output, open/close thresholds
+2. [DONE 2026-07-25] Hi-hat firmware — GPIO1 ADC sampling, CC output,
+   see "Hi-Hat Pedal CC v1" section above. Open/close thresholds (chick
+   note) deliberately deferred, not started.
 3. Watchdog timer — ESP32-S3 hardware watchdog
 4. Hard hit runaway — add loopTimes safety limit to sensing()
 5. 22nF caps on ADC front-end — next PCB spin
@@ -1908,7 +2038,9 @@ direction above):**
 1. curves.py — shared curve math (VelocityCurveWidget + emulator)
 2. IBM Plex font bundling
 3. Interface mode preference — replace --dev flag with persistent QSettings
-4. Hi-hat controller UI
+4. Hi-hat controller UI — firmware backend (CC output) now IMPLEMENTED
+   AND HARDWARE-VALIDATED (2026-07-25, see "Hi-Hat Pedal CC v1" section
+   above), so this is now unblocked and is the next task overall
 5. Scope window: fix Ctrl+C copy, MIDI transport warning
 6. **In-app help/reference page** (added 2026-07-14, menu-launched) —
    lists every field, what it does, and its range. Real content-authoring

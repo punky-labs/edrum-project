@@ -105,7 +105,17 @@ static InputConfig defaultInput(uint8_t idx) {
         case 1:  c.midiNote = 38; c.zone2MidiNote = 40; break;  // snare head / snare rim
         case 2:  c.midiNote = 42; c.zone2MidiNote = 46; break;  // hi-hat closed / open
         case 3:  c.midiNote = 51; c.zone2MidiNote = 53; break;  // ride / ride bell
-        case 4:  c.midiNote = 44; c.zone2MidiNote = 44; break;  // hi-hat foot pedal (CC)
+        case 4:  c.midiNote = 44; c.zone2MidiNote = 44;
+                 // Hi-hat pedal (CC): headSensitivity is repurposed as the HiHat's
+                 // max-ADC calibration ceiling (see HiHat / applyConfig). 3400 is the
+                 // real measured pedal-fully-pressed value, so a fresh/reset device
+                 // shows the actual calibrated max, not the generic 800.
+                 c.headSensitivity = 3400;
+                 // velocityCurve -> 0 (Natural/linear) to match the hi-hat's v1 linear
+                 // behaviour. NOTE: the generic default above is 4 (Aggressive), NOT 0
+                 // — the task doc assumed 0; overriding here to genuinely match v1.
+                 c.velocityCurve   = 0;
+                 break;  // hi-hat foot pedal (CC)
         default: c.midiNote = 38; c.zone2MidiNote = 38; break;
     }
     return c;
